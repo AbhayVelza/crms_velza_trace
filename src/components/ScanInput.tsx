@@ -62,7 +62,7 @@ export function ScanInput({ onScan, label = "Scan code", placeholder = "Scan or 
       <label className="block text-sm font-medium text-slate-700" htmlFor="scan-input">
         {label}
       </label>
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2 sm:flex-nowrap">
         <Input
           id="scan-input"
           ref={ref}
@@ -72,7 +72,7 @@ export function ScanInput({ onScan, label = "Scan code", placeholder = "Scan or 
           autoCapitalize="off"
           spellCheck={false}
           placeholder={placeholder}
-          className="font-mono text-base"
+          className="min-w-0 flex-1 basis-full font-mono text-base sm:basis-auto"
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") {

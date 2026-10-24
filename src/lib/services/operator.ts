@@ -1,6 +1,7 @@
 // Manufacturer operator actions: reprint, void, device online/offline, sync.
 
 import { z } from "zod";
+import { formatLotNumber } from "@/lib/core/codes";
 import { canReprint, canVoid } from "@/lib/core/rules";
 import { getStore, type StoreTx } from "@/lib/store";
 import { badRequest, findItem, loadActor, manufacturerDevice, notFound, nowIso, requireAction, requirePartner, setLotState } from "./common";
@@ -80,7 +81,7 @@ export async function voidLot(userId: string | null, body: unknown) {
       invoice: null,
       note: reason?.trim() || null,
     });
-    return { ok: true, message: `Lot ${lotCode} voided; lot number ${lot.lotNumber.toString(16).toUpperCase().padStart(5, "0")} will never be reused` };
+    return { ok: true, message: `Lot ${lotCode} voided; lot number ${formatLotNumber(lot.lotNumber)} will never be reused` };
   });
 }
 

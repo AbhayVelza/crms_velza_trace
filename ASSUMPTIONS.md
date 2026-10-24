@@ -113,3 +113,14 @@ Choices made where the spec was silent or ambiguous. Simplest reasonable option 
   blocked" if needed.
 - Verification and other movements done offline are written to the ledger immediately (this prototype
   has a single server); only the visibility of unsynced lots is simulated.
+
+## Polish (phase 10)
+
+- Scan screens are usable at phone width (390 px): the scan box takes the full width, buttons wrap,
+  wide tables scroll inside their card.
+- API errors come back as `{ error: { code, message, details } }` and are shown as-is in the UI
+  (e.g. `WRONG_RECEIVER: 91… is not in transit to SS-2 …`). Dispatch confirmation lists every rejected code.
+- The Playwright demo test (`npm run test:e2e`) builds the app and serves it on port 3100 with
+  `VELZA_DB_PATH=data/e2e-db.json`, so it doesn't touch the dev database. It uses the installed Microsoft
+  Edge (`channel: msedge`) so no browser download is needed; override with `PW_CHANNEL`.
+- The demo helper is shown in dev mode only (or with `NEXT_PUBLIC_DEMO_HELPER=1`).

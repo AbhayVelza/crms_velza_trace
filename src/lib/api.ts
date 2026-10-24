@@ -45,8 +45,10 @@ export function errorResponse(e: unknown): Response {
 /** Wrap a route handler: always dynamic, JSON result, typed errors. */
 export function handler<C = unknown>(fn: (req: Request, ctx: C) => Promise<unknown>) {
   return async (req: Request, ctx: C): Promise<Response> => {
+    // Outside the try: during `next build` this rejects on purpose to stop prerendering,
+    // and Next must see that rejection.
+    await connection();
     try {
-      await connection();
       return Response.json(await fn(req, ctx));
     } catch (e) {
       return errorResponse(e);

@@ -2,7 +2,7 @@
 
 // Small UI kit (Tailwind). Kept deliberately plain.
 
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from "react";
+import type { ButtonHTMLAttributes, ComponentProps, ReactNode, SelectHTMLAttributes } from "react";
 import type { ItemStatus } from "@/lib/core/types";
 
 export function cx(...c: (string | false | null | undefined)[]) {
@@ -66,7 +66,7 @@ export function Field({ label, hint, error, children }: { label: string; hint?: 
 
 const inputClass = "w-full min-h-10 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-teal-600 focus:outline-none focus:ring-2 focus:ring-teal-600/20 disabled:bg-slate-100";
 
-export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
+export function Input(props: ComponentProps<"input">) {
   return <input {...props} className={cx(inputClass, props.className)} />;
 }
 

@@ -79,3 +79,23 @@ Choices made where the spec was silent or ambiguous. Simplest reasonable option 
   for the Manufacturer Operator (always visible while working).
 - Admin can also toggle a device offline from Admin → Devices. Issuing codes to an offline device is
   refused (refill is blocked offline).
+
+## Print wizard and stickers (phase 5)
+
+- Wizard: each question is one step; "for each batch" questions show one row per batch on that step.
+  Dates default to today (manufacture) and today + 12 months (expiry); operators can change them.
+  Basic checks (≥ 1 batch, flavour chosen) block Next; all other validation (0 cases + 0 trays,
+  empty/short pool, bad dates) is shown on the Summary step, computed by `lib/core/printOrder.ts`.
+- The Summary previews the batch codes that will be taken from the device's pool (oldest reserved
+  first). Codes are consumed only when "Create & print" is pressed.
+- Sticker geometry is computed in `src/lib/stickerLayout.ts` (unit tested): X-dimension is chosen to fit
+  between 0.25 and 0.5 mm, bar height 12–20 mm, 2.5 mm quiet zone each side of the barcode. The QR symbol
+  is 20–28 mm with a 3 mm white quiet zone around it (needed for reliable phone scanning). A warning is
+  shown in the print view if a configured sticker size is too small for the spec.
+- Label roll mode uses CSS named pages (`@page lot` / `@page pack`) so lot and pack stickers each get
+  their own page size; verified by printing to PDF: 24 pages = 4 × 100×50 mm + 20 × 75×25 mm.
+  A4 mode is a wrapped grid with dashed cut guides.
+- Scan-back check: unit test renders Code 128 + QR with bwip-js and decodes with ZXing; the browser check
+  screenshots every sticker on the print view and decodes it (24/24 barcodes and QR codes decoded).
+- `devIndicators: false` causes an endless reload loop in Next 16.4.3 dev on this machine, so the default
+  dev indicator is kept (tests hide it with CSS).

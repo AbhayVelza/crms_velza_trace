@@ -38,5 +38,6 @@ export function useApi<T>(path: string | null, opts: { refreshOnChange?: boolean
   useEffect(() => (refreshOnChange ? onDataChanged(reload) : undefined), [refreshOnChange, reload]);
 
   const fresh = state.key === `${path}|${userId}`;
-  return { data: state.data, error: state.error, loading: !fresh || state.loading, reload };
+  // Never show data that belongs to a previous path or user.
+  return { data: fresh ? state.data : undefined, error: fresh ? state.error : null, loading: !fresh || state.loading, reload };
 }

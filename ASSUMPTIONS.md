@@ -64,3 +64,18 @@ Choices made where the spec was silent or ambiguous. Simplest reasonable option 
   UNKNOWN_CODE / "Unregistered code" until sync.
 - `--demo` seed: one Mango batch (3 cases + 1 tray), printed and verified; case 1 at SS-1, case 2 in
   transit SS-1 → DB-1, case 3 in transit Manufacturer → SS-1, tray packed at the manufacturer.
+
+## UI shell and admin (phase 4)
+
+- Role switcher + user picker live in the header; the choice is saved in `localStorage` and sent as
+  `x-user-id`. Opening a screen that belongs to another role shows a "switch role" notice.
+- Next 16 dev "instant navigation" validation is limited to segments that opt in
+  (`experimental.instantInsights.validationLevel = "manual-warning"`), because every screen loads its
+  data from the API after mount by design.
+- Admin tables edit in place (text saves on blur, selects/checkboxes save on change). Partner tier and
+  user role are set at creation; countries/flavours can be renamed or deactivated but their code can't
+  change. Users of partner roles must point at a partner of the matching tier.
+- The manufacturer device's Online/Offline toggle, unsynced count and Sync button are in the header
+  for the Manufacturer Operator (always visible while working).
+- Admin can also toggle a device offline from Admin → Devices. Issuing codes to an offline device is
+  refused (refill is blocked offline).

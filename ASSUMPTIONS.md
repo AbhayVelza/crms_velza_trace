@@ -99,3 +99,17 @@ Choices made where the spec was silent or ambiguous. Simplest reasonable option 
   screenshots every sticker on the print view and decodes it (24/24 barcodes and QR codes decoded).
 - `devIndicators: false` causes an endless reload loop in Next 16.4.3 dev on this machine, so the default
   dev indicator is kept (tests hide it with CSS).
+
+## Offline simulation (phase 9)
+
+- Online/Offline is a per-device flag toggled from the operator's header (or Admin → Devices).
+- While offline: the wizard, printing and verification work; new batches, lots and print orders are saved
+  with `synced=false`; batch codes come only from the device's RESERVED pool; pool refill (manual or
+  automatic) is refused.
+- Sync needs the device to be Online (the Sync button is disabled while Offline): switch Online, then
+  press Sync. Sync marks the device's batches, lots and print orders `synced=true`, logs one SYNC
+  movement, and then tops up the pool if it is below the refill level.
+- Going back Online does not sync automatically, so the demo can show "online but unsynced → still
+  blocked" if needed.
+- Verification and other movements done offline are written to the ledger immediately (this prototype
+  has a single server); only the visibility of unsynced lots is simulated.

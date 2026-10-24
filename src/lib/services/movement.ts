@@ -1,7 +1,7 @@
 // Chain movements: dispatch (scan OUT), receive (scan IN), open lot.
 
 import { z } from "zod";
-import { canDispatch, canOpenLot, canReceive, checkDispatchHeader, dispatchPatch, NEXT_TIER, receivePatch, type RuleResult } from "@/lib/core/rules";
+import { canDispatch, canOpenLot, canReceive, checkDispatchHeader, dispatchPatch, isAssignedDestination, NEXT_TIER, receivePatch, type RuleResult } from "@/lib/core/rules";
 import type { Partner } from "@/lib/core/types";
 import { getStore, type StoreTx } from "@/lib/store";
 import { badRequest, findItem, loadActor, logScan, manufacturerDevice, nowIso, requireAction, requirePartner, setLotState, type Actor, type FoundItem } from "./common";
@@ -24,7 +24,28 @@ export async function destinations(userId: string | null) {
   const sender = requirePartner(actor);
   const next = NEXT_TIER[sender.type];
   const partners = next ? await store.partners.list({ type: next, active: true }) : [];
-  return { sender, nextTier: next, destinations: partners };
+  return { sender, nextTier: next, destinations: partners.filter((p) => isAssignedDestination(sender, p)) };
+}
+
+/** Super Stockist: its assigned distributors with what is at / on the way to each. */
+export async function myDistributors(userId: string | null) {
+  const store = getStore();
+  const actor = await loadActor(store, userId);
+  requireAction(actor, "territory");
+  const ss = requirePartner(actor);
+  const [distributors, lots, packs] = await Promise.all([store.partners.list({ type: "DB", parentId: ss.id }), store.lots.list(), store.packs.list()]);
+  const opened = new Set(lots.filter((l) => l.status === "OPENED").map((l) => l.lotCode));
+  return {
+    superStockist: ss,
+    distributors: distributors
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((d) => ({
+        ...d,
+        lotsInStock: lots.filter((l) => l.locationId === d.id && l.status === "AT_DB").length,
+        loosePacksInStock: packs.filter((p) => opened.has(p.lotCode) && p.locationId === d.id && p.status === "AT_DB").length,
+        lotsOnTheWayFromMe: lots.filter((l) => l.status === "IN_TRANSIT" && l.locationId === ss.id && l.inTransitToId === d.id).length,
+      })),
+  };
 }
 
 async function checkOne(tx: StoreTx, actor: Actor, sender: Partner, receiver: Partner | null, invoice: string, code: string) {

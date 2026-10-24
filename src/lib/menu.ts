@@ -1,4 +1,4 @@
-// Navigation per role. Only the selected role's menu is shown.
+// Navigation per role. Each role sees only its own portal.
 
 import type { Role } from "@/lib/core/types";
 
@@ -16,7 +16,7 @@ const stock: MenuItem = { href: "/stock", label: "My stock", description: "Lots 
 export const MENU: Record<Role, MenuItem[]> = {
   ADMIN: [
     { href: "/admin/partners", label: "Partners", description: "Manufacturers, super stockists, distributors, suppliers, outlets" },
-    { href: "/admin/users", label: "Users", description: "People and their roles" },
+    { href: "/admin/users", label: "Users & sign-in", description: "Sign-in IDs, passwords, roles and approval status" },
     { href: "/admin/devices", label: "Devices", description: "Manufacturer PCs that generate codes" },
     { href: "/admin/reference", label: "Countries & flavours", description: "Code lists used inside every code" },
     { href: "/admin/pools", label: "Batch code pools", description: "Issue random batch codes to devices" },
@@ -31,7 +31,7 @@ export const MENU: Record<Role, MenuItem[]> = {
     stock,
   ],
   QC: [{ href: "/qc/verify", label: "Verify", description: "Scan a lot and each of its packs, then confirm" }, stock],
-  SS: [receive, dispatch, stock],
+  SS: [receive, dispatch, stock, { href: "/ss/distributors", label: "My distributors", description: "The distributors assigned to you and their stock" }],
   DB: [receive, dispatch, stock],
   SUPPLIER: [receive, dispatch, openLot, stock],
   OUTLET: [receive, openLot, stock],
@@ -41,10 +41,14 @@ export const MENU: Record<Role, MenuItem[]> = {
     { href: "/hq/alerts", label: "Alerts", description: "Not received, wrong receiver, unknown, duplicate, blocked" },
     { href: "/hq/batches", label: "Batches & recall", description: "Batch report and recall" },
     { href: "/hq/scans", label: "Scan audit", description: "Every scan, success or failure" },
+    { href: "/hq/approvals", label: "Account approvals", description: "Approve partner accounts created by Velza Admin" },
   ],
 };
 
-/** Which roles may open a path (used to warn when the URL doesn't match the selected role). */
+/** Pages every signed-in user may open, whatever the role. */
+export const COMMON_PATHS = ["/", "/account"];
+
+/** Which roles may open a path (anything else shows "not part of your portal"). */
 export function rolesForPath(pathname: string): Role[] {
   const roles = (Object.keys(MENU) as Role[]).filter((r) =>
     MENU[r].some((m) => pathname === m.href || (m.href !== "/hq" && pathname.startsWith(m.href + "/")) || (m.href === "/hq" && pathname === "/hq")),

@@ -1,5 +1,6 @@
 // Base seed (section 8): reference data, partners, one user per role per partner,
 // one device with 10 reserved batch codes, default settings.
+// Every seeded account has a sign-in ID and the default password (SEED_PASSWORD), already approved.
 
 import { generateBatchCode } from "@/lib/core/codes";
 import {
@@ -10,21 +11,25 @@ import {
   type Role,
   type User,
 } from "@/lib/core/types";
+import { hashPasswordSync } from "@/lib/passwords";
 import type { DbSnapshot } from "./Store";
 
 const id = () => crypto.randomUUID();
 
-const PARTNERS: { type: PartnerType; name: string; city: string }[] = [
-  { type: "MANUFACTURER", name: "Demo Manufacturer – Pune", city: "Pune" },
-  { type: "SS", name: "SS-1 Konkan Super Stockist", city: "Mumbai" },
-  { type: "SS", name: "SS-2 Deccan Super Stockist", city: "Nashik" },
-  { type: "DB", name: "DB-1 Thane Distributors", city: "Thane" },
-  { type: "DB", name: "DB-2 Kothrud Distributors", city: "Pune" },
-  { type: "SUPPLIER", name: "Supplier-1 Andheri Traders", city: "Mumbai" },
-  { type: "SUPPLIER", name: "Supplier-2 Baner Traders", city: "Pune" },
-  { type: "OUTLET", name: "Outlet-1 Bandra Fresh Mart", city: "Mumbai" },
-  { type: "OUTLET", name: "Outlet-2 Powai Corner Store", city: "Mumbai" },
-  { type: "OUTLET", name: "Outlet-3 Aundh Cafe", city: "Pune" },
+/** Default password of every seeded account (override with env SEED_PASSWORD). */
+export const DEFAULT_SEED_PASSWORD = "Velza@2026";
+
+const PARTNERS: { type: PartnerType; name: string; city: string; territory: string; parent?: string }[] = [
+  { type: "MANUFACTURER", name: "Demo Manufacturer – Pune", city: "Pune", territory: "" },
+  { type: "SS", name: "SS-1 Konkan Super Stockist", city: "Mumbai", territory: "North & West Maharashtra" },
+  { type: "SS", name: "SS-2 Deccan Super Stockist", city: "Pune", territory: "East & South Maharashtra" },
+  { type: "DB", name: "DB-1 Thane Distributors", city: "Thane", territory: "Thane district", parent: "SS-1" },
+  { type: "DB", name: "DB-2 Kothrud Distributors", city: "Pune", territory: "Pune city", parent: "SS-2" },
+  { type: "SUPPLIER", name: "Supplier-1 Andheri Traders", city: "Mumbai", territory: "" },
+  { type: "SUPPLIER", name: "Supplier-2 Baner Traders", city: "Pune", territory: "" },
+  { type: "OUTLET", name: "Outlet-1 Bandra Fresh Mart", city: "Mumbai", territory: "" },
+  { type: "OUTLET", name: "Outlet-2 Powai Corner Store", city: "Mumbai", territory: "" },
+  { type: "OUTLET", name: "Outlet-3 Aundh Cafe", city: "Pune", territory: "" },
 ];
 
 const PARTNER_ROLES: Record<PartnerType, Role[]> = {
@@ -52,18 +57,55 @@ export function partnerTag(p: Pick<Partner, "name" | "city" | "type">): string {
   return m ? m[1] : p.city;
 }
 
-export function buildBaseSeed(now = new Date()): DbSnapshot {
+/** Seeded sign-in IDs: admin, hq, operator, qc, ss1, db2, supplier1, outlet3, … */
+export function seedLoginId(role: Role, p: Pick<Partner, "name" | "city" | "type"> | null): string {
+  if (role === "ADMIN") return "admin";
+  if (role === "TRACE_OWNER") return "hq";
+  if (role === "OPERATOR") return "operator";
+  if (role === "QC") return "qc";
+  return partnerTag(p!).replace("-", "").toLowerCase();
+}
+
+export function buildBaseSeed(now = new Date(), password = process.env.SEED_PASSWORD || DEFAULT_SEED_PASSWORD): DbSnapshot {
   const at = now.toISOString();
-  const partners: Partner[] = PARTNERS.map((p) => ({ id: id(), active: true, ...p }));
+  const partners: Partner[] = PARTNERS.map(({ type, name, city, territory }) => ({ id: id(), type, name, city, territory, parentId: null, active: true }));
+  for (const [i, p] of PARTNERS.entries()) {
+    if (p.parent) partners[i].parentId = partners.find((x) => x.name.startsWith(p.parent!))!.id;
+  }
   const manufacturer = partners[0];
 
-  const users: User[] = [
-    { id: id(), name: "Asha (Velza Admin)", role: "ADMIN", partnerId: null, active: true },
-    { id: id(), name: "Ravi (Traceability Owner)", role: "TRACE_OWNER", partnerId: null, active: true },
-  ];
+  // One hash shared by the seeded accounts: they all start with the same documented password.
+  const passwordHash = hashPasswordSync(password);
+  const account = (name: string, role: Role, partner: Partner | null): User => ({
+    id: id(),
+    name,
+    role,
+    partnerId: partner?.id ?? null,
+    active: true,
+    loginId: seedLoginId(role, partner),
+    passwordHash,
+    createdAt: at,
+    adminApprovedBy: null,
+    adminApprovedAt: null,
+    hqApprovedBy: null,
+    hqApprovedAt: null,
+    rejectedBy: null,
+    rejectedAt: null,
+    rejectReason: null,
+  });
+
+  const admin = account("Asha (Velza Admin)", "ADMIN", null);
+  const hq = account("Ravi (Velza HQ)", "TRACE_OWNER", null);
+  const users: User[] = [admin, hq];
   for (const p of partners) {
     for (const role of PARTNER_ROLES[p.type]) {
-      users.push({ id: id(), name: `${ROLE_PERSON[role]} (${partnerTag(p)})`, role, partnerId: p.id, active: true });
+      users.push({
+        ...account(`${ROLE_PERSON[role]} (${partnerTag(p)})`, role, p),
+        adminApprovedBy: admin.id,
+        adminApprovedAt: at,
+        hqApprovedBy: hq.id,
+        hqApprovedAt: at,
+      });
     }
   }
 
@@ -95,6 +137,7 @@ export function buildBaseSeed(now = new Date()): DbSnapshot {
     movements: [],
     scans: [],
     reprints: [],
+    sessions: [],
     settings: [{ id: "default", ...DEFAULT_SETTINGS }],
   };
 }

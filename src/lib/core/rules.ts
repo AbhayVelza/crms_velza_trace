@@ -97,6 +97,15 @@ export interface DispatchCheckInput {
   invoice: string;
 }
 
+/**
+ * Territory rule: a Super Stockist supplies only the distributors assigned to it
+ * (distributor.parentId). Other tiers may supply any partner of the next tier.
+ */
+export function isAssignedDestination(sender: Pick<Partner, "id" | "type">, receiver: Pick<Partner, "type" | "parentId">): boolean {
+  if (sender.type === "SS" && receiver.type === "DB") return receiver.parentId === sender.id;
+  return true;
+}
+
 /** Destination and invoice checks that do not depend on the item. */
 export function checkDispatchHeader(sender: Partner, receiver: Partner | null, invoice: string): RuleResult {
   const next = NEXT_TIER[sender.type];
@@ -104,6 +113,9 @@ export function checkDispatchHeader(sender: Partner, receiver: Partner | null, i
   if (!receiver) return reject("WRONG_DESTINATION", "Choose a destination");
   if (receiver.type !== next) {
     return reject("WRONG_DESTINATION", `${sender.type} can only dispatch to ${next}, not ${receiver.type}`);
+  }
+  if (!isAssignedDestination(sender, receiver)) {
+    return reject("WRONG_DESTINATION", `${receiver.name} is not one of ${sender.name}'s assigned distributors`);
   }
   if (!invoice.trim()) return reject("INVOICE_REQUIRED", "Invoice/challan number is required");
   return OK;

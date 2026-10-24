@@ -4,13 +4,6 @@ import { expect, test, type Page } from "@playwright/test";
 import { BarcodeFormat, BinaryBitmap, DecodeHintType, HybridBinarizer, MultiFormatReader, RGBLuminanceSource } from "@zxing/library";
 import { PNG } from "pngjs";
 
-interface User {
-  id: string;
-  name: string;
-  role: string;
-}
-
-let users: User[] = [];
 let lots: string[] = []; // [OR 00001 case, OR 00002 case, OR 00003 tray, GA 00001 tray]
 
 function decode(buf: Buffer, format: BarcodeFormat): string {
@@ -29,11 +22,14 @@ function decode(buf: Buffer, format: BarcodeFormat): string {
   }
 }
 
+const STAFF_LOGIN: Record<string, string> = { OPERATOR: "operator", QC: "qc", TRACE_OWNER: "hq", ADMIN: "admin" };
+const PASSWORD = "Velza@2026"; // seeded default
+
+/** Sign in as the seeded user for this role (+ partner tag, e.g. "SS-1" → ss1) and open `path`. */
 async function as(page: Page, role: string, tag: string | null, path: string) {
-  const user = users.find((u) => u.role === role && (!tag || u.name.includes(tag)));
-  if (!user) throw new Error(`no ${role} ${tag ?? ""}`);
-  await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.evaluate((s) => localStorage.setItem("velza.session", s), JSON.stringify({ role, userId: user.id }));
+  const loginId = tag ? tag.replace("-", "").toLowerCase() : STAFF_LOGIN[role];
+  const res = await page.request.post("/api/auth/login", { data: { loginId, password: PASSWORD } });
+  expect(res.ok(), `sign in as ${loginId}`).toBe(true);
   await page.goto(path);
 }
 
@@ -74,10 +70,6 @@ async function verifyLot(page: Page, lotCode: string, packs: string[]) {
 const packsOf = (lot: string, type: "CASE" | "TRAY") => (type === "CASE" ? [1, 2, 3, 4].map((s) => `${lot}6${s}`) : [1, 2, 3, 4, 5, 6].map((s) => `${lot}4${s}`));
 
 test.describe.serial("Velza demo script (9.1)", () => {
-  test.beforeAll(async ({ request }) => {
-    users = (await (await request.get("/api/bootstrap")).json()).users;
-  });
-
   const pageErrors: string[] = [];
   test.beforeEach(async ({ page }) => {
     pageErrors.length = 0;
@@ -85,6 +77,34 @@ test.describe.serial("Velza demo script (9.1)", () => {
   });
   test.afterEach(() => {
     expect(pageErrors, "uncaught errors in the page").toEqual([]);
+  });
+
+  test("0. sign-in required; each role sees only its own portal; SS sees only its distributors", async ({ page }) => {
+    await page.goto("/admin/users");
+    await expect(page).toHaveURL(/\/login\?next=%2Fadmin%2Fusers$/);
+    await page.getByLabel("Sign-in ID").fill("ss2");
+    await page.getByLabel("Password").fill("wrong-password1");
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await expect(page.getByText("Wrong sign-in ID or password")).toBeVisible();
+    await page.getByLabel("Password").fill(PASSWORD);
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await expect(page).toHaveURL(/\/admin\/users$/);
+    await expect(page.getByText("This page is not part of the Super Stockist portal")).toBeVisible();
+    await expect(page.getByTestId("signed-in-user")).toHaveText("Kiran (SS-2)");
+    await expect(page.locator("nav")).not.toContainText("Partners");
+    expect((await page.request.get("/api/admin/users")).status()).toBe(403);
+    expect((await page.request.get("/api/dashboard")).status()).toBe(403);
+
+    await page.goto("/dispatch");
+    const options = page.getByLabel("Destination").locator("option");
+    await expect(options).toHaveText(["Choose…", "DB-2 Kothrud Distributors (Pune)"]);
+    await page.goto("/ss/distributors");
+    await expect(page.locator("tbody tr")).toHaveCount(1);
+    await expect(page.locator("tbody")).toContainText("DB-2 Kothrud Distributors");
+
+    await page.getByRole("button", { name: "Sign out" }).click();
+    await expect(page).toHaveURL(/\/login$/);
+    expect((await page.request.get("/api/auth/me")).status()).toBe(401);
   });
 
   test("1. operator creates 2 batches; summary 00001–00003 + 00001, 24 stickers; print; barcodes scan back", async ({ page }) => {

@@ -102,6 +102,12 @@ function makeTx(db: DbSnapshot): StoreTx {
         list[i] = { ...list[i], ...clone(patch), id };
         return clone(list[i]);
       },
+      async delete(id) {
+        const list = rows();
+        const i = list.findIndex((x) => x.id === id);
+        if (i < 0) throw new NotFoundError(`${name} ${id}`);
+        list.splice(i, 1);
+      },
     };
   };
   const ledger = <T extends Row>(name: keyof DbSnapshot): AppendOnlyRepo<T> => {
@@ -123,6 +129,7 @@ function makeTx(db: DbSnapshot): StoreTx {
     movements: ledger("movements"),
     scans: ledger("scans"),
     reprints: ledger("reprints"),
+    sessions: repo("sessions"),
 
     async appendMovement(m: NewMovement) {
       return tx.movements.append({ ...m, id: crypto.randomUUID(), at: m.at ?? new Date().toISOString() });
@@ -226,6 +233,7 @@ export class JsonStore implements Store {
       create: write((r, row: T) => r.create(row)),
       createMany: write((r, rows: T[]) => r.createMany(rows)),
       update: write((r, id: string, patch: Partial<Omit<T, "id">>) => r.update(id, patch)),
+      delete: write((r, id: string) => r.delete(id)),
     };
   }
 
@@ -247,6 +255,7 @@ export class JsonStore implements Store {
   movements = this.ledger<DbSnapshot["movements"][number]>("movements");
   scans = this.ledger<DbSnapshot["scans"][number]>("scans");
   reprints = this.ledger<DbSnapshot["reprints"][number]>("reprints");
+  sessions = this.repo<DbSnapshot["sessions"][number]>("sessions");
 
   appendMovement(m: NewMovement) {
     return this.transaction((tx) => tx.appendMovement(m));

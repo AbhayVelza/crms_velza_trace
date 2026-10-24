@@ -23,8 +23,11 @@ export const ROLE_LABELS: Record<Role, string> = {
   DB: "Distributor",
   SUPPLIER: "Supplier",
   OUTLET: "Outlet",
-  TRACE_OWNER: "Traceability Owner",
+  TRACE_OWNER: "Velza HQ",
 };
+
+/** Velza staff (no partner) belong to this organisation. */
+export const VELZA_ORG_NAME = "Velza Global India";
 
 /** Partner type a user of this role belongs to (null = Velza HQ, no partner). */
 export const ROLE_PARTNER_TYPE: Record<Role, PartnerType | null> = {
@@ -78,6 +81,10 @@ export interface Partner {
   type: PartnerType;
   name: string;
   city: string;
+  /** Free-text area served, e.g. "East & South Maharashtra". */
+  territory: string;
+  /** Distributor: the Super Stockist it is assigned to (the only SS that may supply it). */
+  parentId: string | null;
   active: boolean;
 }
 
@@ -87,6 +94,30 @@ export interface User {
   role: Role;
   partnerId: string | null;
   active: boolean;
+  /** Sign-in ID, stored lowercase, unique. */
+  loginId: string;
+  /** scrypt hash; null = no password set, cannot sign in. */
+  passwordHash: string | null;
+  createdAt: string;
+  /** Partner accounts need both approvals before they can sign in (Velza staff don't). */
+  adminApprovedBy: string | null;
+  adminApprovedAt: string | null;
+  hqApprovedBy: string | null;
+  hqApprovedAt: string | null;
+  rejectedBy: string | null;
+  rejectedAt: string | null;
+  rejectReason: string | null;
+}
+
+/** User as sent to the browser: never includes the password hash. */
+export type PublicUser = Omit<User, "passwordHash"> & { hasPassword: boolean };
+
+/** Signed-in session. `id` is the SHA-256 of the cookie token, so a leaked data file can't be replayed. */
+export interface Session {
+  id: string;
+  userId: string;
+  createdAt: string;
+  expiresAt: string;
 }
 
 export interface Device {

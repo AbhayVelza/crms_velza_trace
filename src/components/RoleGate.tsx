@@ -1,33 +1,31 @@
 "use client";
 
-// Shows the page only when a role/user is selected and the page belongs to that role.
+// Shows a page only to the roles whose portal it belongs to. The API enforces the same rules,
+// so this is about a clear message, not security.
 
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { ROLE_LABELS } from "@/lib/core/types";
-import { rolesForPath } from "@/lib/menu";
+import { COMMON_PATHS, rolesForPath } from "@/lib/menu";
 import { useSession } from "./session";
 import { Notice } from "./ui";
 
 export function RoleGate({ children }: { children: ReactNode }) {
-  const { data, error, role, user, setRole } = useSession();
+  const { data, error, role, user } = useSession();
   const pathname = usePathname();
 
-  if (error) return <Notice tone="error">Could not load reference data: {error}</Notice>;
-  if (!data) return <p className="text-sm text-slate-500">Loading…</p>;
-  if (pathname === "/") return <>{children}</>;
+  if (error) return <Notice tone="error">{error}</Notice>;
+  if (!data || !role || !user) return <p className="text-sm text-slate-500">Loading…</p>;
+  if (COMMON_PATHS.includes(pathname)) return <>{children}</>;
 
-  const allowed = rolesForPath(pathname);
-  if (!role || !user) {
-    return <Notice tone="info">Choose a role and user in the header to start.</Notice>;
-  }
-  if (allowed.length && !allowed.includes(role)) {
+  if (!rolesForPath(pathname).includes(role)) {
     return (
       <Notice tone="warn">
-        This screen is for {allowed.map((r) => ROLE_LABELS[r]).join(" / ")}. You are signed in as {ROLE_LABELS[role]}.{" "}
-        <button type="button" className="font-semibold underline" onClick={() => setRole(allowed[0])}>
-          Switch to {ROLE_LABELS[allowed[0]]}
-        </button>
+        This page is not part of the {ROLE_LABELS[role]} portal.{" "}
+        <Link href="/" className="font-semibold underline">
+          Go to your portal
+        </Link>
       </Notice>
     );
   }

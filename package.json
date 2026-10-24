@@ -11,6 +11,8 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "seed": "tsx scripts/seed.ts",
+    "clear-activity": "tsx scripts/clear-activity.ts",
+    "migrate-accounts": "tsx scripts/migrate-accounts.ts",
     "typecheck": "next typegen && tsc --noEmit"
   },
   "dependencies": {

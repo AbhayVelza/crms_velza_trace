@@ -52,8 +52,9 @@ Choices made where the spec was silent or ambiguous. Simplest reasonable option 
 - If `data/db.json` is missing, the store creates the base seed automatically on first use.
 - `data/db.json` is git-ignored (`npm run seed` recreates it). `VELZA_DB_PATH` overrides the file
   path (used by tests).
-- There is no login: the browser sends the selected user's id in an `x-user-id` header and the services
-  check the role against `src/lib/core/permissions.ts`.
+- ~~There is no login: the browser sends the selected user's id in an `x-user-id` header~~ — replaced by
+  real sign-in, see "Sign-in, approvals, portals, territories" below. Services still check the role against
+  `src/lib/core/permissions.ts`.
 - A service layer (`src/lib/services`) sits between routes and the store: it loads data, calls the pure
   rules in `src/lib/core`, and persists. Routes only parse the request and call a service.
 - Dispatch is two calls: `check` validates each scan as it is added to the list (and logs it), `confirm`
@@ -67,8 +68,8 @@ Choices made where the spec was silent or ambiguous. Simplest reasonable option 
 
 ## UI shell and admin (phase 4)
 
-- Role switcher + user picker live in the header; the choice is saved in `localStorage` and sent as
-  `x-user-id`. Opening a screen that belongs to another role shows a "switch role" notice.
+- ~~Role switcher + user picker in the header~~ — replaced by sign-in; the header shows the signed-in
+  user, their portal, Account and Sign out.
 - Next 16 dev "instant navigation" validation is limited to segments that opt in
   (`experimental.instantInsights.validationLevel = "manual-warning"`), because every screen loads its
   data from the API after mount by design.
@@ -124,3 +125,42 @@ Choices made where the spec was silent or ambiguous. Simplest reasonable option 
   `VELZA_DB_PATH=data/e2e-db.json`, so it doesn't touch the dev database. It uses the installed Microsoft
   Edge (`channel: msedge`) so no browser download is needed; override with `PW_CHANNEL`.
 - The demo helper is shown in dev mode only (or with `NEXT_PUBLIC_DEMO_HELPER=1`).
+
+## Sign-in, approvals, portals, territories (after phase 10)
+
+- **Accounts live in the store** (`users` table): sign-in ID (lowercase, unique), scrypt password hash, and
+  approval fields (`adminApprovedBy/At`, `hqApprovedBy/At`, `rejectedBy/At/Reason`). No plain password is
+  stored or sent to the browser. Sessions are a `sessions` table keyed by the SHA-256 of a random token kept in
+  an HttpOnly, SameSite=Lax cookie; they last 12 hours. State-changing API calls from another origin are refused.
+- **Who approves what**: "approval from Velza Admin and HQ" is read as *both* are required for every account
+  in the distribution line (Manufacturer Operator, QC, Super Stockist, Distributor, Supplier, Outlet). The Admin
+  creates the account (that is the Admin approval); Velza HQ then approves it on **Account approvals**. HQ
+  can reject or later revoke with a reason; the Admin can fix the account and **Send to HQ again**. Velza
+  Admin and Velza HQ accounts are Velza Global India staff and need no approval.
+- Changing a user's **role or partner** is a new access grant, so it goes back to HQ. Changing name,
+  sign-in ID or password doesn't.
+- There is **no self-registration** page: the Admin sets the sign-in ID and password for every role, as
+  requested. Users can change their own password under **Account**; forgotten passwords are reset by the Admin.
+- **One portal per role**: the Admin portal no longer includes the HQ dashboard or search (previously
+  `dashboard`/`search` allowed ADMIN). Only Velza HQ (role `TRACE_OWNER`, now labelled "Velza HQ") sees the HQ
+  dashboard. Partner users get only their own partner in `/api/bootstrap`, never the user list or other
+  partners.
+- The account state is re-checked on every API call, so disabling, rejecting or revoking takes effect at
+  once (their sessions are also deleted).
+- 5 wrong passwords for one sign-in ID lock it for 5 minutes (in memory; a server restart clears it).
+- `proxy.ts` only checks that a session cookie exists (redirect to `/login`); the real checks are in the API.
+  The public QR page `/t/<code>` stays public.
+- **Territories**: a distributor has one **assigned Super Stockist** (`partner.parentId`); a Super Stockist
+  may dispatch only to its assigned distributors and sees only them (rule `isAssignedDestination` in
+  `core/rules.ts`). The "Pune / Mumbai / Bengaluru" areas are a free-text **territory** label on each partner;
+  access follows the assignment, not the text. Other tiers (Manufacturer → any SS, DB → any Supplier,
+  Supplier → any Outlet) are unchanged because only the SS restriction was asked for.
+- Seed: SS-2 moved to Pune (East & South Maharashtra), SS-1 is Mumbai (North & West Maharashtra); DB-1 → SS-1,
+  DB-2 → SS-2. All seeded accounts use the password `Velza@2026` (or `SEED_PASSWORD`).
+- **Deletes**: Admin can delete partners, users, devices, countries and flavours only when nothing in the
+  history refers to them (movements, scans, lots, batches, users, assigned distributors…); otherwise the
+  message says what uses it and to untick Active instead. A deleted device's unused batch codes are marked
+  RETURNED and never reissued. The Admin can't delete, disable or change the role of their own account, and
+  at least one active Admin always remains.
+- The prototype store is still the JSON file (`data/db.json`); accounts, approvals and sessions are ordinary
+  tables behind the `Store` interface, so they move to a real database with everything else.

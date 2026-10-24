@@ -17,6 +17,8 @@ export const ACTIONS = [
   "dashboard",
   "search",
   "recall",
+  "approve",
+  "territory",
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -32,9 +34,14 @@ export const PERMISSIONS: Record<Action, Role[]> = {
   device: ["OPERATOR", "ADMIN"],
   sync: ["OPERATOR"],
   stock: ["OPERATOR", "QC", "SS", "DB", "SUPPLIER", "OUTLET"],
-  dashboard: ["TRACE_OWNER", "ADMIN"],
-  search: ["TRACE_OWNER", "ADMIN"],
+  // The HQ dashboard is for Velza HQ only; every role gets its own portal and nothing else.
+  dashboard: ["TRACE_OWNER"],
+  search: ["TRACE_OWNER"],
   recall: ["TRACE_OWNER"],
+  /** HQ approval of partner accounts (Admin approval happens when the Admin creates the account). */
+  approve: ["TRACE_OWNER"],
+  /** Super Stockist: see its assigned distributors. */
+  territory: ["SS"],
 };
 
 export function can(role: Role, action: Action): boolean {

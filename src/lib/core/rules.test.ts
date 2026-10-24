@@ -9,6 +9,7 @@ import {
   checkVerifyPackScan,
   dispatchPatch,
   evaluateVerification,
+  isAssignedDestination,
   packStatusForLot,
   publicStatus,
   receivePatch,
@@ -17,11 +18,12 @@ import {
 } from "./rules";
 import type { Partner, PartnerType } from "./types";
 
-const partner = (id: string, type: PartnerType): Partner => ({ id, type, name: id, city: "Pune", active: true });
+const partner = (id: string, type: PartnerType, parentId: string | null = null): Partner => ({ id, type, name: id, city: "Pune", territory: "", parentId, active: true });
 const MFG = partner("mfg", "MANUFACTURER");
 const SS1 = partner("ss1", "SS");
 const SS2 = partner("ss2", "SS");
-const DB1 = partner("db1", "DB");
+const DB1 = partner("db1", "DB", "ss1");
+const DB2 = partner("db2", "DB", "ss2");
 const SUP1 = partner("sup1", "SUPPLIER");
 const OUT1 = partner("out1", "OUTLET");
 
@@ -48,6 +50,17 @@ describe("canDispatch", () => {
     expect(canDispatch({ ...base, sender: SS1, receiver: SS2, item: atSS })).toMatchObject({ code: "WRONG_DESTINATION" });
     expect(canDispatch({ ...base, sender: SS1, receiver: DB1, item: atSS })).toEqual({ ok: true });
     expect(canDispatch({ ...base, sender: OUT1, receiver: null, item: lot() })).toMatchObject({ code: "NOT_ALLOWED" });
+  });
+
+  it("lets a Super Stockist supply only its assigned distributors", () => {
+    const atSS1 = lot({ status: "AT_SS", locationId: "ss1" });
+    expect(canDispatch({ ...base, sender: SS1, receiver: DB2, item: atSS1 })).toMatchObject({ ok: false, code: "WRONG_DESTINATION", message: expect.stringMatching(/assigned distributors/) });
+    expect(canDispatch({ ...base, sender: SS1, receiver: { ...DB1, parentId: null }, item: atSS1 })).toMatchObject({ code: "WRONG_DESTINATION" });
+    expect(isAssignedDestination(SS2, DB2)).toBe(true);
+    expect(isAssignedDestination(SS2, DB1)).toBe(false);
+    // Other tiers are not territory-bound
+    expect(isAssignedDestination(MFG, SS2)).toBe(true);
+    expect(isAssignedDestination(DB1, SUP1)).toBe(true);
   });
 
   it("requires an invoice", () => {

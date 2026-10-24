@@ -2,16 +2,15 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ROLE_LABELS, ROLES, type Role } from "@/lib/core/types";
+import { ROLE_LABELS } from "@/lib/core/types";
 import { MENU } from "@/lib/menu";
 import { DeviceBar } from "./DeviceBar";
 import { useSession } from "./session";
 import { cx } from "./ui";
 
 export function AppHeader() {
-  const { data, role, user, partner, setRole, setUserId } = useSession();
+  const { role, user, organisation, logout } = useSession();
   const pathname = usePathname();
-  const users = data && role ? data.users.filter((u) => u.role === role && u.active) : [];
 
   return (
     <header className="border-b border-slate-200 bg-white print:hidden">
@@ -20,45 +19,26 @@ export function AppHeader() {
           <span className="inline-block h-6 w-6 rounded bg-teal-700 text-center text-sm leading-6 text-white">V</span>
           Velza Traceability
         </Link>
-        <div className="flex flex-1 flex-wrap items-center gap-2">
-          <label className="flex items-center gap-1 text-xs text-slate-500">
-            Role
-            <select
-              aria-label="Role"
-              value={role ?? ""}
-              onChange={(e) => setRole(e.target.value as Role)}
-              className="min-h-9 rounded-md border border-slate-300 bg-white px-2 text-sm text-slate-900"
-            >
-              <option value="" disabled>
-                Choose a role…
-              </option>
-              {ROLES.map((r) => (
-                <option key={r} value={r}>
-                  {ROLE_LABELS[r]}
-                </option>
-              ))}
-            </select>
-          </label>
-          {role && (
-            <label className="flex items-center gap-1 text-xs text-slate-500">
-              User
-              <select
-                aria-label="User"
-                value={user?.id ?? ""}
-                onChange={(e) => setUserId(e.target.value)}
-                className="min-h-9 max-w-[16rem] rounded-md border border-slate-300 bg-white px-2 text-sm text-slate-900"
-              >
-                {users.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          {partner && <span className="truncate text-xs text-slate-500">@ {partner.name}</span>}
-        </div>
+        {role && user && (
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+            <span className="rounded bg-teal-50 px-2 py-0.5 text-xs font-semibold text-teal-800">{ROLE_LABELS[role]} portal</span>
+            <span className="truncate text-slate-700" data-testid="signed-in-user">
+              {user.name}
+            </span>
+            <span className="truncate text-xs text-slate-500">@ {organisation}</span>
+          </div>
+        )}
         {role === "OPERATOR" && <DeviceBar />}
+        {user && (
+          <div className="flex items-center gap-1 text-sm">
+            <Link href="/account" className="rounded-md px-2 py-1.5 text-slate-700 hover:bg-slate-100">
+              Account
+            </Link>
+            <button type="button" onClick={() => void logout()} className="rounded-md px-2 py-1.5 font-medium text-red-700 hover:bg-red-50">
+              Sign out
+            </button>
+          </div>
+        )}
       </div>
       {role && (
         <nav className="mx-auto flex max-w-6xl gap-1 overflow-x-auto px-4 pb-2 text-sm">

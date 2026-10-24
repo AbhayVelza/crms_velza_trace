@@ -1,9 +1,10 @@
 // Shared service helpers: errors, actor resolution, item lookup with sync visibility.
 
+import { canSignIn } from "@/lib/core/auth";
 import { parseCode, type ParsedCode } from "@/lib/core/codes";
 import { can, type Action } from "@/lib/core/permissions";
 import type { MovableItem, RejectCode } from "@/lib/core/rules";
-import type { Device, Lot, Pack, Partner, Role, ScanContext, User } from "@/lib/core/types";
+import type { Device, Lot, Pack, Partner, PublicUser, Role, ScanContext, User } from "@/lib/core/types";
 import type { StoreTx } from "@/lib/store";
 
 export class ServiceError extends Error {
@@ -28,10 +29,13 @@ export interface Actor {
   partner: Partner | null;
 }
 
+export const notSignedIn = (message = "Please sign in") => new ServiceError(401, "NOT_SIGNED_IN", message);
+
+/** The signed-in user. Re-checked on every request, so disabling or un-approving an account takes effect at once. */
 export async function loadActor(tx: StoreTx, userId: string | null | undefined): Promise<Actor> {
-  if (!userId) throw new ServiceError(401, "NO_USER", "Pick a user in the header first");
+  if (!userId) throw notSignedIn();
   const user = await tx.users.get(userId);
-  if (!user || !user.active) throw new ServiceError(401, "NO_USER", "Unknown or inactive user");
+  if (!user || !canSignIn({ ...user, hasPassword: !!user.passwordHash })) throw notSignedIn("Your account is no longer active — sign in again");
   const partner = user.partnerId ? await tx.partners.get(user.partnerId) : null;
   return { user, role: user.role, partner };
 }
@@ -145,6 +149,11 @@ export async function setLotState(tx: StoreTx, lot: Lot, patch: Partial<Lot>, at
     await tx.packs.update(pack.id, packPatch);
   }
   return updated;
+}
+
+/** Strip the password hash before a user row leaves the server. */
+export function publicUser({ passwordHash, ...u }: User): PublicUser {
+  return { ...u, hasPassword: !!passwordHash };
 }
 
 export function partnerName(partners: Partner[], id: string | null | undefined): string | null {

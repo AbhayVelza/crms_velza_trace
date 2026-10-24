@@ -1,4 +1,4 @@
-import { handler } from "@/lib/api";
+import { handler, userIdOf } from "@/lib/api";
 import { bootstrap } from "@/lib/services/admin";
 
-export const GET = handler(() => bootstrap());
+export const GET = handler(async (req) => bootstrap(userIdOf(req)));

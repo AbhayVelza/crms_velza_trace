@@ -2,7 +2,7 @@
 // npm run seed -- --demo  → base seed + one printed, packed batch partly moved down the chain
 
 import { getStore, dbFilePath } from "@/lib/store";
-import { buildBaseSeed } from "@/lib/store/seedData";
+import { buildBaseSeed, DEFAULT_SEED_PASSWORD } from "@/lib/store/seedData";
 import { buildDemoData } from "@/lib/services/demoSeed";
 
 async function main() {
@@ -17,6 +17,7 @@ async function main() {
   }
   const [partners, users, pool] = await Promise.all([store.partners.list(), store.users.list(), store.batchCodePool.list({ status: "RESERVED" })]);
   console.log(`${partners.length} partners, ${users.length} users, ${pool.length} reserved batch codes`);
+  console.log(`Sign-in IDs (password ${process.env.SEED_PASSWORD || DEFAULT_SEED_PASSWORD}): ${users.map((u) => u.loginId).join(", ")}`);
 }
 
 main().catch((e) => {

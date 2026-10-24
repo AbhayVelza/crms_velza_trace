@@ -14,6 +14,7 @@ import type {
   PrintOrder,
   Reprint,
   Scan,
+  Session,
   Settings,
   User,
 } from "@/lib/core/types";
@@ -32,6 +33,8 @@ export interface Repo<T extends Row> {
   create(row: T): Promise<T>;
   createMany(rows: T[]): Promise<void>;
   update(id: string, patch: Partial<Omit<T, "id">>): Promise<T>;
+  /** Hard delete. Callers check references first; ledger tables have no delete. */
+  delete(id: string): Promise<void>;
 }
 
 /** Ledger tables: rows are appended, never updated or deleted. */
@@ -57,6 +60,7 @@ export interface StoreTx {
   movements: AppendOnlyRepo<Movement>;
   scans: AppendOnlyRepo<Scan>;
   reprints: AppendOnlyRepo<Reprint>;
+  sessions: Repo<Session>;
 
   appendMovement(m: NewMovement): Promise<Movement>;
   appendScan(s: NewScan): Promise<Scan>;
@@ -83,6 +87,7 @@ export interface DbSnapshot {
   movements: Movement[];
   scans: Scan[];
   reprints: Reprint[];
+  sessions: Session[];
   settings: Settings[];
 }
 
@@ -100,6 +105,7 @@ export const COLLECTIONS = [
   "movements",
   "scans",
   "reprints",
+  "sessions",
   "settings",
 ] as const satisfies readonly (keyof DbSnapshot)[];
 

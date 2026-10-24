@@ -1,15 +1,52 @@
-// Route handler plumbing: error → JSON mapping, actor header, JSON body parsing.
+// Route handler plumbing: session cookie → signed-in user, error → JSON mapping, JSON body parsing.
 // Routes stay thin: validate (zod, inside services) → call a service → return JSON.
 
 import { connection } from "next/server";
 import { ZodError } from "zod";
 import { NotFoundError } from "@/lib/store";
-import { badRequest, ServiceError } from "@/lib/services/common";
+import { SESSION_COOKIE } from "@/lib/sessionCookie";
+import { sessionUserId } from "@/lib/services/auth";
+import { badRequest, forbidden, ServiceError } from "@/lib/services/common";
 
-export const USER_HEADER = "x-user-id";
+export { SESSION_COOKIE };
 
+// Signed-in user per request, resolved once by `handler()` so routes can read it synchronously.
+const requestUser = new WeakMap<Request, string | null>();
+
+/** The signed-in user's id (null if not signed in). Only valid inside `handler()`. */
 export function userIdOf(req: Request): string | null {
-  return req.headers.get(USER_HEADER);
+  return requestUser.get(req) ?? null;
+}
+
+export function sessionTokenOf(req: Request): string | null {
+  for (const part of (req.headers.get("cookie") ?? "").split(";")) {
+    const [k, ...v] = part.trim().split("=");
+    if (k === SESSION_COOKIE) return decodeURIComponent(v.join("="));
+  }
+  return null;
+}
+
+function isHttps(req: Request) {
+  return new URL(req.url).protocol === "https:" || req.headers.get("x-forwarded-proto") === "https";
+}
+
+/** HttpOnly so page scripts can't read it; SameSite=Lax so other sites can't post with it. */
+export function sessionCookie(req: Request, token: string, expiresAt: string): string {
+  const maxAge = Math.max(0, Math.floor((Date.parse(expiresAt) - Date.now()) / 1000));
+  return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${isHttps(req) ? "; Secure" : ""}`;
+}
+
+export function clearSessionCookie(req: Request): string {
+  return `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${isHttps(req) ? "; Secure" : ""}`;
+}
+
+/** Refuse state-changing requests sent from another site's page. */
+function checkSameOrigin(req: Request) {
+  if (req.method === "GET" || req.method === "HEAD") return;
+  const origin = req.headers.get("origin");
+  if (origin && new URL(origin).host !== (req.headers.get("x-forwarded-host") ?? req.headers.get("host"))) {
+    throw forbidden("Cross-site request refused");
+  }
 }
 
 export async function jsonBody(req: Request): Promise<unknown> {
@@ -42,14 +79,17 @@ export function errorResponse(e: unknown): Response {
   return Response.json({ error: { code: "INTERNAL", message: "Unexpected server error — see the server log" } } satisfies ApiError, { status: 500 });
 }
 
-/** Wrap a route handler: always dynamic, JSON result, typed errors. */
+/** Wrap a route handler: always dynamic, signed-in user resolved, JSON result (or a Response as-is), typed errors. */
 export function handler<C = unknown>(fn: (req: Request, ctx: C) => Promise<unknown>) {
   return async (req: Request, ctx: C): Promise<Response> => {
     // Outside the try: during `next build` this rejects on purpose to stop prerendering,
     // and Next must see that rejection.
     await connection();
     try {
-      return Response.json(await fn(req, ctx));
+      checkSameOrigin(req);
+      requestUser.set(req, await sessionUserId(sessionTokenOf(req)));
+      const out = await fn(req, ctx);
+      return out instanceof Response ? out : Response.json(out);
     } catch (e) {
       return errorResponse(e);
     }

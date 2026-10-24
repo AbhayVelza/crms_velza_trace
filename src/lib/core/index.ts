@@ -5,3 +5,4 @@ export * from "./alerts";
 export * from "./printOrder";
 export * from "./permissions";
 export * from "./stickers";
+export * from "./auth";

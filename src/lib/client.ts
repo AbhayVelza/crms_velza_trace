@@ -1,6 +1,7 @@
 "use client";
 
-// Browser-side API helper: adds the selected user's id and turns error JSON into exceptions.
+// Browser-side API helper: the session cookie goes along automatically; error JSON becomes exceptions;
+// an expired session sends the user back to the sign-in page.
 
 export class ApiClientError extends Error {
   constructor(
@@ -13,15 +14,15 @@ export class ApiClientError extends Error {
   }
 }
 
-let currentUserId: string | null = null;
-
-export function setApiUser(id: string | null) {
-  currentUserId = id;
+function toSignIn() {
+  const { pathname, search } = window.location;
+  if (pathname === "/login" || pathname.startsWith("/t/")) return;
+  const back = pathname + search;
+  window.location.assign(back === "/" ? "/login" : `/login?next=${encodeURIComponent(back)}`);
 }
 
 export async function api<T = unknown>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
   const headers: Record<string, string> = {};
-  if (currentUserId) headers["x-user-id"] = currentUserId;
   if (init.body !== undefined) headers["content-type"] = "application/json";
   let res: Response;
   try {
@@ -30,6 +31,7 @@ export async function api<T = unknown>(path: string, init: { method?: string; bo
       headers,
       body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
       cache: "no-store",
+      credentials: "same-origin",
     });
   } catch {
     throw new ApiClientError(0, "NETWORK", "Cannot reach the server — is `npm run dev` running?");
@@ -37,6 +39,7 @@ export async function api<T = unknown>(path: string, init: { method?: string; bo
   const data = await res.json().catch(() => null);
   if (!res.ok) {
     const err = data?.error;
+    if (res.status === 401 && err?.code === "NOT_SIGNED_IN") toSignIn();
     throw new ApiClientError(res.status, err?.code ?? "HTTP_" + res.status, err?.message ?? res.statusText, err?.details);
   }
   return data as T;

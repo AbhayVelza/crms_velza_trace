@@ -15,7 +15,7 @@ interface AlertRow {
   user: string | null;
 }
 
-const TYPES = ["NOT_RECEIVED", "WRONG_RECEIVER", "UNKNOWN_CODE", "DUPLICATE_RECEIPT", "BLOCKED_CODE"];
+const TYPES = ["NOT_RECEIVED", "WRONG_RECEIVER", "UNKNOWN_CODE", "DUPLICATE_RECEIPT", "BLOCKED_CODE", "DAMAGED"];
 
 export default function AlertsPage() {
   const { data, error } = useApi<AlertRow[]>("/api/alerts", { refreshOnChange: true });
@@ -23,7 +23,7 @@ export default function AlertsPage() {
   const rows = (data ?? []).filter((a) => !filter || a.type === filter);
   return (
     <>
-      <PageTitle title="Alerts" subtitle="Computed from the scan audit log and items in transit." />
+      <PageTitle title="Alerts" subtitle="Computed from the scan audit log, damage reports and items in transit." />
       {error && <Notice tone="error">{error}</Notice>}
       <div className="mb-3 flex flex-wrap gap-2">
         <button type="button" onClick={() => setFilter(null)} className={cx("rounded-full px-3 py-1 text-sm", !filter ? "bg-teal-700 text-white" : "bg-white text-slate-700 ring-1 ring-slate-300")}>

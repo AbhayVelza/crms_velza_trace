@@ -1,14 +1,17 @@
 // Status and movement rules. Pure: callers load the data, these functions decide.
 
 import { buildPackCodes, PACKS_PER_LOT } from "./codes";
-import type { ItemKind, ItemStatus, LotType, Partner, PartnerType } from "./types";
+import { PARTNER_TYPES, type ItemKind, type ItemStatus, type LotType, type Partner, type PartnerType } from "./types";
 
-export const NEXT_TIER: Record<PartnerType, PartnerType | null> = {
-  MANUFACTURER: "SS",
-  SS: "DB",
-  DB: "SUPPLIER",
-  SUPPLIER: "OUTLET",
-  OUTLET: null,
+/**
+ * Distribution line: Manufacturer → Super Stockist → Distributor → Retailer. A few retailers are supplied
+ * by their Super Stockist directly (Manufacturer → Super Stockist → Retailer). Retailers are the last tier.
+ */
+export const DESTINATION_TYPES: Record<PartnerType, PartnerType[]> = {
+  MANUFACTURER: ["SS"],
+  SS: ["DB", "RETAILER"],
+  DB: ["RETAILER"],
+  RETAILER: [],
 };
 
 /** Status of an item sitting at a partner of this tier. */
@@ -16,8 +19,7 @@ export const AT_STATUS: Record<PartnerType, ItemStatus> = {
   MANUFACTURER: "PACKED",
   SS: "AT_SS",
   DB: "AT_DB",
-  SUPPLIER: "AT_SUPPLIER",
-  OUTLET: "AT_OUTLET",
+  RETAILER: "AT_RETAILER",
 };
 
 /** Scanning one of these raises a BLOCKED_CODE alert. */
@@ -83,10 +85,6 @@ function sealRule(item: MovableItem, parentLotStatus: ItemStatus | null): RuleRe
   return null;
 }
 
-export function nextTierOf(type: PartnerType): PartnerType | null {
-  return NEXT_TIER[type];
-}
-
 // ---------------------------------------------------------------- dispatch
 
 export interface DispatchCheckInput {
@@ -98,24 +96,43 @@ export interface DispatchCheckInput {
 }
 
 /**
- * Territory rule: a Super Stockist supplies only the distributors assigned to it
- * (distributor.parentId). Other tiers may supply any partner of the next tier.
+ * Assignment chain (partner.parentId): each Distributor is assigned to one Super Stockist; each Retailer to
+ * one Distributor, or to its Super Stockist directly. Super Stockists are not assigned: the manufacturer may
+ * supply any of them.
  */
+export const ASSIGNED_TO: Partial<Record<PartnerType, PartnerType[]>> = { DB: ["SS"], RETAILER: ["DB", "SS"] };
+
+export const ASSIGNED_PLURAL: Partial<Record<PartnerType, string>> = { DB: "distributors", RETAILER: "retailers" };
+
+/** The tiers whose partners can be assigned to a partner of this type: SS → Distributors and Retailers, DB → Retailers. */
+export function assignedTypesOf(type: PartnerType): PartnerType[] {
+  return PARTNER_TYPES.filter((t) => ASSIGNED_TO[t]?.includes(type));
+}
+
+/** "distributors and retailers" for an SS, "retailers" for a DB, "" for tiers nobody is assigned to. */
+export function assignedPluralOf(type: PartnerType): string {
+  return assignedTypesOf(type)
+    .map((t) => ASSIGNED_PLURAL[t])
+    .join(" and ");
+}
+
+/** A sender may supply only the partners assigned to it (when the receiver's tier is assigned at all). */
 export function isAssignedDestination(sender: Pick<Partner, "id" | "type">, receiver: Pick<Partner, "type" | "parentId">): boolean {
-  if (sender.type === "SS" && receiver.type === "DB") return receiver.parentId === sender.id;
+  if (ASSIGNED_TO[receiver.type]?.includes(sender.type)) return receiver.parentId === sender.id;
   return true;
 }
 
 /** Destination and invoice checks that do not depend on the item. */
 export function checkDispatchHeader(sender: Partner, receiver: Partner | null, invoice: string): RuleResult {
-  const next = NEXT_TIER[sender.type];
-  if (!next) return reject("NOT_ALLOWED", `${sender.name} is the last tier and cannot dispatch`);
+  const allowed = DESTINATION_TYPES[sender.type];
+  if (!allowed.length) return reject("NOT_ALLOWED", `${sender.name} is the last tier and cannot dispatch`);
   if (!receiver) return reject("WRONG_DESTINATION", "Choose a destination");
-  if (receiver.type !== next) {
-    return reject("WRONG_DESTINATION", `${sender.type} can only dispatch to ${next}, not ${receiver.type}`);
+  if (!receiver.active) return reject("WRONG_DESTINATION", `${receiver.name} is inactive and can't receive stock`);
+  if (!allowed.includes(receiver.type)) {
+    return reject("WRONG_DESTINATION", `${sender.type} can only dispatch to ${allowed.join(" or ")}, not ${receiver.type}`);
   }
   if (!isAssignedDestination(sender, receiver)) {
-    return reject("WRONG_DESTINATION", `${receiver.name} is not one of ${sender.name}'s assigned distributors`);
+    return reject("WRONG_DESTINATION", `${receiver.name} is not one of ${sender.name}'s assigned ${ASSIGNED_PLURAL[receiver.type]}`);
   }
   if (!invoice.trim()) return reject("INVOICE_REQUIRED", "Invoice/challan number is required");
   return OK;
@@ -213,14 +230,58 @@ export function evaluateVerification(lot: VerifiableLot, packCodes: string[]): {
 // ---------------------------------------------------------------- open, void, reprint, recall
 
 export function canOpenLot(lot: MovableItem, actor: Partner): RuleResult {
-  if (actor.type !== "SUPPLIER" && actor.type !== "OUTLET") {
-    return reject("NOT_ALLOWED", "Only a Supplier or Outlet can open a lot");
+  if (actor.type !== "RETAILER") {
+    return reject("NOT_ALLOWED", "Only a Retailer can open a lot");
   }
   const blocked = blockedResult(lot);
   if (blocked) return blocked;
   if (lot.status === "OPENED") return reject("WRONG_STATUS", `Lot ${lot.code} is already opened`);
   if (lot.locationId !== actor.id || lot.status !== AT_STATUS[actor.type]) {
     return reject("NOT_AT_LOCATION", `Lot ${lot.code} is not in stock at ${actor.name}`);
+  }
+  return OK;
+}
+
+// ---------------------------------------------------------------- damaged
+
+export interface DamageCheckInput {
+  item: MovableItem;
+  parentLotStatus: ItemStatus | null; // for packs: the lot's status
+  partner: Partner;
+  reason: string;
+  packsHere?: number; // for an opened lot: its packs still in stock at the partner
+}
+
+/**
+ * Any partner holding stock reports damaged units; they stop moving for good and leave its stock.
+ * A case or tray is reported whole by its lot code, sealed or opened (then: its packs still here);
+ * single packs only after the lot is opened.
+ */
+export function canReportDamaged({ item, parentLotStatus, partner, reason, packsHere = 0 }: DamageCheckInput): RuleResult {
+  if (!reason.trim()) return reject("REASON_REQUIRED", "Say what is damaged (e.g. crushed, leaking)");
+  if (item.status === "DAMAGED") return reject("WRONG_STATUS", `${item.code} is already reported damaged`);
+  const blocked = blockedResult(item);
+  if (blocked) return blocked;
+  if (item.kind === "PACK" && parentLotStatus !== "OPENED") {
+    const open = partner.type === "RETAILER" ? ", or open the lot first" : "";
+    return reject("LOT_SEALED", `Pack ${item.code} is inside a sealed case or tray — report the whole lot by its lot code${open}`);
+  }
+  if (item.kind === "LOT" && item.status === "OPENED") {
+    // Opened or not, a case/tray is reported whole: the packs of it still in stock here.
+    if (item.locationId !== partner.id) {
+      const hint = packsHere ? ` — report its ${packsHere} pack(s) here one by one` : "";
+      return reject("NOT_AT_LOCATION", `${item.code} was opened before it reached ${partner.name}${hint}`);
+    }
+    if (!packsHere) return reject("NOT_AT_LOCATION", `None of the packs of ${item.code} are in stock at ${partner.name} any more`);
+    return OK;
+  }
+  if (item.status === "IN_TRANSIT") {
+    const hint = item.inTransitToId === partner.id ? " — receive it first, then report the damage" : "";
+    return reject("NOT_AT_LOCATION", `${item.code} is in transit${hint}`);
+  }
+  if (item.locationId !== partner.id || item.status !== AT_STATUS[partner.type]) {
+    const hint = item.status === "PRINTED" || item.status === "GENERATED" ? " — not packed yet: use Void lot or Reprint instead" : "";
+    return reject("NOT_AT_LOCATION", `${item.code} is not in stock at ${partner.name}${hint}`);
   }
   return OK;
 }
@@ -243,6 +304,14 @@ export function canReprint(item: { code: string; status: ItemStatus }, reason: s
     return reject("WRONG_STATUS", `${item.code} is ${item.status}; only stickers still at the manufacturer can be reprinted`);
   }
   return OK;
+}
+
+/**
+ * A quarantined lot comes back only through a reprint: reprinting its lot or a pack sticker (with a reason)
+ * sends the whole lot back to PRINTED, so QC must verify it again before it is PACKED. Voiding it ends it.
+ */
+export function lotStatusAfterReprint(lotStatus: ItemStatus): ItemStatus {
+  return lotStatus === "QUARANTINED" ? "PRINTED" : lotStatus;
 }
 
 /** Recall moves every lot/pack of the batch to RECALLED, except VOID ones which never left the factory. */

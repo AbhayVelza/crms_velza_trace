@@ -53,6 +53,10 @@ export default function ReprintPage() {
           <Field label="Why is it being reprinted?">
             <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Sticker torn while pasting" />
           </Field>
+          <p className="mt-2 text-xs text-slate-500">
+            Reprinting a sticker of a quarantined lot takes the lot out of quarantine and back to QC: it must be verified again
+            before it can be dispatched. A quarantined lot that can&apos;t be fixed is voided instead (Void lot).
+          </p>
           <Button className="mt-3" onClick={submit} disabled={!code || !reason.trim()}>
             Log reprint
           </Button>

@@ -6,6 +6,7 @@ import { extractScannedCode } from "@/lib/core/codes";
 import { publicStatus, recallPatch } from "@/lib/core/rules";
 import { ITEM_STATUSES, PARTNER_TYPE_LABELS, type ItemStatus, type Lot, type Movement, type Pack, type Partner } from "@/lib/core/types";
 import { getStore, type StoreTx } from "@/lib/store";
+import { damagedCounts, damagedUnits } from "./damage";
 import { badRequest, findItem, isVisible, loadActor, logScan, notFound, nowIso, partnerName, requireAction, requirePartner } from "./common";
 
 export const recallSchema = z.object({ batchCode: z.string(), reason: z.string() });
@@ -159,13 +160,35 @@ export async function alerts(userId: string | null) {
   const actor = await loadActor(store, userId);
   requireAction(actor, "dashboard");
   const { lots, packs, lotByCode } = await visibleItems(store);
-  const [scans, settings] = await Promise.all([store.scans.list(), store.getSettings()]);
+  const [scans, settings, damaged] = await Promise.all([store.scans.list(), store.getSettings(), store.movements.list({ type: "DAMAGED" })]);
   const n = await names(store);
-  return computeAlerts({ scans, inTransit: inTransitUnits(lots, packs, lotByCode), settings, now: new Date() }).map((a) => ({
+  // Only damage on synced (visible) lots; the code's first 15 characters are its lot code.
+  const damageReports = damaged.filter((m) => lotByCode.has(m.itemCode.slice(0, 15)));
+  return computeAlerts({ scans, inTransit: inTransitUnits(lots, packs, lotByCode), damageReports, settings, now: new Date() }).map((a) => ({
     ...a,
     partner: n.partner(a.partnerId),
     user: n.user(a.userId),
   }));
+}
+
+/**
+ * Cases and trays held at a location, opened or not: an opened one counts where it was opened while any of
+ * its packs is still in stock there. Loose packs are the packs of opened lots in stock there.
+ */
+export function stockCounts(partnerId: string, lots: Lot[], packs: Pack[], lotByCode: Map<string, Lot>) {
+  const loose = packs.filter((pk) => pk.locationId === partnerId && lotByCode.get(pk.lotCode)?.status === "OPENED" && pk.status !== "IN_TRANSIT" && pk.status !== "DAMAGED");
+  const withPacksHere = new Set(loose.map((pk) => pk.lotCode));
+  const here = lots.filter((l) => l.locationId === partnerId);
+  const sealed = here.filter((l) => !["IN_TRANSIT", "VOID", "OPENED", "DAMAGED"].includes(l.status));
+  const opened = here.filter((l) => l.status === "OPENED" && withPacksHere.has(l.lotCode));
+  const count = (ls: Lot[], t: Lot["lotType"]) => ls.filter((l) => l.lotType === t).length;
+  return {
+    cases: count(sealed, "CASE") + count(opened, "CASE"),
+    trays: count(sealed, "TRAY") + count(opened, "TRAY"),
+    openedCases: count(opened, "CASE"),
+    openedTrays: count(opened, "TRAY"),
+    loosePacks: loose.length,
+  };
 }
 
 export async function dashboard(userId: string | null) {
@@ -173,21 +196,22 @@ export async function dashboard(userId: string | null) {
   const actor = await loadActor(store, userId);
   requireAction(actor, "dashboard");
   const { lots, packs, lotByCode } = await visibleItems(store);
-  const settings = await store.getSettings();
+  const [settings, damageReports] = await Promise.all([store.getSettings(), store.movements.list({ type: "DAMAGED" })]);
   const n = await names(store);
   const now = new Date();
+  const damaged = damagedUnits(lots, packs, damageReports);
 
   const countBy = (rows: { status: ItemStatus }[]) =>
     Object.fromEntries(ITEM_STATUSES.map((s) => [s, rows.filter((r) => r.status === s).length]).filter(([, c]) => c)) as Record<string, number>;
 
-  const loosePacks = packs.filter((p) => lotByCode.get(p.lotCode)?.status === "OPENED");
   const stock = n.partners
     .map((p) => {
-      const atLots = lots.filter((l) => l.locationId === p.id && l.status !== "IN_TRANSIT" && l.status !== "VOID" && l.status !== "OPENED");
-      const atPacks = loosePacks.filter((pk) => pk.locationId === p.id && pk.status !== "IN_TRANSIT");
-      return { partnerId: p.id, partner: p.name, tier: p.type, tierLabel: PARTNER_TYPE_LABELS[p.type], lots: atLots.length, cases: atLots.filter((l) => l.lotType === "CASE").length, trays: atLots.filter((l) => l.lotType === "TRAY").length, loosePacks: atPacks.length };
+      // Cases and trays count whether they were opened or not, damaged ones too.
+      const c = stockCounts(p.id, lots, packs, lotByCode);
+      const d = damagedCounts(damaged.filter((u) => u.partnerId === p.id));
+      return { partnerId: p.id, partner: p.name, tier: p.type, tierLabel: PARTNER_TYPE_LABELS[p.type], ...c, damaged: d };
     })
-    .filter((s) => s.lots || s.loosePacks);
+    .filter((s) => s.cases || s.trays || s.loosePacks || s.damaged.cases || s.damaged.trays || s.damaged.packs);
 
   const threshold = notReceivedThresholdMs(settings);
   const inTransit = inTransitUnits(lots, packs, lotByCode)
@@ -221,6 +245,10 @@ export async function myStock(userId: string | null) {
   const lots = (await store.lots.list()).filter((l) => isVisible(l, partner.id));
   const lotByCode = new Map(lots.map((l) => [l.lotCode, l]));
   const packs = (await store.packs.list()).filter((p) => lotByCode.get(p.lotCode)?.status === "OPENED");
+  // An opened lot reported damaged here as a whole leaves stock with its packs.
+  const reportedWhole = new Set(
+    (await store.movements.list({ type: "DAMAGED" })).filter((m) => m.itemKind === "LOT" && m.fromId === partner.id).map((m) => m.itemCode),
+  );
   const view = (l: Lot) => ({ code: l.lotCode, kind: "LOT" as const, lotType: l.lotType, flavour: n.flavour(l.flavour), batchCode: l.batchCode, status: l.status, synced: l.synced, from: n.partner(l.locationId), to: n.partner(l.inTransitToId), dispatchedAt: l.dispatchedAt });
   const packView = (p: Pack) => {
     const l = lotByCode.get(p.lotCode)!;
@@ -228,9 +256,11 @@ export async function myStock(userId: string | null) {
   };
   return {
     partner,
+    counts: stockCounts(partner.id, lots, packs, lotByCode),
+    // Damaged units leave stock; they are listed in the Damaged section instead.
     inStock: [
-      ...lots.filter((l) => l.locationId === partner.id && l.status !== "IN_TRANSIT").map(view),
-      ...packs.filter((p) => p.locationId === partner.id && p.status !== "IN_TRANSIT").map(packView),
+      ...lots.filter((l) => l.locationId === partner.id && l.status !== "IN_TRANSIT" && l.status !== "DAMAGED" && !reportedWhole.has(l.lotCode)).map(view),
+      ...packs.filter((p) => p.locationId === partner.id && p.status !== "IN_TRANSIT" && p.status !== "DAMAGED").map(packView),
     ],
     outgoing: [
       ...lots.filter((l) => l.locationId === partner.id && l.status === "IN_TRANSIT").map(view),

@@ -10,14 +10,14 @@ interface Dashboard {
   lotCounts: Record<string, number>;
   packCounts: Record<string, number>;
   totals: { lots: number; packs: number; batches: number; unsyncedLots: number };
-  stock: { partnerId: string; partner: string; tier: string; tierLabel: string; lots: number; cases: number; trays: number; loosePacks: number }[];
+  stock: { partnerId: string; partner: string; tier: string; tierLabel: string; cases: number; trays: number; openedCases: number; openedTrays: number; loosePacks: number; damaged: DamagedCounts }[];
   inTransit: { kind: string; code: string; from: string; to: string; dispatchedAt: string; age: string; overdue: boolean }[];
   alertCounts: Record<string, number>;
   recentAlerts: { id: string; type: string; at: string; code: string; message: string; partner: string | null }[];
   threshold: { label: string; demoMode: boolean };
 }
 
-const ALERT_TYPES = ["NOT_RECEIVED", "WRONG_RECEIVER", "UNKNOWN_CODE", "DUPLICATE_RECEIPT", "BLOCKED_CODE"];
+const ALERT_TYPES = ["NOT_RECEIVED", "WRONG_RECEIVER", "UNKNOWN_CODE", "DUPLICATE_RECEIPT", "BLOCKED_CODE", "DAMAGED"];
 
 export default function DashboardPage() {
   const { data: d, error, reload } = useApi<Dashboard>("/api/dashboard", { refreshOnChange: true });
@@ -63,6 +63,7 @@ export default function DashboardPage() {
               </tr>
             ))}
           </Table>
+          <p className="mt-2 text-xs text-slate-500">Cases and trays include opened ones; loose packs are the packs of opened cases and trays still there.</p>
         </Card>
 
         <Card title="Alerts" actions={<Link href="/hq/alerts" className="text-sm text-teal-800 hover:underline">All alerts →</Link>}>
@@ -89,14 +90,21 @@ export default function DashboardPage() {
         </Card>
 
         <Card title="Stock by location">
-          <Table head={["Tier", "Partner", "Cases", "Trays", "Loose packs"]} empty={d.stock.length ? null : <Empty>No stock</Empty>}>
+          <Table head={["Tier", "Partner", "Cases", "Trays", "Loose packs", "Damaged"]} empty={d.stock.length ? null : <Empty>No stock</Empty>}>
             {d.stock.map((s) => (
               <tr key={s.partnerId}>
                 <Td className="whitespace-nowrap text-xs text-slate-500">{s.tierLabel}</Td>
                 <Td>{s.partner}</Td>
-                <Td>{s.cases}</Td>
-                <Td>{s.trays}</Td>
+                <Td>
+                  <Opened total={s.cases} opened={s.openedCases} />
+                </Td>
+                <Td>
+                  <Opened total={s.trays} opened={s.openedTrays} />
+                </Td>
                 <Td>{s.loosePacks}</Td>
+                <Td className="whitespace-nowrap text-xs">
+                  <DamagedSummary counts={s.damaged} />
+                </Td>
               </tr>
             ))}
           </Table>
@@ -123,6 +131,34 @@ export default function DashboardPage() {
           </Table>
         </Card>
       </div>
+    </>
+  );
+}
+
+interface DamagedCounts {
+  cases: number;
+  trays: number;
+  packs: number;
+}
+
+/** Damaged cases and trays (opened or not) and single packs, e.g. "2 cases · 1 tray". */
+function DamagedSummary({ counts }: { counts: DamagedCounts }) {
+  const parts = [
+    [counts.cases, "case"],
+    [counts.trays, "tray"],
+    [counts.packs, "pack"],
+  ]
+    .filter(([n]) => n)
+    .map(([n, w]) => `${n} ${w}${n === 1 ? "" : "s"}`);
+  return parts.length ? <span className="font-semibold text-red-800">{parts.join(" · ")}</span> : <span className="text-slate-400">0</span>;
+}
+
+/** A case or tray count, with how many of them are opened. */
+function Opened({ total, opened }: { total: number; opened: number }) {
+  return (
+    <>
+      {total}
+      {opened > 0 && <div className="whitespace-nowrap text-xs text-slate-500">{opened} opened</div>}
     </>
   );
 }

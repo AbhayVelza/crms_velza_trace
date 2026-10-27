@@ -1,11 +1,11 @@
 // Dev-only demo helper: click-to-scan codes relevant to each screen, so the demo runs without a scanner.
 
-import { NEXT_TIER } from "@/lib/core/rules";
+import { DESTINATION_TYPES } from "@/lib/core/rules";
 import type { Lot, Pack } from "@/lib/core/types";
 import { getStore } from "@/lib/store";
 import { isVisible, loadActor, partnerName } from "./common";
 
-export const DEMO_SCREENS = ["verify", "dispatch", "receive", "open", "reprint", "void", "search"] as const;
+export const DEMO_SCREENS = ["verify", "dispatch", "receive", "open", "damage", "reprint", "void", "search"] as const;
 export type DemoScreen = (typeof DEMO_SCREENS)[number];
 
 export interface DemoCode {
@@ -43,7 +43,7 @@ export async function demoCodes(userId: string | null, screen: DemoScreen, lotCo
     }
     case "dispatch": {
       const sender = actor.partner;
-      if (!sender || !NEXT_TIER[sender.type]) return [];
+      if (!sender || !DESTINATION_TYPES[sender.type].length) return [];
       const myLots = lots.filter((l) => l.locationId === me && l.status !== "IN_TRANSIT" && l.status !== "VOID" && l.status !== "GENERATED");
       const myPacks = packs.filter((p) => loose(p) && p.locationId === me && p.status !== "IN_TRANSIT");
       return [...myLots.map((l) => ({ code: l.lotCode, label: lotLabel(l) })), ...myPacks.map((p) => ({ code: p.packCode, label: `loose pack ${p.status}` }))];
@@ -55,7 +55,15 @@ export async function demoCodes(userId: string | null, screen: DemoScreen, lotCo
       return [...forMe, ...packsForMe, ...forOthers, FAKE];
     }
     case "open":
-      return lots.filter((l) => l.locationId === me && (l.status === "AT_SUPPLIER" || l.status === "AT_OUTLET")).map((l) => ({ code: l.lotCode, label: lotLabel(l) }));
+      return lots.filter((l) => l.locationId === me && l.status === "AT_RETAILER").map((l) => ({ code: l.lotCode, label: lotLabel(l) }));
+    case "damage": {
+      // Lots in stock here (sealed, or opened with packs left here), and loose packs in stock here.
+      const inStock = new Set(["PACKED", "AT_SS", "AT_DB", "AT_RETAILER"]);
+      const myPacks = packs.filter((p) => loose(p) && p.locationId === me && inStock.has(p.status));
+      const openedHere = new Set(myPacks.map((p) => p.lotCode));
+      const myLots = lots.filter((l) => l.locationId === me && l.synced && (inStock.has(l.status) || (l.status === "OPENED" && openedHere.has(l.lotCode))));
+      return [...myLots.map((l) => ({ code: l.lotCode, label: lotLabel(l) })), ...myPacks.map((p) => ({ code: p.packCode, label: `loose pack ${p.status}` }))];
+    }
     case "reprint":
       return lots
         .filter((l) => l.manufacturerId === me && ["GENERATED", "PRINTED", "PACKED", "QUARANTINED"].includes(l.status))

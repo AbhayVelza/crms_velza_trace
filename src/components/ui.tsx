@@ -97,8 +97,7 @@ const STATUS_COLORS: Partial<Record<ItemStatus, string>> = {
   IN_TRANSIT: "bg-amber-100 text-amber-900",
   AT_SS: "bg-sky-100 text-sky-800",
   AT_DB: "bg-sky-100 text-sky-800",
-  AT_SUPPLIER: "bg-sky-100 text-sky-800",
-  AT_OUTLET: "bg-green-100 text-green-800",
+  AT_RETAILER: "bg-green-100 text-green-800",
   OPENED: "bg-violet-100 text-violet-800",
   QUARANTINED: "bg-orange-100 text-orange-900",
   VOID: "bg-slate-200 text-slate-600 line-through",
@@ -147,11 +146,12 @@ export function Empty({ children }: { children: ReactNode }) {
   return <p className="px-3 py-6 text-center text-sm text-slate-500">{children}</p>;
 }
 
-export function Stat({ label, value, tone }: { label: string; value: ReactNode; tone?: "warn" | "danger" }) {
+export function Stat({ label, value, tone, hint }: { label: string; value: ReactNode; tone?: "warn" | "danger"; hint?: string }) {
   return (
     <div className={cx("rounded-lg border bg-white p-3", tone === "danger" ? "border-red-200" : tone === "warn" ? "border-amber-200" : "border-slate-200")}>
       <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</div>
       <div className={cx("mt-1 text-2xl font-semibold", tone === "danger" ? "text-red-700" : tone === "warn" ? "text-amber-700" : "text-slate-900")}>{value}</div>
+      {hint && <div className="text-xs text-slate-500">{hint}</div>}
     </div>
   );
 }

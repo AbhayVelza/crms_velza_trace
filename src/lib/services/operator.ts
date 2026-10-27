@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 import { formatLotNumber } from "@/lib/core/codes";
-import { canReprint, canVoid } from "@/lib/core/rules";
+import { canReprint, canVoid, lotStatusAfterReprint } from "@/lib/core/rules";
 import { getStore, type StoreTx } from "@/lib/store";
 import { badRequest, findItem, loadActor, manufacturerDevice, notFound, nowIso, requireAction, requirePartner, setLotState } from "./common";
 import { autoRefill, reservedCodes } from "./pool";
@@ -24,6 +24,10 @@ export async function reprint(userId: string | null, body: unknown) {
     if (!check.ok) throw badRequest(check.code, check.message);
     const device = await manufacturerDevice(tx, manufacturer.id);
     const at = nowIso();
+    const lot = found.item.lot;
+    const lotStatus = lotStatusAfterReprint(lot.status);
+    const backToQc = lotStatus !== lot.status;
+    if (backToQc) await setLotState(tx, lot, { status: lotStatus, quarantineReason: null }, at);
     const row = await tx.reprints.append({ id: crypto.randomUUID(), at, code, itemKind: found.item.kind, reason: reason.trim(), userId: actor.user.id, deviceId: device.id });
     await tx.appendMovement({
       type: "REPRINTED",
@@ -32,13 +36,16 @@ export async function reprint(userId: string | null, body: unknown) {
       fromId: null,
       toId: null,
       fromStatus: found.item.movable.status,
-      toStatus: found.item.movable.status,
+      toStatus: backToQc ? lotStatus : found.item.movable.status,
       userId: actor.user.id,
       deviceId: device.id,
       invoice: null,
       note: reason.trim(),
     });
-    return { ok: true, message: `Reprint of ${code} logged (same code)`, reprint: row };
+    const message = backToQc
+      ? `Reprint of ${code} logged (same code). Lot ${lot.lotCode} is out of quarantine and back to PRINTED — QC must verify it again`
+      : `Reprint of ${code} logged (same code)`;
+    return { ok: true, message, reprint: row };
   });
 }
 

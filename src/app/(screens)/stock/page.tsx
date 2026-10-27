@@ -6,6 +6,7 @@ import { Card, Notice, PageTitle, Stat } from "@/components/ui";
 import { useApi } from "@/components/useApi";
 
 interface Stock {
+  counts: { cases: number; trays: number; openedCases: number; openedTrays: number; loosePacks: number };
   inStock: StockItem[];
   outgoing: StockItem[];
   incoming: StockItem[];
@@ -14,7 +15,6 @@ interface Stock {
 export default function StockPage() {
   const { partner } = useSession();
   const { data, error } = useApi<Stock>("/api/stock", { refreshOnChange: true });
-  const lots = data?.inStock.filter((i) => i.kind === "LOT") ?? [];
   return (
     <>
       <PageTitle title="My stock" subtitle={partner?.name} />
@@ -22,9 +22,9 @@ export default function StockPage() {
       {data && (
         <>
           <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <Stat label="Cases here" value={lots.filter((l) => l.lotType === "CASE" && l.status !== "OPENED").length} />
-            <Stat label="Trays here" value={lots.filter((l) => l.lotType === "TRAY" && l.status !== "OPENED").length} />
-            <Stat label="Loose packs" value={data.inStock.filter((i) => i.kind === "PACK").length} />
+            <Stat label="Cases here" value={data.counts.cases} hint={data.counts.openedCases ? `${data.counts.openedCases} opened` : undefined} />
+            <Stat label="Trays here" value={data.counts.trays} hint={data.counts.openedTrays ? `${data.counts.openedTrays} opened` : undefined} />
+            <Stat label="Loose packs" value={data.counts.loosePacks} />
             <Stat label="Incoming" value={data.incoming.length} tone={data.incoming.length ? "warn" : undefined} />
           </div>
           <div className="space-y-4">

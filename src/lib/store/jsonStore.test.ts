@@ -36,64 +36,37 @@ const batch = (code: string): Batch => ({
   recallReason: null,
 });
 
+// File-specific behaviour. Everything else a store must do is in store.contract.test.ts.
+
 describe("JsonStore", () => {
-  it("creates the file from the base seed on first use", async () => {
+  it("creates the file from the clean base seed on first use", async () => {
     const store = new JsonStore(file, () => buildBaseSeed());
-    const partners = await store.partners.list();
-    expect(partners).toHaveLength(10);
-    expect(JSON.parse(await fs.readFile(file, "utf8")).partners).toHaveLength(10);
-    expect(await store.batchCodePool.list({ status: "RESERVED" })).toHaveLength(10);
-  });
-
-  it("rolls back a failed transaction", async () => {
-    const store = new JsonStore(file, () => buildBaseSeed());
-    await expect(
-      store.transaction(async (tx) => {
-        await tx.batches.create(batch("AAA111"));
-        throw new Error("boom");
-      }),
-    ).rejects.toThrow("boom");
-    expect(await store.batches.list()).toHaveLength(0);
-  });
-
-  it("nextLotNumber allocates atomically with no overlap under concurrency", async () => {
-    const store = new JsonStore(file, () => buildBaseSeed());
-    await store.batches.create(batch("AAA111"));
-    const firsts = await Promise.all(Array.from({ length: 20 }, () => store.nextLotNumber("AAA111", 3)));
-    const numbers = firsts.flatMap((f) => [f, f + 1, f + 2]);
-    expect(new Set(numbers).size).toBe(60);
-    expect(Math.min(...numbers)).toBe(1);
-    expect((await store.batches.findOne({ code: "AAA111" }))?.nextLot).toBe(61);
-  });
-
-  it("refuses to allocate past 1869F", async () => {
-    const store = new JsonStore(file, () => buildBaseSeed());
-    await store.batches.create({ ...batch("AAA111"), nextLot: 0x1869f });
-    expect(await store.nextLotNumber("AAA111", 1)).toBe(0x1869f);
-    await expect(store.nextLotNumber("AAA111", 1)).rejects.toThrow(/1869F/);
-  });
-
-  it("returns copies, so callers can't mutate state without update()", async () => {
-    const store = new JsonStore(file, () => buildBaseSeed());
-    const [p] = await store.partners.list();
-    p.name = "changed";
-    expect((await store.partners.get(p.id))?.name).not.toBe("changed");
+    expect((await store.users.list()).map((u) => u.id)).toEqual(["AD0001", "HQ0001"]);
+    expect(JSON.parse(await fs.readFile(file, "utf8")).flavours).toHaveLength(4);
+    expect(await store.partners.list()).toEqual([]);
+    expect(await store.batchCodePool.list()).toEqual([]);
   });
 
   it("picks up external changes (e.g. npm run seed while the server runs)", async () => {
     const a = new JsonStore(file, () => buildBaseSeed());
-    await a.partners.list();
+    await a.users.list();
     const b = new JsonStore(file, () => buildBaseSeed());
     await new Promise((r) => setTimeout(r, 20));
     await b.batches.create(batch("BBB222"));
     expect((await a.batches.list()).map((x) => x.code)).toEqual(["BBB222"]);
   });
 
-  it("settings fall back to defaults and can be updated", async () => {
-    const store = new JsonStore(file, () => ({ ...buildBaseSeed(), settings: [] }));
-    expect((await store.getSettings()).notReceivedThresholdDays).toBe(3);
-    await store.updateSettings({ demoMode: true });
-    expect((await store.getSettings()).demoMode).toBe(true);
+  it("refuses data from before the chain change until it is converted, but snapshot() still reads it", async () => {
+    const old = buildBaseSeed();
+    const outlet = { id: "OT0001", type: "OUTLET", name: "Shop", city: "Pune", parentId: null, active: true };
+    await fs.writeFile(file, JSON.stringify({ ...old, partners: [outlet] }), "utf8");
+    const store = new JsonStore(file, () => buildBaseSeed());
+    await expect(store.partners.list()).rejects.toThrow(/Run "npm run db:convert-chain" first:\n[^]*Outlet Shop \(OT0001\) → Retailer RT0001/);
+    await expect(store.transaction(async (tx) => tx.users.list())).rejects.toThrow(/db:convert-chain/);
+    expect((await store.snapshot()).partners).toEqual([outlet]);
+    const { convertChain } = await import("./convertChain");
+    await store.reset(convertChain(await store.snapshot()).data);
+    expect((await store.partners.list()).map((p) => [p.id, p.type])).toEqual([["RT0001", "RETAILER"]]);
   });
 
   it("leaves no temp files behind", async () => {

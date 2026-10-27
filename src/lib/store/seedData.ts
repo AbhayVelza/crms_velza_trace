@@ -1,123 +1,40 @@
-// Base seed (section 8): reference data, partners, one user per role per partner,
-// one device with 10 reserved batch codes, default settings.
-// Every seeded account has a sign-in ID and the default password (SEED_PASSWORD), already approved.
+// Base seed: the reference data every installation needs, and nothing made up.
+// Country 91 and the four flavour codes, default settings, and two Velza staff sign-ins:
+// Velza Admin (AD0001) and Velza HQ (HQ0001). Partners, their sign-ins and devices are entered by
+// Velza Admin (a new device gets its batch codes on creation).
 
-import { generateBatchCode } from "@/lib/core/codes";
-import {
-  DEFAULT_SETTINGS,
-  type BatchCodePoolEntry,
-  type Partner,
-  type PartnerType,
-  type Role,
-  type User,
-} from "@/lib/core/types";
-import { hashPasswordSync } from "@/lib/passwords";
+import { DEFAULT_SETTINGS, type User } from "@/lib/core/types";
+import { generatePassword, hashPasswordSync } from "@/lib/passwords";
 import type { DbSnapshot } from "./Store";
 
 const id = () => crypto.randomUUID();
 
-/** Default password of every seeded account (override with env SEED_PASSWORD). */
-export const DEFAULT_SEED_PASSWORD = "Velza@2026";
+export const ADMIN_LOGIN_ID = "AD0001";
+export const HQ_LOGIN_ID = "HQ0001";
 
-const PARTNERS: { type: PartnerType; name: string; city: string; territory: string; parent?: string }[] = [
-  { type: "MANUFACTURER", name: "Demo Manufacturer – Pune", city: "Pune", territory: "" },
-  { type: "SS", name: "SS-1 Konkan Super Stockist", city: "Mumbai", territory: "North & West Maharashtra" },
-  { type: "SS", name: "SS-2 Deccan Super Stockist", city: "Pune", territory: "East & South Maharashtra" },
-  { type: "DB", name: "DB-1 Thane Distributors", city: "Thane", territory: "Thane district", parent: "SS-1" },
-  { type: "DB", name: "DB-2 Kothrud Distributors", city: "Pune", territory: "Pune city", parent: "SS-2" },
-  { type: "SUPPLIER", name: "Supplier-1 Andheri Traders", city: "Mumbai", territory: "" },
-  { type: "SUPPLIER", name: "Supplier-2 Baner Traders", city: "Pune", territory: "" },
-  { type: "OUTLET", name: "Outlet-1 Bandra Fresh Mart", city: "Mumbai", territory: "" },
-  { type: "OUTLET", name: "Outlet-2 Powai Corner Store", city: "Mumbai", territory: "" },
-  { type: "OUTLET", name: "Outlet-3 Aundh Cafe", city: "Pune", territory: "" },
-];
-
-const PARTNER_ROLES: Record<PartnerType, Role[]> = {
-  MANUFACTURER: ["OPERATOR", "QC"],
-  SS: ["SS"],
-  DB: ["DB"],
-  SUPPLIER: ["SUPPLIER"],
-  OUTLET: ["OUTLET"],
-};
-
-const ROLE_PERSON: Record<Role, string> = {
-  ADMIN: "Asha",
-  OPERATOR: "Manoj",
-  QC: "Sunita",
-  SS: "Kiran",
-  DB: "Deepak",
-  SUPPLIER: "Farah",
-  OUTLET: "Imran",
-  TRACE_OWNER: "Ravi",
-};
-
-/** Short partner tag used in user names: "SS-1", "Outlet-2", "Pune". */
-export function partnerTag(p: Pick<Partner, "name" | "city" | "type">): string {
-  const m = p.name.match(/^([A-Za-z]+-\d+)/);
-  return m ? m[1] : p.city;
+export interface StaffPasswords {
+  admin: string;
+  hq: string;
 }
 
-/** Seeded sign-in IDs: admin, hq, operator, qc, ss1, db2, supplier1, outlet3, … */
-export function seedLoginId(role: Role, p: Pick<Partner, "name" | "city" | "type"> | null): string {
-  if (role === "ADMIN") return "admin";
-  if (role === "TRACE_OWNER") return "hq";
-  if (role === "OPERATOR") return "operator";
-  if (role === "QC") return "qc";
-  return partnerTag(p!).replace("-", "").toLowerCase();
+/** Passwords from VELZA_ADMIN_PASSWORD / VELZA_HQ_PASSWORD, or new random ones (shown once by the caller). */
+export function staffPasswords(): StaffPasswords {
+  return { admin: process.env.VELZA_ADMIN_PASSWORD || generatePassword(), hq: process.env.VELZA_HQ_PASSWORD || generatePassword() };
 }
 
-export function buildBaseSeed(now = new Date(), password = process.env.SEED_PASSWORD || DEFAULT_SEED_PASSWORD): DbSnapshot {
+export function buildBaseSeed(passwords: StaffPasswords = staffPasswords(), now = new Date()): DbSnapshot {
   const at = now.toISOString();
-  const partners: Partner[] = PARTNERS.map(({ type, name, city, territory }) => ({ id: id(), type, name, city, territory, parentId: null, active: true }));
-  for (const [i, p] of PARTNERS.entries()) {
-    if (p.parent) partners[i].parentId = partners.find((x) => x.name.startsWith(p.parent!))!.id;
-  }
-  const manufacturer = partners[0];
-
-  // One hash shared by the seeded accounts: they all start with the same documented password.
-  const passwordHash = hashPasswordSync(password);
-  const account = (name: string, role: Role, partner: Partner | null): User => ({
-    id: id(),
+  const staff = (loginId: string, name: string, role: User["role"], password: string): User => ({
+    id: loginId,
     name,
     role,
-    partnerId: partner?.id ?? null,
+    partnerId: null,
     active: true,
-    loginId: seedLoginId(role, partner),
-    passwordHash,
+    passwordHash: hashPasswordSync(password),
+    passwordChangedAt: at,
     createdAt: at,
-    adminApprovedBy: null,
-    adminApprovedAt: null,
-    hqApprovedBy: null,
-    hqApprovedAt: null,
-    rejectedBy: null,
-    rejectedAt: null,
-    rejectReason: null,
+    lastLoginAt: null,
   });
-
-  const admin = account("Asha (Velza Admin)", "ADMIN", null);
-  const hq = account("Ravi (Velza HQ)", "TRACE_OWNER", null);
-  const users: User[] = [admin, hq];
-  for (const p of partners) {
-    for (const role of PARTNER_ROLES[p.type]) {
-      users.push({
-        ...account(`${ROLE_PERSON[role]} (${partnerTag(p)})`, role, p),
-        adminApprovedBy: admin.id,
-        adminApprovedAt: at,
-        hqApprovedBy: hq.id,
-        hqApprovedAt: at,
-      });
-    }
-  }
-
-  const device = { id: id(), manufacturerId: manufacturer.id, name: "Pune Line-1 PC", offline: false, lastSyncAt: at };
-
-  const taken = new Set<string>();
-  const batchCodePool: BatchCodePoolEntry[] = Array.from({ length: DEFAULT_SETTINGS.poolIssueSize }, () => {
-    const code = generateBatchCode(taken);
-    taken.add(code);
-    return { id: id(), code, deviceId: device.id, status: "RESERVED", issuedAt: at, usedAt: null };
-  });
-
   return {
     countries: [{ id: id(), code: "91", name: "India", active: true }],
     flavours: [
@@ -126,10 +43,10 @@ export function buildBaseSeed(now = new Date(), password = process.env.SEED_PASS
       { id: id(), code: "NS", name: "No Sugar", active: true },
       { id: id(), code: "MN", name: "Mango", active: true },
     ],
-    partners,
-    users,
-    devices: [device],
-    batchCodePool,
+    partners: [],
+    users: [staff(ADMIN_LOGIN_ID, "Velza Admin", "ADMIN", passwords.admin), staff(HQ_LOGIN_ID, "Velza HQ", "TRACE_OWNER", passwords.hq)],
+    devices: [],
+    batchCodePool: [],
     batches: [],
     printOrders: [],
     lots: [],
@@ -138,6 +55,23 @@ export function buildBaseSeed(now = new Date(), password = process.env.SEED_PASS
     scans: [],
     reprints: [],
     sessions: [],
+    // AD0001 and HQ0001 are taken; the next staff sign-ins are AD0002 / HQ0002.
+    sequences: [
+      { id: "AD", value: 1 },
+      { id: "HQ", value: 1 },
+    ],
     settings: [{ id: "default", ...DEFAULT_SETTINGS }],
   };
+}
+
+/** Seed for a first start without `npm run seed`: prints the two passwords once to the server log. */
+export function firstRunSeed(where: string): DbSnapshot {
+  const passwords = staffPasswords();
+  console.log(
+    `[velza] No data yet — created a clean start in ${where}.\n` +
+      `[velza]   Velza Admin: sign-in ${ADMIN_LOGIN_ID}, password ${passwords.admin}\n` +
+      `[velza]   Velza HQ:    sign-in ${HQ_LOGIN_ID}, password ${passwords.hq}\n` +
+      `[velza] Change both after the first sign-in (Account page).`,
+  );
+  return buildBaseSeed(passwords);
 }

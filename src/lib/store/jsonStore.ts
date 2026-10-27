@@ -6,6 +6,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { LOT_NUMBER_MAX } from "@/lib/core/codes";
 import { DEFAULT_SETTINGS, type Settings } from "@/lib/core/types";
+import { conversionNeeded } from "./convertChain";
 import {
   COLLECTIONS,
   NotFoundError,
@@ -148,6 +149,12 @@ function makeTx(db: DbSnapshot): StoreTx {
       batch.nextLot = first + count;
       return first;
     },
+    async nextSequence(name) {
+      let row = db.sequences.find((x) => x.id === name);
+      if (!row) db.sequences.push((row = { id: name, value: 0 }));
+      row.value += 1;
+      return row.value;
+    },
     async getSettings() {
       const row = db.settings.find((s) => s.id === SETTINGS_ID);
       return clone({ ...DEFAULT_SETTINGS, ...row, id: SETTINGS_ID }) as Settings;
@@ -174,8 +181,11 @@ export class JsonStore implements Store {
     private readonly initialData: () => DbSnapshot,
   ) {}
 
-  /** `locked` = caller already holds the mutex. */
-  private async readDb(locked = false): Promise<DbSnapshot> {
+  /** Set when the file holds data from before the chain change; the app refuses it until it is converted. */
+  private notConverted: string | null = null;
+
+  /** `locked` = caller already holds the mutex. `check` = refuse unconverted data (snapshot() reads it as it is). */
+  private async readDb(locked = false, check = true): Promise<DbSnapshot> {
     let mtime: number;
     try {
       mtime = (await fs.stat(this.filePath)).mtimeMs;
@@ -190,13 +200,17 @@ export class JsonStore implements Store {
         }
       };
       await (locked ? create() : this.mutex.run(create));
-      return this.readDb(locked);
+      return this.readDb(locked, check);
     }
-    if (this.cache && mtime === this.cacheMtime) return this.cache;
-    const data = normalize(JSON.parse(await fs.readFile(this.filePath, "utf8")));
-    this.cache = data;
-    this.cacheMtime = mtime;
-    return data;
+    if (!this.cache || mtime !== this.cacheMtime) {
+      this.cache = normalize(JSON.parse(await fs.readFile(this.filePath, "utf8")));
+      this.cacheMtime = mtime;
+      this.notConverted = conversionNeeded(this.cache);
+    }
+    if (check && this.notConverted) {
+      throw new Error(`${this.filePath} holds data from before the current chain. Run "npm run db:convert-chain" first:\n${this.notConverted}`);
+    }
+    return this.cache;
   }
 
   private async writeDb(data: DbSnapshot) {
@@ -206,6 +220,7 @@ export class JsonStore implements Store {
     await renameWithRetry(tmp, this.filePath);
     this.cache = data;
     this.cacheMtime = (await fs.stat(this.filePath)).mtimeMs;
+    this.notConverted = null; // written by the app, a seed, an import or the conversion itself
   }
 
   transaction<R>(fn: (tx: StoreTx) => Promise<R>): Promise<R> {
@@ -219,6 +234,10 @@ export class JsonStore implements Store {
 
   async reset(data: DbSnapshot): Promise<void> {
     await this.mutex.run(() => this.writeDb(normalize(clone(data))));
+  }
+
+  async snapshot(): Promise<DbSnapshot> {
+    return clone(await this.readDb(false, false));
   }
 
   // Reads use the latest committed snapshot; writes run as single-step transactions.
@@ -239,7 +258,7 @@ export class JsonStore implements Store {
 
   private ledger<T extends Row>(name: "movements" | "scans" | "reprints"): AppendOnlyRepo<T> {
     const r = this.repo<T>(name);
-    return { list: r.list, append: r.create };
+    return { list: r.list, append: (row) => this.transaction((tx) => (tx[name] as unknown as AppendOnlyRepo<T>).append(row)) };
   }
 
   countries = this.repo<DbSnapshot["countries"][number]>("countries");
@@ -265,6 +284,9 @@ export class JsonStore implements Store {
   }
   nextLotNumber(batchCode: string, count: number) {
     return this.transaction((tx) => tx.nextLotNumber(batchCode, count));
+  }
+  nextSequence(name: string) {
+    return this.transaction((tx) => tx.nextSequence(name));
   }
   async getSettings() {
     return makeTx(await this.readDb()).getSettings();

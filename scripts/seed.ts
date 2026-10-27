@@ -1,26 +1,23 @@
-// npm run seed            → reset data/db.json to the base seed
-// npm run seed -- --demo  → base seed + one printed, packed batch partly moved down the chain
+// npm run seed → reset the active store (data/db.json, or the database when DATABASE_URL is set) to a
+// clean start: country 91, the four flavours, default settings, and two sign-ins — Velza Admin (AD0001)
+// and Velza HQ (HQ0001). Their passwords come from VELZA_ADMIN_PASSWORD / VELZA_HQ_PASSWORD, or are
+// generated and shown once here. Everything else is entered in the app (Admin portal).
 
-import { getStore, dbFilePath } from "@/lib/store";
-import { buildBaseSeed, DEFAULT_SEED_PASSWORD } from "@/lib/store/seedData";
-import { buildDemoData } from "@/lib/services/demoSeed";
+import { closeStores, describeStore, getStore } from "@/lib/store";
+import { ADMIN_LOGIN_ID, buildBaseSeed, HQ_LOGIN_ID, staffPasswords } from "@/lib/store/seedData";
 
 async function main() {
-  const demo = process.argv.includes("--demo");
-  const store = getStore();
-  await store.reset(buildBaseSeed());
-  console.log(`Base seed written to ${dbFilePath()}`);
-  if (demo) {
-    const summary = await buildDemoData();
-    console.log("Demo data:");
-    for (const line of summary) console.log(`  - ${line}`);
-  }
-  const [partners, users, pool] = await Promise.all([store.partners.list(), store.users.list(), store.batchCodePool.list({ status: "RESERVED" })]);
-  console.log(`${partners.length} partners, ${users.length} users, ${pool.length} reserved batch codes`);
-  console.log(`Sign-in IDs (password ${process.env.SEED_PASSWORD || DEFAULT_SEED_PASSWORD}): ${users.map((u) => u.loginId).join(", ")}`);
+  const passwords = staffPasswords();
+  await getStore().reset(buildBaseSeed(passwords));
+  console.log(`Clean data written to ${describeStore()}`);
+  console.log(`  Velza Admin: sign-in ${ADMIN_LOGIN_ID}, password ${passwords.admin}`);
+  console.log(`  Velza HQ:    sign-in ${HQ_LOGIN_ID}, password ${passwords.hq}`);
+  console.log("Change both after the first sign-in (Account page). Register partners in the Admin portal.");
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+main()
+  .catch((e) => {
+    console.error(e);
+    process.exitCode = 1;
+  })
+  .finally(closeStores);

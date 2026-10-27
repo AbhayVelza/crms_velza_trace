@@ -1,5 +1,5 @@
-// Storage contract. Business logic and UI depend only on this interface, so a real
-// database can replace the JSON file by implementing it (one repo per table).
+// Storage contract. Business logic and UI depend only on this interface; it is implemented over a
+// JSON file (jsonStore.ts) and over PostgreSQL (sql/sqlStore.ts).
 
 import type {
   Batch,
@@ -14,6 +14,7 @@ import type {
   PrintOrder,
   Reprint,
   Scan,
+  Sequence,
   Session,
   Settings,
   User,
@@ -69,6 +70,8 @@ export interface StoreTx {
    * Returns the first number and advances the batch's nextLot. Numbers are never reused.
    */
   nextLotNumber(batchCode: string, count: number): Promise<number>;
+  /** Atomically issue the next number of a named ID sequence (1, 2, 3 …). Numbers are never reused. */
+  nextSequence(name: string): Promise<number>;
   getSettings(): Promise<Settings>;
   updateSettings(patch: Partial<Omit<Settings, "id">>): Promise<Settings>;
 }
@@ -88,6 +91,7 @@ export interface DbSnapshot {
   scans: Scan[];
   reprints: Reprint[];
   sessions: Session[];
+  sequences: Sequence[];
   settings: Settings[];
 }
 
@@ -106,14 +110,17 @@ export const COLLECTIONS = [
   "scans",
   "reprints",
   "sessions",
+  "sequences",
   "settings",
 ] as const satisfies readonly (keyof DbSnapshot)[];
 
 export interface Store extends StoreTx {
   /** Run `fn` atomically: all writes commit together or none do. */
   transaction<R>(fn: (tx: StoreTx) => Promise<R>): Promise<R>;
-  /** Replace all data (used by the seed script). */
+  /** Replace all data (used by the seed script, the JSON → database import and the chain conversion). */
   reset(data: DbSnapshot): Promise<void>;
+  /** Every row of every table (backups, clear-activity, the JSON → database import). */
+  snapshot(): Promise<DbSnapshot>;
 }
 
 export class NotFoundError extends Error {

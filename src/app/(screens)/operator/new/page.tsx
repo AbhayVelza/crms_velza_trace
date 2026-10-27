@@ -6,6 +6,7 @@
 import { useRouter } from "next/navigation";
 import { useState, type ReactNode } from "react";
 import { useSession } from "@/components/session";
+import { GeneratedCodes } from "@/components/GeneratedCodes";
 import { Button, Card, Code, Field, Input, Notice, PageTitle, Table, Td } from "@/components/ui";
 import { api, errorText } from "@/lib/client";
 import type { BatchInput, PrintOrderPlan } from "@/lib/core/printOrder";
@@ -277,6 +278,7 @@ export default function NewPrintOrderPage() {
                 New print order
               </Button>
             </div>
+            <GeneratedCodes printOrderId={created.id} />
           </div>
         )}
 

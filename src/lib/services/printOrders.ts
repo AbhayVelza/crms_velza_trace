@@ -94,7 +94,7 @@ export async function createPrintOrder(userId: string | null, body: unknown) {
       const { lots } = allocateLots({ ...batch, nextLot: first }, b.cases, b.trays);
       for (const l of lots) {
         lotRows.push({
-          id: crypto.randomUUID(),
+          id: l.lotCode, // a code row is keyed by its printed code
           lotCode: l.lotCode,
           batchCode: batch.code,
           flavour: batch.flavour,
@@ -116,7 +116,7 @@ export async function createPrintOrder(userId: string | null, body: unknown) {
         });
         l.packCodes.forEach((packCode, idx) =>
           packRows.push({
-            id: crypto.randomUUID(),
+            id: packCode,
             packCode,
             lotCode: l.lotCode,
             seq: idx + 1,
@@ -201,6 +201,80 @@ export async function listPrintOrders(userId: string | null) {
           };
         }),
     }));
+}
+
+/** One generated sticker with every field of its row in the codes table. */
+export interface CodeRow {
+  code: string;
+  codeType: "LOT" | "PACK";
+  countryCode: string;
+  batchCode: string;
+  flavour: string;
+  hexCode: string;
+  lotType: "CASE" | "TRAY";
+  packSize: number;
+  packSequence: number | null;
+  lotCode: string;
+  mfgDate: string;
+  expiryDate: string;
+  manufacturerId: string;
+  status: string;
+  locationId: string;
+  synced: boolean;
+  generatedAt: string;
+  generatedBy: string;
+}
+
+/**
+ * Every code a print order generated, with all its fields (as stored in the codes table), and the
+ * totals: stickers, cases, trays, packs, and how many are synced to the central database.
+ */
+export async function codesForOrder(userId: string | null, printOrderId: string) {
+  const store = getStore();
+  const actor = await loadActor(store, userId);
+  requireAction(actor, "printOrder");
+  const order = await requireOwnOrder(store, actor, printOrderId);
+  const [lots, batches, packs] = await Promise.all([store.lots.list({ printOrderId }), store.batches.list({ printOrderId }), store.packs.list()]);
+  const batchOf = new Map(batches.map((b) => [b.code, b]));
+  const byLot = new Map<string, Pack[]>(lots.map((l) => [l.lotCode, []]));
+  for (const p of packs) byLot.get(p.lotCode)?.push(p);
+  const rows: CodeRow[] = [];
+  for (const code of order.lotCodes) {
+    const l = lots.find((x) => x.lotCode === code);
+    if (!l) continue;
+    const b = batchOf.get(l.batchCode)!;
+    const common = {
+      countryCode: l.lotCode.slice(0, 2),
+      batchCode: l.batchCode,
+      flavour: l.flavour,
+      hexCode: l.lotCode.slice(10, 15),
+      lotType: l.lotType,
+      packSize: l.packSize,
+      lotCode: l.lotCode,
+      mfgDate: b.mfgDate,
+      expiryDate: b.expiryDate,
+      manufacturerId: l.manufacturerId,
+      synced: l.synced,
+      generatedAt: l.createdAt,
+      generatedBy: b.createdBy,
+    };
+    rows.push({ ...common, code: l.lotCode, codeType: "LOT", packSequence: null, status: l.status, locationId: l.locationId });
+    for (const p of (byLot.get(l.lotCode) ?? []).sort((x, y) => x.seq - y.seq)) {
+      rows.push({ ...common, code: p.packCode, codeType: "PACK", packSequence: p.seq, status: p.status, locationId: p.locationId });
+    }
+  }
+  return {
+    printOrder: order,
+    totals: {
+      stickers: rows.length,
+      cases: lots.filter((l) => l.lotType === "CASE").length,
+      trays: lots.filter((l) => l.lotType === "TRAY").length,
+      packs: rows.filter((r) => r.codeType === "PACK").length,
+      synced: rows.filter((r) => r.synced).length,
+      unsynced: rows.filter((r) => !r.synced).length,
+    },
+    codes: rows,
+  };
 }
 
 async function flavourNames(tx: StoreTx) {

@@ -38,9 +38,13 @@ export default function PrintOrdersPage() {
                 <StatusBadge status={o.status} />
               </Td>
               <Td>{o.synced ? "yes" : <span className="font-semibold text-amber-700">no</span>}</Td>
-              <Td>
+              <Td className="whitespace-nowrap">
                 <Link className="font-medium text-teal-800 hover:underline" href={`/print/${o.id}`}>
                   Print view
+                </Link>
+                <span className="text-slate-300"> · </span>
+                <Link className="font-medium text-teal-800 hover:underline" href={`/operator/orders/${o.id}`}>
+                  Codes
                 </Link>
               </Td>
             </tr>

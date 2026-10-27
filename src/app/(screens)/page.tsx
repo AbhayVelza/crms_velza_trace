@@ -12,7 +12,7 @@ export default function Home() {
 
   return (
     <>
-      <PageTitle title={`${ROLE_LABELS[role]} portal`} subtitle={`Signed in as ${user.name} · ${organisation}`} />
+      <PageTitle title={`${ROLE_LABELS[role]} portal`} subtitle={`Signed in as ${user.name} (${user.id}) · ${organisation}`} />
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {MENU[role].map((m) => (
           <Link key={m.href} href={m.href}>

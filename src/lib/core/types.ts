@@ -1,18 +1,18 @@
 // Domain types shared by core rules, the store and the UI.
-// IDs are string UUIDs and timestamps are ISO strings so rows map 1:1 to future DB tables.
+// Partners and users are keyed by their readable IDs (DB0001, MF0001-OP), lots and packs by their
+// printed code, everything else by a UUID. Timestamps are ISO strings.
 
-export const PARTNER_TYPES = ["MANUFACTURER", "SS", "DB", "SUPPLIER", "OUTLET"] as const;
+export const PARTNER_TYPES = ["MANUFACTURER", "SS", "DB", "RETAILER"] as const;
 export type PartnerType = (typeof PARTNER_TYPES)[number];
 
 export const PARTNER_TYPE_LABELS: Record<PartnerType, string> = {
   MANUFACTURER: "Manufacturer",
   SS: "Super Stockist",
   DB: "Distributor",
-  SUPPLIER: "Supplier",
-  OUTLET: "Outlet",
+  RETAILER: "Retailer",
 };
 
-export const ROLES = ["ADMIN", "OPERATOR", "QC", "SS", "DB", "SUPPLIER", "OUTLET", "TRACE_OWNER"] as const;
+export const ROLES = ["ADMIN", "OPERATOR", "QC", "SS", "DB", "RETAILER", "TRACE_OWNER"] as const;
 export type Role = (typeof ROLES)[number];
 
 export const ROLE_LABELS: Record<Role, string> = {
@@ -21,8 +21,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   QC: "Supervisor/QC",
   SS: "Super Stockist",
   DB: "Distributor",
-  SUPPLIER: "Supplier",
-  OUTLET: "Outlet",
+  RETAILER: "Retailer",
   TRACE_OWNER: "Velza HQ",
 };
 
@@ -36,8 +35,7 @@ export const ROLE_PARTNER_TYPE: Record<Role, PartnerType | null> = {
   QC: "MANUFACTURER",
   SS: "SS",
   DB: "DB",
-  SUPPLIER: "SUPPLIER",
-  OUTLET: "OUTLET",
+  RETAILER: "RETAILER",
   TRACE_OWNER: null,
 };
 
@@ -52,8 +50,7 @@ export const MAIN_STATUSES = [
   "IN_TRANSIT",
   "AT_SS",
   "AT_DB",
-  "AT_SUPPLIER",
-  "AT_OUTLET",
+  "AT_RETAILER",
   "OPENED",
 ] as const;
 export const EXCEPTION_STATUSES = ["QUARANTINED", "VOID", "DAMAGED", "RETURNED", "RECALLED"] as const;
@@ -76,48 +73,57 @@ export interface Flavour {
   active: boolean;
 }
 
+/** A site in the chain, registered by Velza Admin. `id` is its partner ID, e.g. "DB0001". */
 export interface Partner {
   id: string;
   type: PartnerType;
   name: string;
+  /** Locality, e.g. "FC Road". */
+  place: string;
+  address: string;
   city: string;
-  /** Free-text area served, e.g. "East & South Maharashtra". */
-  territory: string;
-  /** Distributor: the Super Stockist it is assigned to (the only SS that may supply it). */
+  /** Indian state or union territory (one Super Stockist per state). */
+  state: string;
+  pincode: string;
+  contactPerson: string;
+  phone: string;
+  email: string;
+  /** The partner it is assigned to: DB → its SS, Retailer → its DB or (for a few retailers) its SS directly. */
   parentId: string | null;
   active: boolean;
+  createdAt: string;
+  createdBy: string | null;
 }
 
+/** A sign-in. `id` is the sign-in ID: the partner ID (DB0001), MF0001-OP / MF0001-QC, or AD0001 / HQ0001. */
 export interface User {
   id: string;
   name: string;
   role: Role;
   partnerId: string | null;
   active: boolean;
-  /** Sign-in ID, stored lowercase, unique. */
-  loginId: string;
   /** scrypt hash; null = no password set, cannot sign in. */
   passwordHash: string | null;
+  passwordChangedAt: string | null;
   createdAt: string;
-  /** Partner accounts need both approvals before they can sign in (Velza staff don't). */
-  adminApprovedBy: string | null;
-  adminApprovedAt: string | null;
-  hqApprovedBy: string | null;
-  hqApprovedAt: string | null;
-  rejectedBy: string | null;
-  rejectedAt: string | null;
-  rejectReason: string | null;
+  lastLoginAt: string | null;
 }
 
 /** User as sent to the browser: never includes the password hash. */
 export type PublicUser = Omit<User, "passwordHash"> & { hasPassword: boolean };
 
-/** Signed-in session. `id` is the SHA-256 of the cookie token, so a leaked data file can't be replayed. */
+/** Signed-in session. `id` is the SHA-256 of the cookie token, so a leaked database can't be replayed. */
 export interface Session {
   id: string;
   userId: string;
   createdAt: string;
   expiresAt: string;
+}
+
+/** Last number issued by one ID sequence ("DB", "MF", "AD" …). */
+export interface Sequence {
+  id: string;
+  value: number;
 }
 
 export interface Device {
@@ -224,6 +230,7 @@ export const MOVEMENT_TYPES = [
   "REPRINTED",
   "VOIDED",
   "RECALLED",
+  "DAMAGED",
   "SYNC",
   "POOL_ISSUED",
 ] as const;
@@ -246,7 +253,7 @@ export interface Movement {
   note: string | null;
 }
 
-export const SCAN_CONTEXTS = ["VERIFY", "DISPATCH", "RECEIVE", "OPEN_LOT", "LOOKUP", "PUBLIC_LOOKUP"] as const;
+export const SCAN_CONTEXTS = ["VERIFY", "DISPATCH", "RECEIVE", "OPEN_LOT", "DAMAGE", "LOOKUP", "PUBLIC_LOOKUP"] as const;
 export type ScanContext = (typeof SCAN_CONTEXTS)[number];
 
 /** Scan audit row: every scan, success or failure. */

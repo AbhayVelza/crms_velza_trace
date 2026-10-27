@@ -1,90 +1,121 @@
 "use client";
 
-import { AdminCrud, type Row } from "@/components/AdminCrud";
+import { useState } from "react";
+import { AdminCrud } from "@/components/AdminCrud";
+import { PasswordInput } from "@/components/PasswordInput";
 import { useSession } from "@/components/session";
-import { Button, cx, Notice, PageTitle } from "@/components/ui";
+import { Button, Card, Field, fmtTime, Input, Notice, PageTitle, Select } from "@/components/ui";
 import { api, errorText } from "@/lib/client";
-import type { AccountStatus } from "@/lib/core/auth";
 import { ROLE_LABELS, ROLE_PARTNER_TYPE, ROLES, type Role } from "@/lib/core/types";
+import { notifyDataChanged } from "@/lib/events";
 
-const STATUS_TONE: Record<AccountStatus, string> = {
-  APPROVED: "bg-green-100 text-green-800",
-  PENDING_ADMIN: "bg-amber-100 text-amber-900",
-  PENDING_HQ: "bg-amber-100 text-amber-900",
-  REJECTED: "bg-red-100 text-red-800",
-  NO_PASSWORD: "bg-slate-200 text-slate-700",
-  DISABLED: "bg-slate-200 text-slate-600",
-};
+/** A sign-in on its own: Velza staff, or a partner sign-in that was deleted and is needed again. */
+function NewSignIn() {
+  const { data } = useSession();
+  const [role, setRole] = useState<Role | "">("");
+  const [partnerId, setPartnerId] = useState("");
+  const [name, setName] = useState("");
+  const [password, setPassword] = useState("");
+  const [msg, setMsg] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+  const partnerType = role ? ROLE_PARTNER_TYPE[role] : null;
 
-function StatusCell({ row }: { row: Row }) {
-  const status = row.status as AccountStatus;
+  async function create() {
+    setMsg(null);
+    try {
+      const u = await api<{ id: string }>("/api/admin/users", { body: { role, name, partnerId: partnerType ? partnerId || null : null, password } });
+      setMsg({ tone: "ok", text: `Created sign-in ${u.id} — share with the person: ${u.id} / ${password}` });
+      setName("");
+      setPassword("");
+      notifyDataChanged();
+    } catch (e) {
+      setMsg({ tone: "error", text: errorText(e) });
+    }
+  }
+
   return (
-    <div className="min-w-[9rem]">
-      <span className={cx("inline-block rounded px-2 py-0.5 text-xs font-medium", STATUS_TONE[status])}>{String(row.statusLabel)}</span>
-      {status === "REJECTED" && row.rejectReason ? <div className="mt-1 text-xs text-red-700">“{String(row.rejectReason)}” — {String(row.rejectedByName)}</div> : null}
-      {status === "APPROVED" && row.hqApprovedByName ? <div className="mt-1 text-xs text-slate-500">HQ: {String(row.hqApprovedByName)}</div> : null}
-    </div>
+    <Card title="New sign-in">
+      <p className="mb-3 text-sm text-slate-600">
+        For Velza staff (Admin → AD0002 …, HQ → HQ0002 …). Partner sign-ins are made by the registration form on the Partners page; use this only to
+        make one again after it was deleted.
+      </p>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Field label="Role / portal">
+          <Select aria-label="Role" value={role} onChange={(e) => (setRole(e.target.value as Role), setPartnerId(""))}>
+            <option value="">Choose…</option>
+            {ROLES.map((r) => (
+              <option key={r} value={r}>
+                {ROLE_LABELS[r]}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        {partnerType && (
+          <Field label="Partner">
+            <Select aria-label="Partner" value={partnerId} onChange={(e) => setPartnerId(e.target.value)}>
+              <option value="">Choose…</option>
+              {(data?.partners ?? [])
+                .filter((p) => p.type === partnerType)
+                .map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.id} · {p.name}
+                  </option>
+                ))}
+            </Select>
+          </Field>
+        )}
+        <Field label="Name">
+          <Input aria-label="Name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name" />
+        </Field>
+        <Field label="Password">
+          <PasswordInput value={password} onChange={setPassword} />
+        </Field>
+      </div>
+      <Button className="mt-3" onClick={create} disabled={!role || !name || !password}>
+        Create sign-in
+      </Button>
+      {msg && (
+        <Notice tone={msg.tone} className="mt-3">
+          {msg.text}
+        </Notice>
+      )}
+    </Card>
   );
 }
 
 export default function UsersPage() {
   const { data } = useSession();
   const partners = data?.partners ?? [];
+  const partnerName = (id: unknown) => partners.find((p) => p.id === id)?.name ?? "—";
   return (
     <>
       <PageTitle
-        title="Users & sign-in"
-        subtitle="Set each person's sign-in ID and password. Partner accounts can sign in once Velza HQ approves them; Velza Admin and Velza HQ accounts need no approval."
+        title="Sign-ins & passwords"
+        subtitle="Each partner's sign-in ID is its partner ID (the plant has -OP and -QC). Set a new password and share it with the person; they can change it themselves after signing in."
       />
-      <AdminCrud
-        entity="users"
-        title="Users"
-        intro={
-          <Notice tone="info">
-            Adding a partner account counts as your (Admin) approval; it then waits in Velza HQ&apos;s <b>Account approvals</b>. Changing a
-            user&apos;s role or partner sends the account back to HQ. Users can change their own password under <b>Account</b>.
-          </Notice>
-        }
-        sort={(a, b) => ROLES.indexOf(a.role as Role) - ROLES.indexOf(b.role as Role) || String(a.name).localeCompare(String(b.name))}
-        columns={[
-          { key: "name", label: "Name", type: "text", placeholder: "Full name" },
-          { key: "loginId", label: "Sign-in ID", type: "text", placeholder: "e.g. ss3.nagpur" },
-          { key: "password", label: "Password", type: "password", placeholder: "8+ chars, letters + digits" },
-          { key: "role", label: "Role / portal", type: "select", createOnly: true, options: () => ROLES.map((r) => ({ value: r, label: ROLE_LABELS[r] })) },
-          {
-            key: "partnerId",
-            label: "Partner",
-            type: "select",
-            nullable: true,
-            visible: (row) => !!ROLE_PARTNER_TYPE[row.role as Role],
-            options: (row) => {
-              const type = ROLE_PARTNER_TYPE[row.role as Role];
-              return partners.filter((p) => p.type === type).map((p) => ({ value: p.id, label: p.name }));
-            },
-          },
-          { key: "status", label: "Status", type: "display", render: (row) => <StatusCell row={row} /> },
-          { key: "active", label: "Active", type: "bool" },
-        ]}
-        rowActions={(row, { reload, setMsg }) =>
-          row.status === "REJECTED" ? (
-            <Button
-              variant="secondary"
-              className="min-h-8 px-2 py-1 text-xs"
-              onClick={async () => {
-                try {
-                  await api("/api/approvals", { body: { userId: row.id, action: "resubmit" } });
-                  setMsg({ tone: "ok", text: `${row.name} sent to Velza HQ for approval again` });
-                  await reload();
-                } catch (e) {
-                  setMsg({ tone: "error", text: errorText(e) });
-                }
-              }}
-            >
-              Send to HQ again
-            </Button>
-          ) : null
-        }
-      />
+      <div className="space-y-4">
+        <AdminCrud
+          entity="users"
+          title="Sign-ins"
+          allowCreate={false}
+          intro={
+            <Notice tone="info">
+              Passwords are stored scrambled, so nobody — not even Velza Admin — can look one up. If someone forgets theirs, set a new one here: it signs
+              them out everywhere. Untick <b>Active</b> to stop a sign-in at once.
+            </Notice>
+          }
+          sort={(a, b) => ROLES.indexOf(a.role as Role) - ROLES.indexOf(b.role as Role) || String(a.id).localeCompare(String(b.id))}
+          columns={[
+            { key: "id", label: "Sign-in ID", type: "display", render: (row) => <span className="font-mono text-xs">{row.id}</span> },
+            { key: "name", label: "Name", type: "text" },
+            { key: "role", label: "Portal", type: "display", render: (row) => ROLE_LABELS[row.role as Role] },
+            { key: "partnerId", label: "Partner", type: "display", render: (row) => (row.partnerId ? partnerName(row.partnerId) : "Velza staff") },
+            { key: "lastLoginAt", label: "Last sign-in", type: "display", render: (row) => <span className="whitespace-nowrap text-xs">{fmtTime(row.lastLoginAt as string | null)}</span> },
+            { key: "password", label: "Password", type: "password" },
+            { key: "active", label: "Active", type: "bool" },
+          ]}
+        />
+        <NewSignIn />
+      </div>
     </>
   );
 }

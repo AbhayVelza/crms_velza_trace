@@ -1,39 +1,59 @@
-// Velza Admin: reference data, partners, users (sign-in ID, password, approvals), devices, pools,
-// settings, deletes. Velza HQ: approve / reject / revoke partner accounts.
+// Velza Admin: the partner registration form (partner + its sign-ins in one step), sign-ins and
+// passwords, reference data, devices, pools, settings, deletes. The Admin has every right; people
+// can only change their own password (services/auth.ts).
 
 import { z } from "zod";
-import { accountStatus, ACCOUNT_STATUS_LABELS, checkLoginId, checkPassword, needsApproval, normalizeLoginId, REAPPROVAL_FIELDS } from "@/lib/core/auth";
 import { can } from "@/lib/core/permissions";
-import { PARTNER_TYPES, ROLE_PARTNER_TYPE, ROLES, type Partner, type Settings, type User } from "@/lib/core/types";
+import { ASSIGNED_TO } from "@/lib/core/rules";
+import {
+  checkPassword,
+  formatSequenceId,
+  INDIAN_STATES,
+  PARTNER_ID_PREFIX,
+  PARTNER_LOGIN_ROLES,
+  partnerLoginId,
+  STAFF_ID_PREFIX,
+} from "@/lib/core/ids";
+import {
+  PARTNER_TYPE_LABELS,
+  PARTNER_TYPES,
+  ROLE_LABELS,
+  ROLE_PARTNER_TYPE,
+  ROLES,
+  type Partner,
+  type PartnerType,
+  type Role,
+  type Settings,
+  type User,
+} from "@/lib/core/types";
 import { hashPassword } from "@/lib/passwords";
 import { getStore, type StoreTx } from "@/lib/store";
 import { badRequest, loadActor, notFound, nowIso, publicUser, requireAction, type Actor } from "./common";
 import { autoRefill, issueCodes, reservedCodes } from "./pool";
 
-const ruleField = (check: (s: string) => string | null) =>
-  z.string().superRefine((s, ctx) => {
-    const message = check(s);
-    if (message) ctx.addIssue({ code: "custom", message });
-  });
-const loginIdField = ruleField(checkLoginId);
-const passwordField = ruleField(checkPassword);
+const partnerFields = {
+  type: z.enum(PARTNER_TYPES),
+  name: z.string().trim().min(1, "Name is required").max(100),
+  place: z.string().trim().min(1, "Place (locality) is required").max(80),
+  address: z.string().trim().min(1, "Address is required").max(200),
+  city: z.string().trim().min(1, "City is required").max(60),
+  state: z.string().trim().max(60).optional(),
+  pincode: z.string().trim().max(10).optional(),
+  contactPerson: z.string().trim().min(1, "Contact person is required").max(100),
+  phone: z.string().trim().min(1, "Phone is required").max(20),
+  email: z.string().trim().max(120).optional(),
+  parentId: z.string().nullable().optional(),
+  active: z.boolean().optional(),
+};
 
 export const ENTITY_SCHEMAS = {
-  partners: z.object({
-    type: z.enum(PARTNER_TYPES),
-    name: z.string().trim().min(1).max(100),
-    city: z.string().trim().min(1).max(60),
-    territory: z.string().trim().max(120).optional(),
-    parentId: z.string().nullable().optional(),
-    active: z.boolean().optional(),
-  }),
+  partners: z.object(partnerFields),
   users: z.object({
     name: z.string().trim().min(1).max(100),
     role: z.enum(ROLES),
     partnerId: z.string().nullable().optional(),
-    loginId: loginIdField,
-    password: passwordField,
     active: z.boolean().optional(),
+    password: z.string().max(200).optional(),
   }),
   devices: z.object({
     manufacturerId: z.string().min(1),
@@ -52,6 +72,15 @@ export const ENTITY_SCHEMAS = {
   }),
 } as const;
 
+/** The registration form: the partner, plus the first password of its sign-in(s). */
+export const registrationSchema = z.object({
+  ...partnerFields,
+  /** Sign-in password (at the plant: the Operator's). */
+  password: z.string().max(200),
+  /** Plant only: the QC sign-in's password. */
+  qcPassword: z.string().max(200).optional(),
+});
+
 export type AdminEntity = keyof typeof ENTITY_SCHEMAS;
 export const ADMIN_ENTITIES = Object.keys(ENTITY_SCHEMAS) as AdminEntity[];
 
@@ -59,20 +88,54 @@ export function isAdminEntity(s: string): s is AdminEntity {
   return (ADMIN_ENTITIES as string[]).includes(s);
 }
 
+const isIndianState = (s: string) => (INDIAN_STATES as readonly string[]).includes(s);
+const digits = (phone: string | undefined) => (phone ?? "").replace(/[^0-9]/g, "");
+
+/** Partner checks that need the other partners: address, contact, one SS per state, assignment. */
+async function validatePartner(tx: StoreTx, data: Partial<Partner> & { type: PartnerType }, selfId?: string) {
+  const type = data.type;
+  const label = PARTNER_TYPE_LABELS[type];
+  const state = data.state ?? "";
+  if (type !== "MANUFACTURER" && !isIndianState(state)) throw badRequest("BAD_STATE", `Pick the state of this ${label}`);
+  if (data.pincode && isIndianState(state) && !/^[1-9][0-9]{5}$/.test(data.pincode)) throw badRequest("BAD_PINCODE", "PIN code must be 6 digits");
+  if (data.phone !== undefined && !/^\+?[0-9][0-9 ()-]{6,18}$/.test(data.phone)) throw badRequest("BAD_PHONE", "Phone: digits only, e.g. +91 98765 43210");
+  if (data.email && !z.email().safeParse(data.email).success) throw badRequest("BAD_EMAIL", `${data.email} is not an email address`);
+
+  const others = (await tx.partners.list()).filter((p) => p.id !== selfId);
+  if (type === "SS") {
+    const taken = others.find((p) => p.type === "SS" && p.state === state);
+    if (taken) throw badRequest("STATE_TAKEN", `${state} already has a Super Stockist: ${taken.name} (${taken.id}). There is one Super Stockist per state.`);
+  }
+  if (data.phone) {
+    const same = others.find((p) => digits(p.phone) === digits(data.phone!));
+    if (same) throw badRequest("DUPLICATE", `Phone ${data.phone} is already used by ${same.name} (${same.id})`);
+  }
+  if (data.email) {
+    const same = others.find((p) => p.email && p.email.toLowerCase() === data.email!.toLowerCase());
+    if (same) throw badRequest("DUPLICATE", `Email ${data.email} is already used by ${same.name} (${same.id})`);
+  }
+  if (data.parentId) {
+    const parentTypes = ASSIGNED_TO[type];
+    if (!parentTypes) throw badRequest("BAD_PARENT", `A ${label} is not assigned to anyone`);
+    const parent = await tx.partners.get(data.parentId);
+    if (!parent || !parentTypes.includes(parent.type)) {
+      throw badRequest("BAD_PARENT", `A ${label} must be assigned to a ${parentTypes.map((t) => PARTNER_TYPE_LABELS[t]).join(" or ")}`);
+    }
+  }
+}
+
 async function validateEntity(tx: StoreTx, entity: AdminEntity, data: Record<string, unknown>, selfId?: string) {
   if (entity === "users") {
-    const role = data.role as (typeof ROLES)[number];
+    const role = data.role as Role;
     const needType = ROLE_PARTNER_TYPE[role];
     if (needType) {
       const partner = data.partnerId ? await tx.partners.get(String(data.partnerId)) : null;
       if (!partner || partner.type !== needType) {
-        throw badRequest("BAD_PARTNER", `A ${role} user must belong to a ${needType} partner`);
+        throw badRequest("BAD_PARTNER", `A ${ROLE_LABELS[role]} sign-in must belong to a ${PARTNER_TYPE_LABELS[needType]}`);
       }
     } else if (data.partnerId) {
-      throw badRequest("BAD_PARTNER", `A ${role} user is Velza staff and has no partner`);
+      throw badRequest("BAD_PARTNER", `A ${ROLE_LABELS[role]} sign-in is Velza staff and has no partner`);
     }
-    const taken = await tx.users.findOne({ loginId: String(data.loginId) });
-    if (taken && taken.id !== selfId) throw badRequest("DUPLICATE", `Sign-in ID ${data.loginId} is already used by ${taken.name}`);
   }
   if (entity === "devices") {
     const m = await tx.partners.get(String(data.manufacturerId));
@@ -82,91 +145,73 @@ async function validateEntity(tx: StoreTx, entity: AdminEntity, data: Record<str
     const rows = await tx[entity].list({ code: data.code as string });
     if (rows.some((r) => r.id !== selfId)) throw badRequest("DUPLICATE", `Code ${data.code} already exists`);
   }
-  if (entity === "partners") {
-    if (data.parentId) {
-      if (data.type !== "DB") throw badRequest("BAD_PARENT", "Only distributors are assigned to a Super Stockist");
-      const parent = await tx.partners.get(String(data.parentId));
-      if (!parent || parent.type !== "SS") throw badRequest("BAD_PARENT", "A distributor must be assigned to a Super Stockist");
-    }
-    if (selfId) {
-      const current = await tx.partners.get(selfId);
-      if (current && current.type !== data.type) {
-        const users = await tx.users.list({ partnerId: selfId });
-        if (users.length) throw badRequest("IN_USE", "Cannot change the tier of a partner that has users");
-      }
-    }
-  }
+  if (entity === "partners") await validatePartner(tx, data as Partial<Partner> & { type: PartnerType }, selfId);
 }
 
 /** Never let the Admin lock everyone out. */
 async function guardAdmins(tx: StoreTx, actor: Actor, target: User, next: Partial<User> | null) {
-  const stillAdmin = next !== null && (next.role ?? target.role) === "ADMIN" && (next.active ?? target.active);
-  if (target.id === actor.user.id && !stillAdmin) throw badRequest("SELF", "You cannot disable, delete or change the role of your own account");
-  if (target.role === "ADMIN" && !stillAdmin) {
+  const stillActive = next !== null && (next.active ?? target.active);
+  if (target.id === actor.user.id && !stillActive) throw badRequest("SELF", "You cannot disable or delete your own sign-in");
+  if (target.role === "ADMIN" && !stillActive) {
     const admins = (await tx.users.list({ role: "ADMIN", active: true })).filter((u) => u.id !== target.id);
     if (!admins.length) throw badRequest("LAST_ADMIN", "At least one active Velza Admin must remain");
   }
 }
 
-export function userView(u: User, users: User[]) {
-  const pub = publicUser(u);
-  const status = accountStatus(pub);
-  const name = (id: string | null) => (id ? (users.find((x) => x.id === id)?.name ?? id) : null);
-  return {
-    ...pub,
-    status,
-    statusLabel: ACCOUNT_STATUS_LABELS[status],
-    adminApprovedByName: name(u.adminApprovedBy),
-    hqApprovedByName: name(u.hqApprovedBy),
-    rejectedByName: name(u.rejectedBy),
-  };
+function requirePassword(pw: string | undefined, whose: string): string {
+  const problem = pw === undefined || pw === "" ? "a password is required" : checkPassword(pw);
+  if (problem) throw badRequest("WEAK_PASSWORD", `${whose}: ${problem}`);
+  return pw!;
+}
+
+async function newUser(tx: StoreTx, id: string, name: string, role: Role, partnerId: string | null, passwordHash: string): Promise<User> {
+  if (await tx.users.get(id)) throw badRequest("DUPLICATE", `Sign-in ${id} already exists`);
+  const at = nowIso();
+  return tx.users.create({ id, name, role, partnerId, active: true, passwordHash, passwordChangedAt: at, createdAt: at, lastLoginAt: null });
 }
 
 export async function listEntity(userId: string | null, entity: AdminEntity) {
   const store = getStore();
   const actor = await loadActor(store, userId);
   requireAction(actor, "admin");
-  if (entity === "users") {
-    const users = await store.users.list();
-    return users.map((u) => userView(u, users));
-  }
-  return store[entity].list();
+  return entity === "users" ? (await store.users.list()).map(publicUser) : store[entity].list();
 }
 
-export async function createEntity(userId: string | null, entity: AdminEntity, body: unknown) {
-  const data = ENTITY_SCHEMAS[entity].parse(body);
-  const passwordHash = entity === "users" ? await hashPassword((data as { password: string }).password) : null;
+/**
+ * The registration form: creates the partner with the next ID of its role (DB0001, DB0002 …) and its
+ * sign-in(s) — the partner ID itself, or MF0001-OP and MF0001-QC at the plant — with the given passwords.
+ */
+export async function registerPartner(userId: string | null, body: unknown) {
+  const { password, qcPassword, ...data } = registrationSchema.parse(body);
+  const roles = PARTNER_LOGIN_ROLES[data.type];
+  const plain = roles.map((r) => requirePassword(r === "QC" ? qcPassword : password, `${ROLE_LABELS[r]} password`));
+  const hashes = await Promise.all(plain.map(hashPassword));
   return getStore().transaction(async (tx) => {
     const actor = await loadActor(tx, userId);
     requireAction(actor, "admin");
-    if (entity === "users") {
-      const { name, role, partnerId, loginId, active } = data as z.infer<typeof ENTITY_SCHEMAS.users>;
-      const at = nowIso();
-      const row: User = {
-        id: crypto.randomUUID(),
-        name,
-        role,
-        partnerId: partnerId ?? null,
-        active: active ?? true,
-        loginId: normalizeLoginId(loginId),
-        passwordHash,
-        createdAt: at,
-        // Created by the Admin = approved by the Admin; partner accounts then wait for HQ.
-        adminApprovedBy: needsApproval(role) ? actor.user.id : null,
-        adminApprovedAt: needsApproval(role) ? at : null,
-        hqApprovedBy: null,
-        hqApprovedAt: null,
-        rejectedBy: null,
-        rejectedAt: null,
-        rejectReason: null,
-      };
-      await validateEntity(tx, entity, { ...row });
-      const created = await tx.users.create(row);
-      return userView(created, await tx.users.list());
-    }
-    await validateEntity(tx, entity, { partnerId: null, parentId: null, ...data });
-    const defaults =
-      entity === "devices" ? { offline: false, lastSyncAt: null } : entity === "partners" ? { active: true, territory: "", parentId: null } : { active: true };
+    const fields = { state: "", pincode: "", email: "", parentId: null, active: true, ...data };
+    await validatePartner(tx, fields);
+    const prefix = PARTNER_ID_PREFIX[data.type];
+    const id = formatSequenceId(prefix, await tx.nextSequence(prefix));
+    const partner = await tx.partners.create({ ...fields, id, createdAt: nowIso(), createdBy: actor.user.id });
+    const logins: User[] = [];
+    for (const [i, role] of roles.entries()) logins.push(await newUser(tx, partnerLoginId(role, id), data.contactPerson, role, id, hashes[i]));
+    return {
+      partner,
+      logins: logins.map(publicUser),
+      message: `Registered ${partner.name} as ${id} — sign-in ${logins.map((u) => u.id).join(" and ")}`,
+    };
+  });
+}
+
+export async function createEntity(userId: string | null, entity: AdminEntity, body: unknown) {
+  if (entity === "partners") return registerPartner(userId, body);
+  if (entity === "users") return createLogin(userId, body);
+  const data = ENTITY_SCHEMAS[entity].parse(body);
+  return getStore().transaction(async (tx) => {
+    requireAction(await loadActor(tx, userId), "admin");
+    await validateEntity(tx, entity, data);
+    const defaults = entity === "devices" ? { offline: false, lastSyncAt: null } : { active: true };
     const row = { ...defaults, ...data, id: crypto.randomUUID() };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const created = await (tx[entity] as any).create(row);
@@ -175,13 +220,26 @@ export async function createEntity(userId: string | null, entity: AdminEntity, b
   });
 }
 
+/**
+ * A sign-in on its own: Velza staff (AD0001, HQ0001 …), or a partner sign-in that was deleted
+ * (its ID comes from the partner again). Partner sign-ins are normally made by the registration form.
+ */
+async function createLogin(userId: string | null, body: unknown) {
+  const data = ENTITY_SCHEMAS.users.parse(body);
+  const passwordHash = await hashPassword(requirePassword(data.password, "Password"));
+  return getStore().transaction(async (tx) => {
+    requireAction(await loadActor(tx, userId), "admin");
+    const partnerId = ROLE_PARTNER_TYPE[data.role] ? (data.partnerId ?? null) : null;
+    await validateEntity(tx, "users", { ...data, partnerId });
+    const staffPrefix = STAFF_ID_PREFIX[data.role];
+    const id = staffPrefix ? formatSequenceId(staffPrefix, await tx.nextSequence(staffPrefix)) : partnerLoginId(data.role, partnerId!);
+    return publicUser(await newUser(tx, id, data.name, data.role, partnerId, passwordHash));
+  });
+}
+
 export async function updateEntity(userId: string | null, entity: AdminEntity, id: string, body: unknown) {
   const patch: Record<string, unknown> = ENTITY_SCHEMAS[entity].partial().parse(body);
-  if (entity === "users") {
-    if (typeof patch.loginId === "string") patch.loginId = normalizeLoginId(patch.loginId);
-    if (typeof patch.password === "string") patch.passwordHash = await hashPassword(patch.password);
-    delete patch.password;
-  }
+  const newHash = entity === "users" && patch.password !== undefined ? await hashPassword(requirePassword(String(patch.password), "New password")) : null;
   return getStore().transaction(async (tx) => {
     const actor = await loadActor(tx, userId);
     requireAction(actor, "admin");
@@ -192,26 +250,28 @@ export async function updateEntity(userId: string | null, entity: AdminEntity, i
     if ((entity === "countries" || entity === "flavours") && patch.code && patch.code !== current.code) {
       throw badRequest("CODE_LOCKED", "Codes are used inside printed stickers and cannot be changed; add a new entry instead");
     }
-    if (entity === "partners" && patch.type && patch.type !== "DB") patch.parentId = null;
+    if (entity === "partners" && patch.type && patch.type !== current.type) {
+      throw badRequest("TYPE_LOCKED", `${id} is a ${PARTNER_TYPE_LABELS[current.type as PartnerType]}; the tier is part of its ID — register a new partner instead`);
+    }
     if (entity === "users") {
       const user = current as User;
-      await guardAdmins(tx, actor, user, patch as Partial<User>);
-      const role = (patch.role as User["role"]) ?? user.role;
-      if (!ROLE_PARTNER_TYPE[role]) patch.partnerId = null;
-      // A new role or partner is a different access grant: back to HQ for approval.
-      const changed = REAPPROVAL_FIELDS.some((k) => k in patch && patch[k] !== user[k]);
-      if (changed && needsApproval(role)) {
-        Object.assign(patch, { adminApprovedBy: actor.user.id, adminApprovedAt: nowIso(), hqApprovedBy: null, hqApprovedAt: null, rejectedBy: null, rejectedAt: null, rejectReason: null });
+      if ((patch.role && patch.role !== user.role) || (patch.partnerId !== undefined && patch.partnerId !== user.partnerId)) {
+        throw badRequest("ROLE_LOCKED", `Sign-in ${id} is tied to its role and partner — create a new sign-in instead`);
       }
+      delete patch.role;
+      delete patch.partnerId;
+      delete patch.password;
+      await guardAdmins(tx, actor, user, patch as Partial<User>);
+      if (newHash) {
+        Object.assign(patch, { passwordHash: newHash, passwordChangedAt: nowIso() });
+        // A new password signs the person out everywhere.
+        for (const s of await tx.sessions.list({ userId: id })) await tx.sessions.delete(s.id);
+      }
+      return publicUser(await repo.update(id, patch));
     }
     await validateEntity(tx, entity, { ...current, ...patch }, id);
     const updated = await repo.update(id, patch);
     if (entity === "devices" && current.offline && patch.offline === false) await autoRefill(tx, id);
-    if (entity === "users") {
-      // Disabled accounts are signed out everywhere.
-      if (patch.active === false) for (const s of await tx.sessions.list({ userId: id })) await tx.sessions.delete(s.id);
-      return userView(updated, await tx.users.list());
-    }
     return updated;
   });
 }
@@ -219,13 +279,12 @@ export async function updateEntity(userId: string | null, entity: AdminEntity, i
 // ---------------------------------------------------------------- delete
 
 /** Rows referenced by history can't be deleted (the ledger is permanent) — deactivate them instead. */
-async function referencesTo(tx: StoreTx, entity: AdminEntity, row: Record<string, unknown>): Promise<string[]> {
+async function referencesTo(tx: StoreTx, entity: AdminEntity, row: { id: string; code?: unknown }): Promise<string[]> {
   const id = String(row.id);
   const found: string[] = [];
   const add = (n: number, what: string) => n && found.push(`${n} ${what}`);
   if (entity === "partners") {
-    const [users, devices, children, lots, packs, moves, scans] = await Promise.all([
-      tx.users.list({ partnerId: id }),
+    const [devices, children, lots, packs, moves, scans] = await Promise.all([
       tx.devices.list({ manufacturerId: id }),
       tx.partners.list({ parentId: id }),
       tx.lots.list(),
@@ -233,9 +292,8 @@ async function referencesTo(tx: StoreTx, entity: AdminEntity, row: Record<string
       tx.movements.list(),
       tx.scans.list({ partnerId: id }),
     ]);
-    add(users.length, "user(s)");
     add(devices.length, "device(s)");
-    add(children.length, "assigned distributor(s)");
+    add(children.length, "assigned partner(s)");
     add(lots.filter((l) => l.manufacturerId === id || l.locationId === id || l.inTransitToId === id).length, "lot(s)");
     add(packs.filter((p) => p.locationId === id || p.inTransitToId === id).length, "pack(s)");
     add(moves.filter((m) => m.fromId === id || m.toId === id).length, "movement(s)");
@@ -266,6 +324,11 @@ async function referencesTo(tx: StoreTx, entity: AdminEntity, row: Record<string
   return found;
 }
 
+async function deleteLogin(tx: StoreTx, id: string) {
+  for (const s of await tx.sessions.list({ userId: id })) await tx.sessions.delete(s.id);
+  await tx.users.delete(id);
+}
+
 export async function deleteEntity(userId: string | null, entity: AdminEntity, id: string) {
   return getStore().transaction(async (tx) => {
     const actor = await loadActor(tx, userId);
@@ -276,69 +339,27 @@ export async function deleteEntity(userId: string | null, entity: AdminEntity, i
     if (!current) throw notFound(`${entity} ${id}`);
     if (entity === "users") await guardAdmins(tx, actor, current, null);
     const refs = await referencesTo(tx, entity, current);
+    // A partner's own sign-ins go with it, unless one of them already has history.
+    const logins = entity === "partners" ? await tx.users.list({ partnerId: id }) : [];
+    for (const u of logins) {
+      const used = await referencesTo(tx, "users", u);
+      if (used.length) refs.push(`sign-in ${u.id} (${used.join(", ")})`);
+    }
     if (refs.length) {
       const hint = entity === "devices" ? "" : " — untick Active instead";
       throw badRequest("IN_USE", `Cannot delete: still used by ${refs.join(", ")}${hint}`);
     }
-    if (entity === "users") for (const s of await tx.sessions.list({ userId: id })) await tx.sessions.delete(s.id);
     if (entity === "devices") {
       // Unused codes go back; they are never issued again (codes are unique forever).
       for (const p of await tx.batchCodePool.list({ deviceId: id, status: "RESERVED" })) await tx.batchCodePool.update(p.id, { status: "RETURNED" });
     }
-    await repo.delete(id);
-    return { ok: true, message: `Deleted ${current.name ?? current.code ?? id}` };
-  });
-}
-
-// ---------------------------------------------------------------- approvals (HQ)
-
-export const approvalSchema = z.object({
-  userId: z.string().min(1),
-  action: z.enum(["approve", "reject", "revoke", "resubmit"]),
-  reason: z.string().trim().max(300).optional(),
-});
-
-/** Partner accounts with their approval state, for the HQ approvals screen. */
-export async function listApprovals(userId: string | null) {
-  const store = getStore();
-  const actor = await loadActor(store, userId);
-  requireAction(actor, "approve");
-  const [users, partners] = await Promise.all([store.users.list(), store.partners.list()]);
-  return users
-    .filter((u) => needsApproval(u.role))
-    .map((u) => ({ ...userView(u, users), partnerName: partners.find((p) => p.id === u.partnerId)?.name ?? null }))
-    .sort((a, b) => Number(a.status === "APPROVED") - Number(b.status === "APPROVED") || b.createdAt.localeCompare(a.createdAt));
-}
-
-/** HQ: approve / reject / revoke. Admin: resubmit a rejected account after fixing it. */
-export async function approvalAction(userId: string | null, body: unknown) {
-  const { userId: targetId, action, reason } = approvalSchema.parse(body);
-  return getStore().transaction(async (tx) => {
-    const actor = await loadActor(tx, userId);
-    requireAction(actor, action === "resubmit" ? "admin" : "approve");
-    const target = await tx.users.get(targetId);
-    if (!target) throw notFound(`User ${targetId}`);
-    if (!needsApproval(target.role)) throw badRequest("NO_APPROVAL", `${target.name} is Velza staff and needs no approval`);
-    const at = nowIso();
-    const users = await tx.users.list();
-    let patch: Partial<User>;
-    switch (action) {
-      case "approve":
-        if (!target.adminApprovedAt) throw badRequest("PENDING_ADMIN", `${target.name} must be approved by Velza Admin first`);
-        patch = { hqApprovedBy: actor.user.id, hqApprovedAt: at, rejectedBy: null, rejectedAt: null, rejectReason: null };
-        break;
-      case "reject":
-      case "revoke":
-        if (!reason) throw badRequest("REASON_REQUIRED", "Give a reason");
-        patch = { hqApprovedBy: null, hqApprovedAt: null, rejectedBy: actor.user.id, rejectedAt: at, rejectReason: reason };
-        break;
-      case "resubmit":
-        patch = { adminApprovedBy: actor.user.id, adminApprovedAt: at, rejectedBy: null, rejectedAt: null, rejectReason: null };
-        break;
-    }
-    const updated = await tx.users.update(targetId, patch);
-    if (action === "reject" || action === "revoke") for (const s of await tx.sessions.list({ userId: targetId })) await tx.sessions.delete(s.id);
-    return userView(updated, users);
+    for (const u of logins) await deleteLogin(tx, u.id);
+    if (entity === "users") await deleteLogin(tx, id);
+    else await repo.delete(id);
+    const named = entity === "partners" || entity === "users" ? `${current.name} (${id})` : (current.name ?? current.code ?? id);
+    const withLogins = logins.length ? ` and sign-in ${logins.map((u) => u.id).join(", ")}` : "";
+    const never = entity === "partners" || entity === "users" ? ". Its ID is never reused." : "";
+    return { ok: true, message: `Deleted ${named}${withLogins}${never}` };
   });
 }
 
@@ -410,10 +431,7 @@ export async function updateSettings(userId: string | null, body: unknown): Prom
   });
 }
 
-/**
- * Reference data for the signed-in user's screens. Velza staff see every partner and device;
- * a partner user sees only its own partner (and its own devices), never the rest of the network.
- */
+/** Reference data for the signed-in user's screens: Velza staff see every partner and device, a partner only its own. */
 export async function bootstrap(userId: string | null) {
   const store = getStore();
   const actor = await loadActor(store, userId);

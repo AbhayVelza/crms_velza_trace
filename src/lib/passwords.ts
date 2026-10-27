@@ -1,6 +1,6 @@
 // Password hashing (scrypt, built into Node) and session tokens. No plain password is ever stored.
 
-import { createHash, randomBytes, scrypt as scryptCb, scryptSync, timingSafeEqual, type ScryptOptions } from "node:crypto";
+import { createHash, randomBytes, randomInt, scrypt as scryptCb, scryptSync, timingSafeEqual, type ScryptOptions } from "node:crypto";
 
 const KEY_LEN = 64;
 const PARAMS: ScryptOptions = { N: 16384, r: 8, p: 1 };
@@ -40,4 +40,18 @@ export function newSessionToken(): string {
 /** Sessions are stored by token hash, so the data file alone can't be used to sign in. */
 export function sessionIdOf(token: string): string {
   return createHash("sha256").update(token).digest("hex");
+}
+
+/** A random first password to share with a person: 12 letters and digits, easy to read aloud (no 0/O, 1/l/I). */
+export function generatePassword(): string {
+  const letters = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ";
+  const all = letters + "23456789";
+  const pick = (set: string) => set[randomInt(set.length)];
+  const chars = [pick(letters), pick("23456789"), ...Array.from({ length: 10 }, () => pick(all))];
+  // Shuffle so the guaranteed letter and digit aren't always first.
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = randomInt(i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join("");
 }

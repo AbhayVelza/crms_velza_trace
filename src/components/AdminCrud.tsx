@@ -70,7 +70,10 @@ export function AdminCrud({
   title,
   columns,
   sort,
+  filter,
+  toolbar,
   allowDelete = true,
+  allowCreate = true,
   rowActions,
   intro,
 }: {
@@ -78,12 +81,18 @@ export function AdminCrud({
   title: string;
   columns: Column[];
   sort?: (a: Row, b: Row) => number;
+  /** Show only matching rows in the table (e.g. one tier). */
+  filter?: (row: Row) => boolean;
+  /** Controls shown in the table header (e.g. the filter select). */
+  toolbar?: ReactNode;
   allowDelete?: boolean;
+  /** false = no generic "Add" form (the page has its own, e.g. the partner registration form). */
+  allowCreate?: boolean;
   rowActions?: (row: Row, ctx: RowActionContext) => ReactNode;
   intro?: ReactNode;
 }) {
   const { refresh } = useSession();
-  const list = useApi<Row[]>(`/api/admin/${entity}`);
+  const list = useApi<Row[]>(`/api/admin/${entity}`, { refreshOnChange: true });
   const rows = list.data ?? [];
 
   const [draft, setDraft] = useState<Record<string, unknown>>(() => emptyDraft(columns));
@@ -168,15 +177,17 @@ export function AdminCrud({
 
   const hasActions = allowDelete || !!rowActions;
   const createColumns = columns.filter((c) => c.type !== "display" && !c.editOnly);
+  const filtered = filter ? rows.filter(filter) : rows;
+  const shown = sort ? [...filtered].sort(sort) : filtered;
 
   return (
     <div className="space-y-4">
       {intro}
       {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
       {list.error && <Notice tone="error">{list.error}</Notice>}
-      <Card title={title}>
-        <Table head={[...columns.map((c) => c.label), ...(hasActions ? [""] : [])]} empty={rows.length ? null : <Empty>Nothing yet</Empty>}>
-          {(sort ? [...rows].sort(sort) : rows).map((row) => (
+      <Card title={`${title} (${shown.length})`} actions={toolbar}>
+        <Table head={[...columns.map((c) => c.label), ...(hasActions ? [""] : [])]} empty={shown.length ? null : <Empty>{rows.length ? "Nothing matches the filter" : "Nothing yet"}</Empty>}>
+          {shown.map((row) => (
             <tr key={`${row.id}-${JSON.stringify(row)}`}>
               {columns.map((c) => (
                 <Td key={c.key}>{cell(c, row)}</Td>
@@ -197,40 +208,42 @@ export function AdminCrud({
           ))}
         </Table>
       </Card>
-      <Card title={`Add to ${title.toLowerCase()}`}>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {createColumns
-            .filter((c) => shows(c, draft))
-            .map((c) => (
-              <label key={c.key} className="block text-sm">
-                <span className="mb-1 block font-medium text-slate-700">{c.label}</span>
-                {c.type === "bool" ? (
-                  <input type="checkbox" checked={!!draft[c.key]} onChange={(e) => setDraft({ ...draft, [c.key]: e.target.checked })} className="h-5 w-5 accent-teal-700" />
-                ) : c.type === "select" ? (
-                  <Select value={String(draft[c.key] ?? "")} onChange={(e) => setDraft({ ...draft, [c.key]: e.target.value })}>
-                    <option value="">—</option>
-                    {c.options?.(draft).map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </Select>
-                ) : (
-                  <Input
-                    type={c.type === "password" ? "password" : "text"}
-                    autoComplete={c.type === "password" ? "new-password" : "off"}
-                    value={String(draft[c.key] ?? "")}
-                    placeholder={c.placeholder}
-                    onChange={(e) => setDraft({ ...draft, [c.key]: e.target.value })}
-                  />
-                )}
-              </label>
-            ))}
-        </div>
-        <Button className="mt-3" onClick={create}>
-          Add
-        </Button>
-      </Card>
+      {allowCreate && (
+        <Card title={`Add to ${title.toLowerCase()}`}>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {createColumns
+              .filter((c) => shows(c, draft))
+              .map((c) => (
+                <label key={c.key} className="block text-sm">
+                  <span className="mb-1 block font-medium text-slate-700">{c.label}</span>
+                  {c.type === "bool" ? (
+                    <input type="checkbox" checked={!!draft[c.key]} onChange={(e) => setDraft({ ...draft, [c.key]: e.target.checked })} className="h-5 w-5 accent-teal-700" />
+                  ) : c.type === "select" ? (
+                    <Select value={String(draft[c.key] ?? "")} onChange={(e) => setDraft({ ...draft, [c.key]: e.target.value })}>
+                      <option value="">—</option>
+                      {c.options?.(draft).map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </Select>
+                  ) : (
+                    <Input
+                      type={c.type === "password" ? "password" : "text"}
+                      autoComplete={c.type === "password" ? "new-password" : "off"}
+                      value={String(draft[c.key] ?? "")}
+                      placeholder={c.placeholder}
+                      onChange={(e) => setDraft({ ...draft, [c.key]: e.target.value })}
+                    />
+                  )}
+                </label>
+              ))}
+          </div>
+          <Button className="mt-3" onClick={create}>
+            Add
+          </Button>
+        </Card>
+      )}
     </div>
   );
 }

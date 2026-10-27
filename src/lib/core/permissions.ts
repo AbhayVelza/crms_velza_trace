@@ -17,8 +17,8 @@ export const ACTIONS = [
   "dashboard",
   "search",
   "recall",
-  "approve",
   "territory",
+  "damage",
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -26,22 +26,22 @@ export const PERMISSIONS: Record<Action, Role[]> = {
   admin: ["ADMIN"],
   printOrder: ["OPERATOR"],
   verify: ["QC"],
-  dispatch: ["OPERATOR", "SS", "DB", "SUPPLIER"],
-  receive: ["SS", "DB", "SUPPLIER", "OUTLET"],
-  openLot: ["SUPPLIER", "OUTLET"],
+  dispatch: ["OPERATOR", "SS", "DB"],
+  receive: ["SS", "DB", "RETAILER"],
+  openLot: ["RETAILER"],
   reprint: ["OPERATOR"],
   void: ["OPERATOR"],
   device: ["OPERATOR", "ADMIN"],
   sync: ["OPERATOR"],
-  stock: ["OPERATOR", "QC", "SS", "DB", "SUPPLIER", "OUTLET"],
+  stock: ["OPERATOR", "QC", "SS", "DB", "RETAILER"],
   // The HQ dashboard is for Velza HQ only; every role gets its own portal and nothing else.
   dashboard: ["TRACE_OWNER"],
   search: ["TRACE_OWNER"],
   recall: ["TRACE_OWNER"],
-  /** HQ approval of partner accounts (Admin approval happens when the Admin creates the account). */
-  approve: ["TRACE_OWNER"],
-  /** Super Stockist: see its assigned distributors. */
-  territory: ["SS"],
+  /** See the partners assigned to you: SS → its distributors and direct retailers, DB → its retailers. */
+  territory: ["SS", "DB"],
+  /** Report damaged cases, trays and packs held at your location. */
+  damage: ["OPERATOR", "SS", "DB", "RETAILER"],
 };
 
 export function can(role: Role, action: Action): boolean {

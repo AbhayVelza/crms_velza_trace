@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ROLE_LABELS } from "@/lib/core/types";
 import { MENU } from "@/lib/menu";
+import { ActAsSwitcher, useDevUsers } from "./ActAs";
 import { DeviceBar } from "./DeviceBar";
 import { useSession } from "./session";
 import { cx } from "./ui";
@@ -11,6 +12,7 @@ import { cx } from "./ui";
 export function AppHeader() {
   const { role, user, organisation, logout } = useSession();
   const pathname = usePathname();
+  const devUsers = useDevUsers(); // non-null while sign-in is off (development)
 
   return (
     <header className="border-b border-slate-200 bg-white print:hidden">
@@ -25,11 +27,13 @@ export function AppHeader() {
             <span className="truncate text-slate-700" data-testid="signed-in-user">
               {user.name}
             </span>
+            <span className="font-mono text-xs text-slate-500">{user.id}</span>
             <span className="truncate text-xs text-slate-500">@ {organisation}</span>
           </div>
         )}
         {role === "OPERATOR" && <DeviceBar />}
-        {user && (
+        {user && role && devUsers && <ActAsSwitcher users={devUsers} current={{ id: user.id, role }} />}
+        {user && !devUsers && (
           <div className="flex items-center gap-1 text-sm">
             <Link href="/account" className="rounded-md px-2 py-1.5 text-slate-700 hover:bg-slate-100">
               Account

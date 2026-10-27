@@ -1,6 +1,5 @@
 // Shared service helpers: errors, actor resolution, item lookup with sync visibility.
 
-import { canSignIn } from "@/lib/core/auth";
 import { parseCode, type ParsedCode } from "@/lib/core/codes";
 import { can, type Action } from "@/lib/core/permissions";
 import type { MovableItem, RejectCode } from "@/lib/core/rules";
@@ -31,12 +30,13 @@ export interface Actor {
 
 export const notSignedIn = (message = "Please sign in") => new ServiceError(401, "NOT_SIGNED_IN", message);
 
-/** The signed-in user. Re-checked on every request, so disabling or un-approving an account takes effect at once. */
+/** The signed-in user. Re-checked on every request, so disabling a sign-in or its partner takes effect at once. */
 export async function loadActor(tx: StoreTx, userId: string | null | undefined): Promise<Actor> {
   if (!userId) throw notSignedIn();
   const user = await tx.users.get(userId);
-  if (!user || !canSignIn({ ...user, hasPassword: !!user.passwordHash })) throw notSignedIn("Your account is no longer active — sign in again");
+  if (!user || !user.active) throw notSignedIn("Your sign-in is no longer active — contact Velza Admin");
   const partner = user.partnerId ? await tx.partners.get(user.partnerId) : null;
+  if (partner && !partner.active) throw notSignedIn(`${partner.name} is inactive — contact Velza Admin`);
   return { user, role: user.role, partner };
 }
 

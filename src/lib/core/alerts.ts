@@ -1,9 +1,9 @@
-// Alerts are computed from the scan audit log and current in-transit items, never stored.
+// Alerts are computed from the scan audit log, damage reports and current in-transit items, never stored.
 
 import { ALERT_RESULT_CODES } from "./rules";
-import type { ItemKind, Scan, Settings } from "./types";
+import type { ItemKind, Movement, Scan, Settings } from "./types";
 
-export const ALERT_TYPES = ["NOT_RECEIVED", "WRONG_RECEIVER", "UNKNOWN_CODE", "DUPLICATE_RECEIPT", "BLOCKED_CODE"] as const;
+export const ALERT_TYPES = ["NOT_RECEIVED", "WRONG_RECEIVER", "UNKNOWN_CODE", "DUPLICATE_RECEIPT", "BLOCKED_CODE", "DAMAGED"] as const;
 export type AlertType = (typeof ALERT_TYPES)[number];
 
 export interface Alert {
@@ -45,12 +45,14 @@ export function formatAge(ms: number): string {
 export interface ComputeAlertsInput {
   scans: Scan[];
   inTransit: InTransitUnit[];
+  /** DAMAGED movements: every damage report reaches HQ as an alert. */
+  damageReports?: Pick<Movement, "id" | "at" | "itemKind" | "itemCode" | "fromId" | "userId" | "note">[];
   settings: Pick<Settings, "demoMode" | "demoThresholdMinutes" | "notReceivedThresholdDays">;
   now: Date;
 }
 
 /** Newest first. */
-export function computeAlerts({ scans, inTransit, settings, now }: ComputeAlertsInput): Alert[] {
+export function computeAlerts({ scans, inTransit, damageReports = [], settings, now }: ComputeAlertsInput): Alert[] {
   const alerts: Alert[] = [];
   const threshold = notReceivedThresholdMs(settings);
   for (const u of inTransit) {
@@ -80,6 +82,17 @@ export function computeAlerts({ scans, inTransit, settings, now }: ComputeAlerts
         userId: s.userId,
       });
     }
+  }
+  for (const m of damageReports) {
+    alerts.push({
+      id: `DM-${m.id}`,
+      type: "DAMAGED",
+      at: m.at,
+      code: m.itemCode,
+      message: `${m.itemKind === "PACK" ? "Pack" : "Lot"} ${m.itemCode} reported damaged${m.note ? `: ${m.note}` : ""}`,
+      partnerId: m.fromId,
+      userId: m.userId,
+    });
   }
   return alerts.sort((a, b) => b.at.localeCompare(a.at));
 }

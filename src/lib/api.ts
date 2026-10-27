@@ -1,12 +1,14 @@
-// Route handler plumbing: session cookie → signed-in user, error → JSON mapping, JSON body parsing.
+// Route handler plumbing: security checks, session cookie → signed-in user, error → JSON mapping,
+// JSON body parsing.
 // Routes stay thin: validate (zod, inside services) → call a service → return JSON.
 
 import { connection } from "next/server";
 import { ZodError } from "zod";
 import { NotFoundError } from "@/lib/store";
-import { SESSION_COOKIE } from "@/lib/sessionCookie";
+import { clientIp, isCrossSiteWrite, LIMITS, logSecurityEvent, MAX_JSON_BYTES, RateLimiter } from "@/lib/security";
 import { sessionUserId } from "@/lib/services/auth";
 import { badRequest, forbidden, ServiceError } from "@/lib/services/common";
+import { SESSION_COOKIE } from "@/lib/sessionCookie";
 
 export { SESSION_COOKIE };
 
@@ -40,18 +42,55 @@ export function clearSessionCookie(req: Request): string {
   return `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${isHttps(req) ? "; Secure" : ""}`;
 }
 
-/** Refuse state-changing requests sent from another site's page. */
-function checkSameOrigin(req: Request) {
-  if (req.method === "GET" || req.method === "HEAD") return;
-  const origin = req.headers.get("origin");
-  if (origin && new URL(origin).host !== (req.headers.get("x-forwarded-host") ?? req.headers.get("host"))) {
+// One set of counters per server process (kept on globalThis so every route bundle shares it).
+const g = globalThis as unknown as { __velzaLimiters?: Record<"global" | "client" | "writes" | "public", RateLimiter> };
+const limiters = (g.__velzaLimiters ??= {
+  global: new RateLimiter(LIMITS.global),
+  client: new RateLimiter(LIMITS.perClient),
+  writes: new RateLimiter(LIMITS.writesPerClient),
+  public: new RateLimiter(LIMITS.publicPerClient),
+});
+
+const tooMany = (retryAfter: number) =>
+  Response.json({ error: { code: "RATE_LIMITED", message: `Too many requests — try again in ${retryAfter} s` } } satisfies ApiError, {
+    status: 429,
+    headers: { "retry-after": String(retryAfter) },
+  });
+
+/** Rate limits and cross-site check, before any work is done. Returns a response to send instead, or null. */
+function guard(req: Request): Response | null {
+  const ip = clientIp(req.headers);
+  const isPublic = new URL(req.url).searchParams.get("view") === "public";
+  const checks: [RateLimiter, string][] = [
+    [limiters.global, "*"],
+    [isPublic ? limiters.public : limiters.client, ip],
+  ];
+  if (req.method !== "GET" && req.method !== "HEAD") checks.push([limiters.writes, ip]);
+  for (const [limiter, key] of checks) {
+    const wait = limiter.take(key);
+    if (wait) {
+      logSecurityEvent(`rate-limited (${limiter === limiters.global ? "global" : "client"})`, req, ip);
+      return tooMany(wait);
+    }
+  }
+  if (isCrossSiteWrite(req.method, req.headers)) {
+    logSecurityEvent("cross-site write refused", req, ip);
     throw forbidden("Cross-site request refused");
   }
+  return null;
 }
 
+/** JSON request body: must be declared as JSON (blocks plain HTML form posts) and at most MAX_JSON_BYTES. */
 export async function jsonBody(req: Request): Promise<unknown> {
+  if (!(req.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) {
+    throw new ServiceError(415, "UNSUPPORTED_MEDIA_TYPE", "Request body must be JSON (content-type: application/json)");
+  }
+  const tooLarge = () => new ServiceError(413, "TOO_LARGE", `Request body is larger than ${MAX_JSON_BYTES / 1024} KB`);
+  if (Number(req.headers.get("content-length") ?? 0) > MAX_JSON_BYTES) throw tooLarge();
+  const text = await req.text();
+  if (Buffer.byteLength(text) > MAX_JSON_BYTES) throw tooLarge();
   try {
-    return await req.json();
+    return JSON.parse(text);
   } catch {
     throw badRequest("BAD_JSON", "Request body must be valid JSON");
   }
@@ -79,14 +118,16 @@ export function errorResponse(e: unknown): Response {
   return Response.json({ error: { code: "INTERNAL", message: "Unexpected server error — see the server log" } } satisfies ApiError, { status: 500 });
 }
 
-/** Wrap a route handler: always dynamic, signed-in user resolved, JSON result (or a Response as-is), typed errors. */
+/** Wrap a route handler: always dynamic, rate limited and origin checked, signed-in user resolved,
+ * JSON result (or a Response as-is), typed errors. */
 export function handler<C = unknown>(fn: (req: Request, ctx: C) => Promise<unknown>) {
   return async (req: Request, ctx: C): Promise<Response> => {
     // Outside the try: during `next build` this rejects on purpose to stop prerendering,
     // and Next must see that rejection.
     await connection();
     try {
-      checkSameOrigin(req);
+      const blocked = guard(req);
+      if (blocked) return blocked;
       requestUser.set(req, await sessionUserId(sessionTokenOf(req)));
       const out = await fn(req, ctx);
       return out instanceof Response ? out : Response.json(out);

@@ -9,14 +9,15 @@ export interface MenuItem {
 }
 
 const receive: MenuItem = { href: "/receive", label: "Receive", description: "Scan IN lots and packs arriving at your location" };
-const dispatch: MenuItem = { href: "/dispatch", label: "Dispatch", description: "Scan OUT to the next tier with an invoice/challan" };
+const dispatch: MenuItem = { href: "/dispatch", label: "Dispatch", description: "Scan OUT down the chain with an invoice/challan" };
 const openLot: MenuItem = { href: "/open-lot", label: "Open lot", description: "Open a case or tray so its packs can move one by one" };
 const stock: MenuItem = { href: "/stock", label: "My stock", description: "Lots and packs at, leaving and arriving at your location" };
+const damaged: MenuItem = { href: "/damaged", label: "Damaged", description: "Report a damaged case, tray or pack; see everything reported damaged here" };
 
 export const MENU: Record<Role, MenuItem[]> = {
   ADMIN: [
-    { href: "/admin/partners", label: "Partners", description: "Manufacturers, super stockists, distributors, suppliers, outlets" },
-    { href: "/admin/users", label: "Users & sign-in", description: "Sign-in IDs, passwords, roles and approval status" },
+    { href: "/admin/partners", label: "Partners", description: "Register partners (each gets its ID and sign-in) and assign them" },
+    { href: "/admin/users", label: "Sign-ins & passwords", description: "Sign-in IDs, new passwords, Velza staff sign-ins" },
     { href: "/admin/devices", label: "Devices", description: "Manufacturer PCs that generate codes" },
     { href: "/admin/reference", label: "Countries & flavours", description: "Code lists used inside every code" },
     { href: "/admin/pools", label: "Batch code pools", description: "Issue random batch codes to devices" },
@@ -29,19 +30,18 @@ export const MENU: Record<Role, MenuItem[]> = {
     { href: "/operator/reprint", label: "Reprint", description: "Reprint a damaged sticker (same code, reason logged)" },
     { href: "/operator/void", label: "Void lot", description: "Void an unpasted or misprinted lot" },
     stock,
+    damaged,
   ],
   QC: [{ href: "/qc/verify", label: "Verify", description: "Scan a lot and each of its packs, then confirm" }, stock],
-  SS: [receive, dispatch, stock, { href: "/ss/distributors", label: "My distributors", description: "The distributors assigned to you and their stock" }],
-  DB: [receive, dispatch, stock],
-  SUPPLIER: [receive, dispatch, openLot, stock],
-  OUTLET: [receive, openLot, stock],
+  SS: [receive, dispatch, stock, damaged, { href: "/my-partners", label: "My partners", description: "The distributors and retailers assigned to you and their stock" }],
+  DB: [receive, dispatch, stock, damaged, { href: "/my-partners", label: "My retailers", description: "The retailers assigned to you and their stock" }],
+  RETAILER: [receive, openLot, stock, damaged],
   TRACE_OWNER: [
     { href: "/hq", label: "Dashboard", description: "Status counts, stock by location, in transit, alerts" },
     { href: "/hq/search", label: "Search code", description: "Status, location, parent/children and full timeline" },
     { href: "/hq/alerts", label: "Alerts", description: "Not received, wrong receiver, unknown, duplicate, blocked" },
     { href: "/hq/batches", label: "Batches & recall", description: "Batch report and recall" },
     { href: "/hq/scans", label: "Scan audit", description: "Every scan, success or failure" },
-    { href: "/hq/approvals", label: "Account approvals", description: "Approve partner accounts created by Velza Admin" },
   ],
 };
 

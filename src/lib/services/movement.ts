@@ -1,9 +1,10 @@
 // Chain movements: dispatch (scan OUT), receive (scan IN), open lot.
 
 import { z } from "zod";
-import { canDispatch, canOpenLot, canReceive, checkDispatchHeader, dispatchPatch, isAssignedDestination, NEXT_TIER, receivePatch, type RuleResult } from "@/lib/core/rules";
+import { assignedTypesOf, canDispatch, canOpenLot, canReceive, checkDispatchHeader, DESTINATION_TYPES, dispatchPatch, isAssignedDestination, receivePatch, type RuleResult } from "@/lib/core/rules";
 import type { Partner } from "@/lib/core/types";
 import { getStore, type StoreTx } from "@/lib/store";
+import { stockCounts } from "./trace";
 import { badRequest, findItem, loadActor, logScan, manufacturerDevice, nowIso, requireAction, requirePartner, setLotState, type Actor, type FoundItem } from "./common";
 
 export const dispatchSchema = z.discriminatedUnion("action", [
@@ -22,29 +23,40 @@ export async function destinations(userId: string | null) {
   const actor = await loadActor(store, userId);
   requireAction(actor, "dispatch");
   const sender = requirePartner(actor);
-  const next = NEXT_TIER[sender.type];
-  const partners = next ? await store.partners.list({ type: next, active: true }) : [];
-  return { sender, nextTier: next, destinations: partners.filter((p) => isAssignedDestination(sender, p)) };
+  const types = DESTINATION_TYPES[sender.type];
+  const partners = (await store.partners.list({ active: true })).filter((p) => types.includes(p.type));
+  return { sender, destinationTypes: types, destinations: partners.filter((p) => isAssignedDestination(sender, p)) };
 }
 
-/** Super Stockist: its assigned distributors with what is at / on the way to each. */
-export async function myDistributors(userId: string | null) {
+/** SS → its distributors and the retailers it supplies directly, DB → its retailers, with what is at / on the way to each. */
+export async function myPartners(userId: string | null) {
   const store = getStore();
   const actor = await loadActor(store, userId);
   requireAction(actor, "territory");
-  const ss = requirePartner(actor);
-  const [distributors, lots, packs] = await Promise.all([store.partners.list({ type: "DB", parentId: ss.id }), store.lots.list(), store.packs.list()]);
+  const me = requirePartner(actor);
+  const childTypes = assignedTypesOf(me.type);
+  const [assigned, lots, packs] = await Promise.all([store.partners.list({ parentId: me.id }), store.lots.list(), store.packs.list()]);
+  const children = assigned.filter((p) => childTypes.includes(p.type));
+  const lotByCode = new Map(lots.map((l) => [l.lotCode, l]));
   const opened = new Set(lots.filter((l) => l.status === "OPENED").map((l) => l.lotCode));
+  const loose = packs.filter((p) => opened.has(p.lotCode));
   return {
-    superStockist: ss,
-    distributors: distributors
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map((d) => ({
-        ...d,
-        lotsInStock: lots.filter((l) => l.locationId === d.id && l.status === "AT_DB").length,
-        loosePacksInStock: packs.filter((p) => opened.has(p.lotCode) && p.locationId === d.id && p.status === "AT_DB").length,
-        lotsOnTheWayFromMe: lots.filter((l) => l.status === "IN_TRANSIT" && l.locationId === ss.id && l.inTransitToId === d.id).length,
-      })),
+    me,
+    childTypes,
+    partners: children
+      .sort((x, y) => childTypes.indexOf(x.type) - childTypes.indexOf(y.type) || x.name.localeCompare(y.name))
+      .map((c) => {
+        // Counted as on My stock and the HQ dashboard: an opened case counts while any of its packs is still there.
+        const stock = stockCounts(c.id, lots, packs, lotByCode);
+        return {
+          ...c,
+          lotsInStock: stock.cases + stock.trays,
+          loosePacksInStock: stock.loosePacks,
+          onTheWayFromMe:
+            lots.filter((l) => l.status === "IN_TRANSIT" && l.locationId === me.id && l.inTransitToId === c.id).length +
+            loose.filter((p) => p.status === "IN_TRANSIT" && p.locationId === me.id && p.inTransitToId === c.id).length,
+        };
+      }),
   };
 }
 

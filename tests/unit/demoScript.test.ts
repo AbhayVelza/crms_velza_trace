@@ -6,7 +6,7 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Role } from "@/lib/core/types";
 import { getStore } from "@/lib/store";
-import { buildBaseSeed } from "@/lib/store/seedData";
+import { buildSampleSeed } from "../fixtures/sampleNetwork";
 import { dispatch, openLot, receive } from "@/lib/services/movement";
 import { reprint, setDeviceOffline, sync, voidLot } from "@/lib/services/operator";
 import { createPrintOrder, markPrinted, stickerForReprint, stickersForOrder } from "@/lib/services/printOrders";
@@ -36,19 +36,19 @@ async function verifyLot(qc: string, lotCode: string) {
 beforeAll(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "velza-demo-"));
   process.env.VELZA_DB_PATH = path.join(dir, "db.json");
-  await store().reset(buildBaseSeed());
+  await store().reset(buildSampleSeed());
   ids.operator = await user("OPERATOR");
   ids.qc = await user("QC");
   ids.ss1 = await user("SS", "SS-1");
   ids.ss2 = await user("SS", "SS-2");
   ids.db1 = await user("DB", "DB-1");
-  ids.sup1 = await user("SUPPLIER", "Supplier-1");
-  ids.out1 = await user("OUTLET", "Outlet-1");
+  ids.rt1 = await user("RETAILER", "Retailer-1");
+  ids.rt4 = await user("RETAILER", "Retailer-4");
   ids.hq = await user("TRACE_OWNER");
   ids.SS1 = await partner("SS-1");
   ids.DB1 = await partner("DB-1");
-  ids.SUP1 = await partner("Supplier-1");
-  ids.OUT1 = await partner("Outlet-1");
+  ids.RT1 = await partner("Retailer-1"); // DB-1's
+  ids.RT4 = await partner("Retailer-4"); // SS-1's directly
 });
 afterAll(async () => {
   delete process.env.VELZA_DB_PATH;
@@ -128,23 +128,30 @@ describe("demo script 9.1", () => {
     expect((await myStock(ids.ss1)).inStock.map((s) => s.code).sort()).toEqual([lots[0], lots[1]]);
   });
 
-  it("5. one case SS-1 → DB-1 → Supplier-1; supplier opens it and sends pack …62 to Outlet-1, who receives it", async () => {
+  it("5. one case SS-1 → DB-1 → Retailer-1, who opens it; the other SS-1 → Retailer-4 directly", async () => {
     const c = lots[0];
     const pack62 = `${c}62`;
     expect(await dispatch(ids.ss1, { action: "confirm", toPartnerId: ids.DB1, invoice: "INV-002", codes: [c] })).toMatchObject({ ok: true });
     expect(await receive(ids.db1, { code: c })).toMatchObject({ ok: true, status: "AT_DB" });
-    expect(await dispatch(ids.db1, { action: "confirm", toPartnerId: ids.SUP1, invoice: "INV-003", codes: [c] })).toMatchObject({ ok: true });
-    expect(await receive(ids.sup1, { code: c })).toMatchObject({ ok: true, status: "AT_SUPPLIER" });
 
-    // Sealed: a pack can't move before the lot is opened
-    expect(await dispatch(ids.sup1, { action: "check", toPartnerId: ids.OUT1, invoice: "INV-004", code: pack62 })).toMatchObject({ ok: false, code: "LOT_SEALED" });
-    expect(await openLot(ids.sup1, { lotCode: c })).toMatchObject({ ok: true });
-    expect(await dispatch(ids.sup1, { action: "check", toPartnerId: ids.OUT1, invoice: "INV-004", code: c })).toMatchObject({ ok: false, code: "LOT_OPENED" });
-    expect(await dispatch(ids.sup1, { action: "confirm", toPartnerId: ids.OUT1, invoice: "INV-004", codes: [pack62] })).toMatchObject({ ok: true });
-    expect(await receive(ids.out1, { code: pack62 })).toMatchObject({ ok: true, status: "AT_OUTLET" });
+    // Sealed: a pack can't move on its own, and only a Retailer opens a case
+    expect(await dispatch(ids.db1, { action: "check", toPartnerId: ids.RT1, invoice: "INV-003", code: pack62 })).toMatchObject({ ok: false, code: "LOT_SEALED" });
+    await expect(openLot(ids.db1, { lotCode: c })).rejects.toMatchObject({ status: 403 });
+    expect(await dispatch(ids.db1, { action: "check", toPartnerId: ids.RT4, invoice: "INV-003", code: c })).toMatchObject({ ok: false, code: "WRONG_DESTINATION" }); // SS-1's retailer
+    expect(await dispatch(ids.db1, { action: "confirm", toPartnerId: ids.RT1, invoice: "INV-003", codes: [c] })).toMatchObject({ ok: true });
+    expect(await receive(ids.rt1, { code: c })).toMatchObject({ ok: true, status: "AT_RETAILER" });
+    expect(await openLot(ids.rt1, { lotCode: c })).toMatchObject({ ok: true });
+    expect((await store().packs.list({ lotCode: c })).map((p) => p.status)).toEqual(Array(4).fill("AT_RETAILER"));
+    // The Retailer is the last tier: nothing moves on from it
+    await expect(dispatch(ids.rt1, { action: "check", toPartnerId: null, invoice: "INV-X", code: pack62 })).rejects.toMatchObject({ status: 403 });
+
+    // A few retailers are supplied by their Super Stockist directly, never a Distributor's retailer
+    expect(await dispatch(ids.ss1, { action: "check", toPartnerId: ids.RT1, invoice: "INV-004", code: lots[1] })).toMatchObject({ ok: false, code: "WRONG_DESTINATION" });
+    expect(await dispatch(ids.ss1, { action: "confirm", toPartnerId: ids.RT4, invoice: "INV-004", codes: [lots[1]] })).toMatchObject({ ok: true });
+    expect(await receive(ids.rt4, { code: lots[1] })).toMatchObject({ ok: true, status: "AT_RETAILER" });
   });
 
-  it("6. HQ search: case timeline shows every step; pack …62 is AT_OUTLET", async () => {
+  it("6. HQ search: case timeline shows every step; pack …62 is AT_RETAILER; the direct case is at Retailer-4", async () => {
     const c = await lookup(ids.hq, lots[0]);
     if (!c.found) throw new Error("not found");
     expect(c.status).toBe("OPENED");
@@ -153,10 +160,14 @@ describe("demo script 9.1", () => {
     expect(c.children).toHaveLength(4);
     const p = await lookup(ids.hq, `${lots[0]}62`);
     if (!p.found) throw new Error("not found");
-    expect(p.status).toBe("AT_OUTLET");
-    expect(p.location).toMatch(/Outlet-1/);
+    expect(p.status).toBe("AT_RETAILER");
+    expect(p.location).toMatch(/Retailer-1/);
     expect(p.parent?.code).toBe(lots[0]);
-    expect(p.timeline.at(-1)).toMatchObject({ event: "RECEIVED", invoice: "INV-004" });
+    expect(p.timeline.at(-1)).toMatchObject({ event: "OPENED" });
+    const direct = await lookup(ids.hq, lots[1]);
+    if (!direct.found) throw new Error("not found");
+    expect(direct).toMatchObject({ status: "AT_RETAILER", locationTier: "RETAILER", location: expect.stringMatching(/Retailer-4/) });
+    expect(direct.timeline.filter((t) => t.event === "DISPATCHED").map((t) => t.invoice)).toEqual(["INV-001", "INV-004"]);
   });
 
   it("7. made-up code → UNKNOWN_CODE; recall Green Apple → RECALLED and public page says Recalled", async () => {
@@ -237,6 +248,7 @@ describe("demo script 9.1", () => {
     const inTransit = (await store().lots.list({ status: "IN_TRANSIT" })).map((l) => l.lotCode);
     expect(inTransit.length).toBeGreaterThan(0);
     expect(d.inTransit.map((t) => t.code)).toEqual(expect.arrayContaining(inTransit));
-    expect(d.stock.find((s) => s.partner.startsWith("Outlet-1"))?.loosePacks).toBe(1);
+    expect(d.stock.find((s) => s.partner.startsWith("Retailer-1"))).toMatchObject({ tier: "RETAILER", cases: 1, openedCases: 1, loosePacks: 4 });
+    expect(d.stock.find((s) => s.partner.startsWith("Retailer-4"))).toMatchObject({ tier: "RETAILER", cases: 1, loosePacks: 0 });
   });
 });

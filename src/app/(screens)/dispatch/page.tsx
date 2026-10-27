@@ -1,18 +1,19 @@
 "use client";
 
-// Dispatch (scan OUT): destination (next tier only) → invoice/challan → scan codes into a list → confirm.
+// Dispatch (scan OUT): destination (an allowed tier, assigned partners only) → invoice/challan → scan codes into a list → confirm.
 
 import { useState } from "react";
 import { ScanInput, ScanLog, type ScanLogEntry } from "@/components/ScanInput";
 import { Button, Card, Code, Field, Input, Notice, PageTitle, Select } from "@/components/ui";
 import { useApi } from "@/components/useApi";
 import { api, errorText } from "@/lib/client";
+import { assignedTypesOf } from "@/lib/core/rules";
 import { PARTNER_TYPE_LABELS, type Partner, type PartnerType } from "@/lib/core/types";
 import { notifyDataChanged } from "@/lib/events";
 
 interface Destinations {
   sender: Partner;
-  nextTier: PartnerType | null;
+  destinationTypes: PartnerType[];
   destinations: Partner[];
 }
 
@@ -61,25 +62,40 @@ export default function DispatchPage() {
 
   if (dest.error) return <Notice tone="error">{dest.error}</Notice>;
   if (!dest.data) return <p className="text-sm text-slate-500">Loading…</p>;
-  const { nextTier, destinations, sender } = dest.data;
+  const { destinationTypes, destinations, sender } = dest.data;
+  // The manufacturer may supply any Super Stockist; SS and DB only the partners assigned to them.
+  const assigned = assignedTypesOf(sender.type).length > 0;
+  const tiers = destinationTypes.map((t) => `${PARTNER_TYPE_LABELS[t]}s`).join(" or ");
+  const option = (p: Partner) => (
+    <option key={p.id} value={p.id}>
+      {p.name} ({p.city})
+    </option>
+  );
 
   return (
     <>
-      <PageTitle title="Dispatch (scan OUT)" subtitle={`From ${sender.name}${nextTier ? ` → ${PARTNER_TYPE_LABELS[nextTier]} only` : ""}`} />
-      {!nextTier ? (
-        <Notice tone="info">Outlets are the last tier and don&apos;t dispatch.</Notice>
+      <PageTitle title="Dispatch (scan OUT)" subtitle={`From ${sender.name}${tiers ? ` → ${tiers}${assigned ? " assigned to you" : " only"}` : ""}`} />
+      {!destinationTypes.length ? (
+        <Notice tone="info">Retailers are the last tier and don&apos;t dispatch.</Notice>
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
           <Card title="1–2. Destination and invoice">
             <div className="grid gap-3 sm:grid-cols-2">
-              <Field label={`Destination (${PARTNER_TYPE_LABELS[nextTier]})`}>
+              <Field label={`Destination (${destinationTypes.map((t) => PARTNER_TYPE_LABELS[t]).join(" or ")})`}>
                 <Select aria-label="Destination" value={to} onChange={(e) => (setTo(e.target.value), setList([]))}>
                   <option value="">Choose…</option>
-                  {destinations.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} ({p.city})
-                    </option>
-                  ))}
+                  {destinationTypes.length > 1
+                    ? destinationTypes
+                        .filter((t) => destinations.some((p) => p.type === t))
+                        .map((t) => (
+                        <optgroup key={t} label={`${PARTNER_TYPE_LABELS[t]}s`}>
+                          {destinations
+                            .filter((p) => p.type === t)
+                            .sort((a, b) => a.name.localeCompare(b.name))
+                            .map(option)}
+                        </optgroup>
+                      ))
+                    : destinations.map(option)}
                 </Select>
               </Field>
               <Field label="Invoice / challan number">

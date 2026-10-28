@@ -34,7 +34,7 @@ function NewSignIn() {
 
   return (
     <Card title="New sign-in">
-      <p className="mb-3 text-sm text-slate-600">
+      <p className="mb-3 text-sm text-muted-foreground">
         For Velza staff (Admin → AD0002 …, HQ → HQ0002 …). Partner sign-ins are made by the registration form on the Partners page; use this only to
         make one again after it was deleted.
       </p>

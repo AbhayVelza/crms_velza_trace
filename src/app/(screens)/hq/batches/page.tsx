@@ -3,7 +3,8 @@
 // Batch report (printed / packed / quarantined / void / reprinted) and recall + recall report.
 
 import { useState } from "react";
-import { Button, Card, Code, cx, Empty, Field, fmtTime, Input, Notice, PageTitle, Stat, StatusBadge, Table, Td } from "@/components/ui";
+import { IconChevronRight, IconTriangleAlert } from "@/components/icons";
+import { Button, Card, Code, cx, Empty, Field, fmtTime, Input, Loading, Notice, PageTitle, Stat, StatusBadge, Table, Td } from "@/components/ui";
 import { useApi } from "@/components/useApi";
 import { api, errorText } from "@/lib/client";
 import { notifyDataChanged } from "@/lib/events";
@@ -40,10 +41,10 @@ export default function BatchesPage() {
     <>
       <PageTitle title="Batches & recall" />
       {list.error && <Notice tone="error">{list.error}</Notice>}
-      <Card className="mb-4">
+      <Card className="mb-4 lg:mb-5">
         <Table head={["Batch", "Flavour", "Mfg / Exp", "Lots", "Statuses", "Reprints", ""]} empty={list.data && !list.data.length ? <Empty>No synced batches yet</Empty> : null}>
           {list.data?.map((b) => (
-            <tr key={b.code} className={cx(selected === b.code && "bg-teal-50")}>
+            <tr key={b.code} className={cx(selected === b.code && "bg-muted shadow-[inset_2px_0_0_var(--foreground)]")} aria-selected={selected === b.code}>
               <Td>
                 <Code>{b.code}</Code> {b.status === "RECALLED" && <StatusBadge status="RECALLED" />}
               </Td>
@@ -63,8 +64,9 @@ export default function BatchesPage() {
               </Td>
               <Td>{b.reprints}</Td>
               <Td>
-                <Button variant="ghost" onClick={() => setSelected(b.code)}>
+                <Button variant="ghost" className="min-h-8 px-3" onClick={() => setSelected(b.code)}>
                   Report
+                  <IconChevronRight size={16} />
                 </Button>
               </Td>
             </tr>
@@ -98,12 +100,12 @@ function BatchReport({ code }: { code: string }) {
 
   if (report.error) return <Notice tone="error">{report.error}</Notice>;
   const r = report.data;
-  if (!r) return <p className="text-sm text-slate-500">Loading report…</p>;
+  if (!r) return <Loading>Loading report…</Loading>;
 
   return (
-    <div className="space-y-4" data-testid="batch-report">
+    <div className="animate-rise-in space-y-4 lg:space-y-5" data-testid="batch-report">
       <Card title={`Batch ${code} · ${r.batch.flavourName} · ${r.batch.manufacturer}`}>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7 lg:gap-4">
           <Stat label="Lots" value={`${r.summary.lots}`} />
           <Stat label="Printed" value={r.summary.printed} />
           <Stat label="Packed" value={r.summary.packed} />
@@ -112,12 +114,12 @@ function BatchReport({ code }: { code: string }) {
           <Stat label="Reprinted" value={r.summary.reprinted} />
           <Stat label="Recalled" value={r.summary.recalled} tone={r.summary.recalled ? "danger" : undefined} />
         </div>
-        <p className="mt-2 text-xs text-slate-500">
+        <p className="mt-2 text-xs text-muted-foreground">
           {r.summary.cases} case(s), {r.summary.trays} tray(s). Printed / packed count lots that ever reached that step (from the movement ledger).
         </p>
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-2 lg:gap-5">
         <Card title="Lots">
           <Table head={["Lot", "Type", "Status", "Location"]}>
             {r.lots.map((l) => (
@@ -128,7 +130,7 @@ function BatchReport({ code }: { code: string }) {
                 <Td className="text-xs">{l.lotType}</Td>
                 <Td>
                   <StatusBadge status={l.status} />
-                  {l.quarantineReason && <div className="text-xs text-orange-800">{l.quarantineReason}</div>}
+                  {l.quarantineReason && <div className="text-xs text-warning">{l.quarantineReason}</div>}
                 </Td>
                 <Td className="text-xs">{l.location}</Td>
               </tr>
@@ -142,15 +144,15 @@ function BatchReport({ code }: { code: string }) {
               <Notice tone="error">
                 Recalled {fmtTime(r.batch.recalledAt)} — {r.batch.recallReason}
               </Notice>
-              <h3 className="text-sm font-semibold">Recall report: last known location</h3>
+              <h3 className="text-sm font-bold text-foreground">Recall report: last known location</h3>
               {recallReport.data && (
                 <ul className="space-y-2 text-sm" data-testid="recall-report">
                   {recallReport.data.items.map((i) => (
-                    <li key={i.code} className="rounded border border-slate-200 p-2">
-                      <Code>{i.code}</Code> <span className="text-xs text-slate-500">{i.lotType}, was {i.statusBeforeRecall ?? i.status}</span>
+                    <li key={i.code} className="rounded-control border border-line bg-surface-2 p-3">
+                      <Code>{i.code}</Code> <span className="text-xs text-muted-foreground">{i.lotType}, was {i.statusBeforeRecall ?? i.status}</span>
                       <div className="text-xs">{i.lastLocation}</div>
                       {i.packs.length > 0 && (
-                        <ul className="mt-1 border-l-2 border-slate-200 pl-2 text-xs">
+                        <ul className="mt-2 space-y-0.5 border-l-2 border-line-strong pl-3 text-xs">
                           {i.packs.map((p) => (
                             <li key={p.code}>
                               <Code>{p.code}</Code> was {p.statusBeforeRecall} · {p.lastLocation}
@@ -165,7 +167,7 @@ function BatchReport({ code }: { code: string }) {
             </div>
           ) : (
             <div className="space-y-3">
-              <p className="text-sm text-slate-600">Recall marks every lot and pack of this batch RECALLED wherever it is. Any later scan raises a BLOCKED_CODE alert and the public page shows &quot;Recalled — do not consume&quot;.</p>
+              <p className="text-sm text-foreground-2">Recall marks every lot and pack of this batch RECALLED wherever it is. Any later scan raises a BLOCKED_CODE alert and the public page shows &quot;Recalled — do not consume&quot;.</p>
               <Field label="Reason">
                 <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Quality complaint, contamination risk" />
               </Field>
@@ -174,8 +176,11 @@ function BatchReport({ code }: { code: string }) {
                   Recall batch {code}
                 </Button>
               ) : (
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm font-semibold text-red-800">This cannot be undone.</span>
+                <div className="flex animate-rise-in flex-wrap items-center gap-2 rounded-control border border-danger-line bg-danger-soft p-3">
+                  <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-danger">
+                    <IconTriangleAlert size={17} />
+                    This cannot be undone.
+                  </span>
                   <Button variant="danger" onClick={recall}>
                     Yes, recall {r.summary.lots} lot(s)
                   </Button>

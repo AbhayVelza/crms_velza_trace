@@ -32,17 +32,17 @@ export default function AccountPage() {
   return (
     <>
       <PageTitle title="Account" subtitle={`${user.name} · ${ROLE_LABELS[role]} · ${organisation}`} />
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-2 lg:gap-5">
         <Card title="Your sign-in">
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-            <dt className="text-slate-500">Sign-in ID</dt>
+            <dt className="text-muted-foreground">Sign-in ID</dt>
             <dd className="font-mono">{user.id}</dd>
-            <dt className="text-slate-500">Portal</dt>
+            <dt className="text-muted-foreground">Portal</dt>
             <dd>{ROLE_LABELS[role]}</dd>
-            <dt className="text-slate-500">Organisation</dt>
+            <dt className="text-muted-foreground">Organisation</dt>
             <dd>{organisation}</dd>
           </dl>
-          <p className="mt-3 text-xs text-slate-500">Your password is the only thing you can change here; everything else is managed by Velza Admin.</p>
+          <p className="mt-3 text-xs text-muted-foreground">Your password is the only thing you can change here; everything else is managed by Velza Admin.</p>
         </Card>
         <Card title="Change password">
           <form onSubmit={submit} className="space-y-3">

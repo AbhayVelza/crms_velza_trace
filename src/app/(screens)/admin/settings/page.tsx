@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useSession } from "@/components/session";
-import { Button, Card, Field, Input, Notice, PageTitle, Select } from "@/components/ui";
+import { Button, Card, Field, Input, Loading, Notice, PageTitle, Select } from "@/components/ui";
 import { api, errorText } from "@/lib/client";
 import type { Settings } from "@/lib/core/types";
 
@@ -15,7 +15,7 @@ export default function SettingsPage() {
     api<Settings>("/api/admin/settings").then(setS, (e) => setMsg({ tone: "error", text: errorText(e) }));
   }, []);
 
-  if (!s) return msg ? <Notice tone="error">{msg.text}</Notice> : <p className="text-sm text-slate-500">Loading…</p>;
+  if (!s) return msg ? <Notice tone="error">{msg.text}</Notice> : <Loading />;
 
   const num = (v: string) => (v === "" ? NaN : Number(v));
   const size = (k: "lotSticker" | "packSticker", dim: "widthMm" | "heightMm", v: string) => setS({ ...s, [k]: { ...s[k], [dim]: num(v) } });
@@ -37,7 +37,7 @@ export default function SettingsPage() {
     <>
       <PageTitle title="Settings" />
       {msg && <Notice tone={msg.tone} className="mb-4">{msg.text}</Notice>}
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-2 lg:gap-5">
         <Card title="NOT_RECEIVED alert">
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Threshold (days)" hint="Lots in transit longer than this raise an alert">
@@ -45,7 +45,7 @@ export default function SettingsPage() {
             </Field>
             <Field label="Demo mode" hint="Use minutes instead of days">
               <label className="flex min-h-10 items-center gap-2">
-                <input type="checkbox" className="h-5 w-5 accent-teal-700" checked={s.demoMode} onChange={(e) => setS({ ...s, demoMode: e.target.checked })} />
+                <input type="checkbox" className="h-5 w-5 accent-foreground" checked={s.demoMode} onChange={(e) => setS({ ...s, demoMode: e.target.checked })} />
                 {s.demoMode ? "On" : "Off"}
               </label>
             </Field>

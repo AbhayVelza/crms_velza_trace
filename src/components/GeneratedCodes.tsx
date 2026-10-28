@@ -4,7 +4,8 @@
 // the codes have reached the central database. Downloadable as CSV.
 
 import { useSession } from "./session";
-import { Button, Card, Code, Empty, fmtTime, Notice, Stat, StatusBadge, Table, Td } from "./ui";
+import { IconDownload } from "./icons";
+import { Button, Card, Code, Empty, fmtTime, Loading, Notice, Stat, StatusBadge, Table, Td } from "./ui";
 import { useApi } from "./useApi";
 import type { CodeRow } from "@/lib/services/printOrders";
 
@@ -51,13 +52,14 @@ export function GeneratedCodes({ printOrderId }: { printOrderId: string }) {
   const { flavourName } = useSession();
   const { data, error } = useApi<CodesData>(`/api/print-orders/${printOrderId}/codes`, { refreshOnChange: true });
   if (error) return <Notice tone="error">{error}</Notice>;
-  if (!data) return <p className="text-sm text-slate-500">Loading codes…</p>;
+  if (!data) return <Loading>Loading codes…</Loading>;
   const t = data.totals;
   return (
     <Card
       title="Generated codes"
       actions={
         <Button variant="secondary" className="min-h-8 px-3 py-1 text-xs" onClick={() => downloadCsv(`codes-${printOrderId.slice(0, 8)}.csv`, data.codes)}>
+          <IconDownload size={16} />
           Download CSV
         </Button>
       }
@@ -72,7 +74,7 @@ export function GeneratedCodes({ printOrderId }: { printOrderId: string }) {
       <div className="max-h-[28rem] overflow-auto">
         <Table head={["Code", "Type", "Country", "Batch", "Flavour", "Hex", "Lot type", "Pack size", "Pack #", "Lot code", "Mfg", "Expiry", "Manufacturer", "Status", "Location", "Synced", "Generated", "By"]} empty={data.codes.length ? null : <Empty>No codes</Empty>}>
           {data.codes.map((c) => (
-            <tr key={c.code} data-testid="code-row" className={c.codeType === "LOT" ? "bg-slate-50" : undefined}>
+            <tr key={c.code} data-testid="code-row" className={c.codeType === "LOT" ? "bg-surface-2" : undefined}>
               <Td>
                 <Code>{c.code}</Code>
               </Td>
@@ -80,7 +82,7 @@ export function GeneratedCodes({ printOrderId }: { printOrderId: string }) {
               <Td>{c.countryCode}</Td>
               <Td className="font-mono text-xs">{c.batchCode}</Td>
               <Td className="text-xs">
-                {c.flavour} <span className="text-slate-500">{flavourName(c.flavour)}</span>
+                {c.flavour} <span className="text-muted-foreground">{flavourName(c.flavour)}</span>
               </Td>
               <Td className="font-mono text-xs">{c.hexCode}</Td>
               <Td className="text-xs">{c.lotType}</Td>
@@ -94,7 +96,7 @@ export function GeneratedCodes({ printOrderId }: { printOrderId: string }) {
                 <StatusBadge status={c.status} />
               </Td>
               <Td className="font-mono text-xs">{c.locationId}</Td>
-              <Td>{c.synced ? "yes" : <span className="font-semibold text-amber-700">no</span>}</Td>
+              <Td>{c.synced ? "yes" : <span className="font-semibold text-warning">no</span>}</Td>
               <Td className="whitespace-nowrap text-xs">{fmtTime(c.generatedAt)}</Td>
               <Td className="font-mono text-xs">{c.generatedBy}</Td>
             </tr>

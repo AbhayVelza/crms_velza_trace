@@ -33,7 +33,7 @@ export default function ReceivePage() {
   return (
     <>
       <PageTitle title="Receive (scan IN)" subtitle={`Scan lots or packs arriving at ${partner?.name ?? "your location"}, one after another.`} />
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-2 lg:gap-5">
         <Card>
           <ScanInput label="Code" onScan={onScan} demoScreen="receive" />
           <div className="mt-4">

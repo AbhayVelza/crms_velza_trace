@@ -9,14 +9,14 @@ import type { ReactNode } from "react";
 import { ROLE_LABELS } from "@/lib/core/types";
 import { COMMON_PATHS, rolesForPath } from "@/lib/menu";
 import { useSession } from "./session";
-import { Notice } from "./ui";
+import { Loading, Notice } from "./ui";
 
 export function RoleGate({ children }: { children: ReactNode }) {
   const { data, error, role, user } = useSession();
   const pathname = usePathname();
 
   if (error) return <Notice tone="error">{error}</Notice>;
-  if (!data || !role || !user) return <p className="text-sm text-slate-500">Loading…</p>;
+  if (!data || !role || !user) return <Loading />;
   if (COMMON_PATHS.includes(pathname)) return <>{children}</>;
 
   if (!rolesForPath(pathname).includes(role)) {

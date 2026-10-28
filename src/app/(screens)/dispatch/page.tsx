@@ -4,7 +4,7 @@
 
 import { useState } from "react";
 import { ScanInput, ScanLog, type ScanLogEntry } from "@/components/ScanInput";
-import { Button, Card, Code, Field, Input, Notice, PageTitle, Select } from "@/components/ui";
+import { Button, Card, Code, Field, Input, Loading, Notice, PageTitle, Select } from "@/components/ui";
 import { useApi } from "@/components/useApi";
 import { api, errorText } from "@/lib/client";
 import { assignedTypesOf } from "@/lib/core/rules";
@@ -61,7 +61,7 @@ export default function DispatchPage() {
   }
 
   if (dest.error) return <Notice tone="error">{dest.error}</Notice>;
-  if (!dest.data) return <p className="text-sm text-slate-500">Loading…</p>;
+  if (!dest.data) return <Loading />;
   const { destinationTypes, destinations, sender } = dest.data;
   // The manufacturer may supply any Super Stockist; SS and DB only the partners assigned to them.
   const assigned = assignedTypesOf(sender.type).length > 0;
@@ -78,7 +78,7 @@ export default function DispatchPage() {
       {!destinationTypes.length ? (
         <Notice tone="info">Retailers are the last tier and don&apos;t dispatch.</Notice>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="grid gap-4 lg:grid-cols-2 lg:gap-5">
           <Card title="1–2. Destination and invoice">
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label={`Destination (${destinationTypes.map((t) => PARTNER_TYPE_LABELS[t]).join(" or ")})`}>
@@ -115,15 +115,15 @@ export default function DispatchPage() {
           </Card>
           <Card title={`4. Dispatch list (${list.length})`}>
             {list.length === 0 ? (
-              <p className="text-sm text-slate-500">Scanned codes appear here.</p>
+              <p className="text-sm text-muted-foreground">Scanned codes appear here.</p>
             ) : (
-              <ul className="divide-y divide-slate-100" data-testid="dispatch-list">
+              <ul className="divide-y divide-line" data-testid="dispatch-list">
                 {list.map((l) => (
                   <li key={l.code} className="flex items-center justify-between py-2 text-sm">
                     <span>
-                      <Code>{l.code}</Code> <span className="text-xs text-slate-500">{l.kind}</span>
+                      <Code>{l.code}</Code> <span className="text-xs text-muted-foreground">{l.kind}</span>
                     </span>
-                    <button type="button" className="text-xs text-red-700 hover:underline" onClick={() => setList((x) => x.filter((y) => y.code !== l.code))}>
+                    <button type="button" className="text-xs text-danger hover:underline" onClick={() => setList((x) => x.filter((y) => y.code !== l.code))}>
                       Remove
                     </button>
                   </li>

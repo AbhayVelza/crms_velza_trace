@@ -5,7 +5,8 @@
 import { useState } from "react";
 import { ScanInput, ScanLog, type ScanLogEntry } from "@/components/ScanInput";
 import { useSession } from "@/components/session";
-import { Button, Card, Code, cx, Field, Input, Notice, PageTitle, StatusBadge } from "@/components/ui";
+import { IconCheck } from "@/components/icons";
+import { Button, Card, Code, cx, Field, Input, Notice, PageTitle, Pill, StatusBadge } from "@/components/ui";
 import { api, errorText } from "@/lib/client";
 import { notifyDataChanged } from "@/lib/events";
 
@@ -85,7 +86,7 @@ export default function VerifyPage() {
   return (
     <>
       <PageTitle title="Verify lots" subtitle="Scan the lot sticker, then every pack sticker pasted inside it." />
-      <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
+      <div className="grid gap-4 lg:grid-cols-[1fr_1fr] lg:gap-5">
         <Card title={lot ? "2. Scan each pack" : "1. Scan the lot sticker"}>
           <ScanInput
             key={lot?.lotCode ?? "lot"}
@@ -106,7 +107,7 @@ export default function VerifyPage() {
 
         <Card title="Checklist">
           {!lot ? (
-            <p className="text-sm text-slate-500">Scan a lot to see its expected packs.</p>
+            <p className="text-sm text-muted-foreground">Scan a lot to see its expected packs.</p>
           ) : (
             <div className="space-y-4">
               <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -115,14 +116,16 @@ export default function VerifyPage() {
                   {lot.lotType} · {flavourName(lot.flavour)} · {lot.lotType === "CASE" ? "4 packs × 6 cans" : "6 packs × 4 cans"}
                 </span>
                 <StatusBadge status={lot.status} />
-                {!lot.synced && <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">unsynced</span>}
+                {!lot.synced && <Pill tone="warn">unsynced</Pill>}
               </div>
               <ul className="grid gap-1.5 sm:grid-cols-2" data-testid="checklist">
                 {lot.expectedPacks.map((p, i) => {
                   const done = scanned.includes(p);
                   return (
-                    <li key={p} data-done={done} className={cx("flex items-center gap-2 rounded-md border px-3 py-2 text-sm", done ? "border-green-300 bg-green-50" : "border-slate-200")}>
-                      <span className={cx("inline-flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold", done ? "bg-green-600 text-white" : "bg-slate-200 text-slate-500")}>{done ? "✓" : i + 1}</span>
+                    <li key={p} data-done={done} className={cx("flex items-center gap-2.5 rounded-control border px-3 py-2 text-sm transition-colors duration-200", done ? "border-success-line bg-success-soft" : "border-line bg-surface")}>
+                      <span className={cx("inline-flex h-5 w-5 items-center justify-center rounded-full text-[0.6875rem] font-bold transition-colors duration-200", done ? "bg-success text-surface" : "bg-muted-strong text-muted-foreground")}>
+                        {done ? <IconCheck size={12} strokeWidth={2.75} aria-label="Scanned" aria-hidden={false} role="img" /> : i + 1}
+                      </span>
                       <Code>{p}</Code>
                     </li>
                   );
@@ -136,7 +139,7 @@ export default function VerifyPage() {
                   Cancel
                 </Button>
               </div>
-              <div className="rounded-md border border-orange-200 bg-orange-50 p-3">
+              <div className="rounded-control border border-warning-line bg-warning-soft p-3 sm:p-4">
                 <Field label="Quarantine with reason">
                   <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Pack sticker missing, wrong flavour inside" />
                 </Field>

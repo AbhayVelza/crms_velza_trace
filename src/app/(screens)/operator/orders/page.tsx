@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useSession } from "@/components/session";
-import { Card, Code, Empty, fmtTime, Notice, PageTitle, StatusBadge, Table, Td } from "@/components/ui";
+import { IconListChecks, IconPrinter } from "@/components/icons";
+import { Card, Code, Empty, fmtTime, Notice, PageTitle, Pill, StatusBadge, Table, Td } from "@/components/ui";
 import { useApi } from "@/components/useApi";
 import type { PrintOrder } from "@/lib/core/types";
 
@@ -24,7 +25,7 @@ export default function PrintOrdersPage() {
             <tr key={o.id}>
               <Td className="whitespace-nowrap">
                 {fmtTime(o.createdAt)}
-                <div className="text-xs text-slate-500">{o.createdByName}</div>
+                <div className="text-xs text-muted-foreground">{o.createdByName}</div>
               </Td>
               <Td>
                 {o.batches.map((b) => (
@@ -37,13 +38,15 @@ export default function PrintOrdersPage() {
               <Td>
                 <StatusBadge status={o.status} />
               </Td>
-              <Td>{o.synced ? "yes" : <span className="font-semibold text-amber-700">no</span>}</Td>
+              <Td>{o.synced ? "yes" : <Pill tone="warn">no</Pill>}</Td>
               <Td className="whitespace-nowrap">
-                <Link className="font-medium text-teal-800 hover:underline" href={`/print/${o.id}`}>
+                <Link className="inline-flex items-center gap-1 font-semibold text-foreground underline-offset-4 hover:underline" href={`/print/${o.id}`}>
+                  <IconPrinter size={16} />
                   Print view
                 </Link>
-                <span className="text-slate-300"> · </span>
-                <Link className="font-medium text-teal-800 hover:underline" href={`/operator/orders/${o.id}`}>
+                <span className="text-line-strong"> · </span>
+                <Link className="inline-flex items-center gap-1 font-semibold text-foreground underline-offset-4 hover:underline" href={`/operator/orders/${o.id}`}>
+                  <IconListChecks size={16} />
                   Codes
                 </Link>
               </Td>

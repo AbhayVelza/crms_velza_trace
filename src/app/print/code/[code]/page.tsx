@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { PrintView } from "@/components/PrintView";
+import { Loading } from "@/components/ui";
 
 async function CodePrint({ params }: { params: PageProps<"/print/code/[code]">["params"] }) {
   const { code } = await params;
@@ -9,7 +10,7 @@ async function CodePrint({ params }: { params: PageProps<"/print/code/[code]">["
 /** Single-sticker print view used by Reprint (same code). */
 export default function Page({ params }: PageProps<"/print/code/[code]">) {
   return (
-    <Suspense fallback={<p className="text-sm text-slate-500">Loading…</p>}>
+    <Suspense fallback={<Loading />}>
       <CodePrint params={params} />
     </Suspense>
   );

@@ -10,7 +10,8 @@ import type { PrintOrder } from "@/lib/core/types";
 import { notifyDataChanged } from "@/lib/events";
 import type { Box } from "@/lib/stickerLayout";
 import { PrintStyles, StickerSheetView, stickerWarnings, type PrintMode } from "./Stickers";
-import { Button, Notice } from "./ui";
+import { IconArrowLeft, IconPrinter } from "./icons";
+import { Button, Loading, Notice, Pill } from "./ui";
 import { useApi } from "./useApi";
 
 interface Sheet {
@@ -27,7 +28,7 @@ export function PrintView({ path, backHref, backLabel }: { path: string; backHre
   const [msg, setMsg] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
 
   if (error) return <Notice tone="error">{error}</Notice>;
-  if (!sheet) return <p className="text-sm text-slate-500">Loading stickers…</p>;
+  if (!sheet) return <Loading>Loading stickers…</Loading>;
 
   const order = sheet.printOrder;
 
@@ -54,20 +55,21 @@ export function PrintView({ path, backHref, backLabel }: { path: string; backHre
   return (
     <div>
       <PrintStyles mode={mode} lotSize={sheet.lotSize} packSize={sheet.packSize} />
-      <div className="mb-4 space-y-3 print:hidden">
+      <div className="mb-6 space-y-3 border-b border-line pb-5 print:hidden">
         <div className="flex flex-wrap items-center gap-3">
-          <Link href={backHref} className="text-sm text-teal-800 hover:underline">
-            ← {backLabel}
+          <Link href={backHref} className="inline-flex items-center gap-1.5 rounded-full py-1 pr-2 text-sm font-medium text-muted-foreground transition-colors duration-150 hover:text-foreground">
+            <IconArrowLeft size={17} />
+            {backLabel}
           </Link>
-          <h1 className="text-lg font-semibold">{sheet.title}</h1>
+          <h1 className="text-lg font-bold tracking-tight">{sheet.title}</h1>
           {order && (
-            <span className={order.status === "PRINTED" ? "rounded bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-800" : "rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700"}>
+            <Pill tone={order.status === "PRINTED" ? "strong" : "muted"} dot>
               {order.status === "PRINTED" ? "PRINTED" : "NOT PRINTED YET"}
-            </span>
+            </Pill>
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex overflow-hidden rounded-md border border-slate-300" role="radiogroup" aria-label="Print mode">
+          <div className="inline-flex gap-0.5 rounded-full border border-line-strong bg-surface-2 p-0.5" role="radiogroup" aria-label="Print mode">
             {(["roll", "a4"] as const).map((m) => (
               <button
                 key={m}
@@ -75,20 +77,22 @@ export function PrintView({ path, backHref, backLabel }: { path: string; backHre
                 role="radio"
                 aria-checked={mode === m}
                 onClick={() => setMode(m)}
-                className={mode === m ? "bg-teal-700 px-3 py-2 text-sm font-medium text-white" : "bg-white px-3 py-2 text-sm text-slate-700"}
+                className={mode === m ? "rounded-full bg-primary px-4 py-1.5 text-sm font-semibold text-primary-foreground transition-colors duration-150" : "rounded-full px-4 py-1.5 text-sm text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground"}
               >
                 {m === "roll" ? "Label roll (1 per page)" : "A4 sheet"}
               </button>
             ))}
           </div>
-          <Button onClick={print}>Print {sheet.stickers.length} sticker{sheet.stickers.length === 1 ? "" : "s"}</Button>
+          <Button onClick={print}>
+            <IconPrinter size={17} />
+            Print {sheet.stickers.length} sticker{sheet.stickers.length === 1 ? "" : "s"}</Button>
           {order && order.status !== "PRINTED" && (
             <Button variant="secondary" onClick={markPrinted}>
               Mark as printed
             </Button>
           )}
         </div>
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-muted-foreground">
           {lots} lot sticker(s) {sheet.lotSize.widthMm}×{sheet.lotSize.heightMm} mm, {sheet.stickers.length - lots} pack sticker(s) {sheet.packSize.widthMm}×{sheet.packSize.heightMm} mm. Order: lot sticker first, then its packs. Set the browser print scale to 100% (no &quot;fit to page&quot;).
         </p>
         {warnings.map((w) => (

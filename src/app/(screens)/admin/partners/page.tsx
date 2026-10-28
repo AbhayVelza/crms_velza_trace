@@ -65,7 +65,7 @@ function RegisterForm({ partners }: { partners: Partner[] }) {
 
   return (
     <Card title="Register a partner">
-      <p className="mb-3 text-sm text-slate-600">
+      <p className="mb-3 text-sm text-muted-foreground">
         The partner gets the next ID of its tier — {PARTNER_TYPES.map((t) => `${PARTNER_ID_PREFIX[t]}0001`).join(", ")} … — and a sign-in with that ID
         (the plant gets two: -OP for the Operator and -QC for QC). Share the password with the person; they can change it after signing in.
       </p>
@@ -264,7 +264,7 @@ export default function PartnersPage() {
               type: "display",
               visible: (row) => PARENT_TYPES.includes(row.type as PartnerType),
               render: (row) => (
-                <button type="button" className="whitespace-nowrap text-teal-800 underline" onClick={() => setView(`of:${row.id}`)}>
+                <button type="button" className="whitespace-nowrap rounded font-semibold text-foreground underline underline-offset-4 hover:no-underline" onClick={() => setView(`of:${row.id}`)}>
                   {assignedTo(row.id)} {childPlural(row.type)}
                 </button>
               ),

@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { VelzaSymbol } from "@/components/brand";
+import { IconCircleCheck, IconCircleX, IconLoader, IconTriangleAlert } from "@/components/icons";
 
 interface PublicResult {
   code: string;
@@ -15,11 +17,11 @@ interface PublicResult {
 }
 
 const TONE = {
-  ok: "border-green-300 bg-green-50 text-green-900",
-  danger: "border-red-300 bg-red-50 text-red-900",
-  warn: "border-amber-300 bg-amber-50 text-amber-900",
+  ok: "border-success-line bg-success-soft text-success",
+  danger: "border-danger-line bg-danger-soft text-danger",
+  warn: "border-warning-line bg-warning-soft text-warning",
 };
-const ICON = { ok: "✓", danger: "✕", warn: "?" };
+const ICON = { ok: IconCircleCheck, danger: IconCircleX, warn: IconTriangleAlert };
 
 export function PublicLookup({ code }: { code: string }) {
   const [r, setR] = useState<PublicResult | null>(null);
@@ -32,36 +34,48 @@ export function PublicLookup({ code }: { code: string }) {
   }, [code]);
 
   return (
-    <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <div className="mb-4 flex items-center gap-2">
-        <span className="inline-block h-8 w-8 rounded-lg bg-teal-700 text-center text-lg font-bold leading-8 text-white">V</span>
-        <span className="text-lg font-semibold text-slate-900">Velza Beverage</span>
+    <div className="w-full max-w-sm animate-rise-in rounded-card border border-line bg-surface p-6 shadow-card">
+      <div className="mb-6 flex items-center gap-[26px]">
+        <VelzaSymbol height={26} />
+        <span className="text-lg font-bold tracking-tight text-foreground">Velza Beverage</span>
       </div>
-      {error && <p className="text-sm text-red-700">Could not check this code ({error}). Please try again.</p>}
-      {!r && !error && <p className="text-sm text-slate-500">Checking…</p>}
+      {error && <p className="text-sm text-danger">Could not check this code ({error}). Please try again.</p>}
+      {!r && !error && (
+        <p className="flex items-center gap-2 text-sm text-muted-foreground">
+          <IconLoader size={17} className="animate-spin" />
+          Checking…
+        </p>
+      )}
       {r && (
         <>
-          <div className={`flex items-center gap-3 rounded-xl border-2 p-4 ${TONE[r.status.tone]}`} data-testid="public-status">
-            <span className="text-2xl font-bold">{ICON[r.status.tone]}</span>
-            <span className="text-lg font-semibold">{r.status.label}</span>
-          </div>
+          <StatusBox tone={r.status.tone} label={r.status.label} />
           {r.registered && r.flavour && (
-            <dl className="mt-5 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
-              <dt className="text-slate-500">Product</dt>
-              <dd className="font-medium">{r.product}</dd>
-              <dt className="text-slate-500">Flavour</dt>
-              <dd className="font-medium">{r.flavour}</dd>
-              <dt className="text-slate-500">Batch</dt>
+            <dl className="mt-5 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2.5 border-t border-line pt-5 text-sm text-foreground">
+              <dt className="text-muted-foreground">Product</dt>
+              <dd className="font-semibold">{r.product}</dd>
+              <dt className="text-muted-foreground">Flavour</dt>
+              <dd className="font-semibold">{r.flavour}</dd>
+              <dt className="text-muted-foreground">Batch</dt>
               <dd className="font-mono">{r.batchCode}</dd>
-              <dt className="text-slate-500">Manufactured</dt>
+              <dt className="text-muted-foreground">Manufactured</dt>
               <dd>{r.mfgDate}</dd>
-              <dt className="text-slate-500">Best before</dt>
+              <dt className="text-muted-foreground">Best before</dt>
               <dd>{r.expiryDate}</dd>
             </dl>
           )}
-          <p className="mt-5 break-all font-mono text-xs text-slate-400">{r.code}</p>
+          <p className="mt-5 break-all font-mono text-xs text-subtle-foreground">{r.code}</p>
         </>
       )}
+    </div>
+  );
+}
+
+function StatusBox({ tone, label }: { tone: PublicResult["status"]["tone"]; label: string }) {
+  const Icon = ICON[tone];
+  return (
+    <div className={`flex items-center gap-3 rounded-control border-2 p-4 ${TONE[tone]}`} data-testid="public-status">
+      <Icon size={28} />
+      <span className="text-lg font-bold">{label}</span>
     </div>
   );
 }

@@ -10,6 +10,7 @@ import type { IScannerControls } from "@zxing/browser";
 import type { DecodeHintType as Hint } from "@zxing/library";
 import { extractScannedCode } from "@/lib/core/codes";
 import type { DemoCode, DemoScreen } from "@/lib/services/demo";
+import { IconCamera, IconChevronRight, IconCircleCheck, IconCircleX, IconScan, IconX } from "./icons";
 import { Button, Code, cx, Input } from "./ui";
 import { useApi } from "./useApi";
 
@@ -59,7 +60,7 @@ export function ScanInput({ onScan, label = "Scan code", placeholder = "Scan or 
 
   return (
     <div className="space-y-2">
-      <label className="block text-sm font-medium text-slate-700" htmlFor="scan-input">
+      <label className="block text-[0.8125rem] font-semibold text-foreground-2" htmlFor="scan-input">
         {label}
       </label>
       <div className="flex flex-wrap gap-2 sm:flex-nowrap">
@@ -81,22 +82,28 @@ export function ScanInput({ onScan, label = "Scan code", placeholder = "Scan or 
             }
           }}
           onBlur={(e) => {
-            // Stay focused for the scanner unless the user moved to another field.
+            // Stay focused for the scanner unless the user moved to another field or into the menu drawer.
             const next = e.relatedTarget as HTMLElement | null;
-            if (!next?.matches(OTHER_FIELDS) && !disabled) setTimeout(() => ref.current?.focus(), 0);
+            if (!next?.matches(OTHER_FIELDS) && !next?.closest("#app-sidebar") && !disabled)
+              setTimeout(() => !document.activeElement?.closest("#app-sidebar") && ref.current?.focus(), 0);
           }}
         />
         <Button onClick={() => submit(value)} disabled={disabled || !value.trim() || busy}>
+          <IconScan size={17} />
           Scan
         </Button>
         <Button variant="secondary" onClick={() => setCamera((c) => !c)} disabled={disabled} aria-pressed={camera}>
+          {camera ? <IconX size={17} /> : <IconCamera size={17} />}
           {camera ? "Close camera" : "Use camera"}
         </Button>
       </div>
       {camera && <CameraScanner onCode={submit} onClose={() => setCamera(false)} />}
       {demoPath && (
-        <details className="rounded-md border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-sm" open>
-          <summary className="cursor-pointer select-none text-xs font-semibold uppercase tracking-wide text-slate-500">Demo helper (dev only): click to scan</summary>
+        <details className="rounded-control border border-dashed border-line-strong bg-surface-2 px-3 py-2 text-sm" open>
+          <summary className="flex cursor-pointer select-none items-center gap-1.5 rounded text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-muted-foreground hover:text-foreground">
+            <IconChevronRight size={15} className="disclosure-chevron transition-transform duration-150" />
+            Demo helper (dev only): click to scan
+          </summary>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {demo.data?.length ? (
               demo.data.map((d) => (
@@ -105,14 +112,14 @@ export function ScanInput({ onScan, label = "Scan code", placeholder = "Scan or 
                   type="button"
                   disabled={disabled || busy}
                   onClick={() => submit(d.code)}
-                  className="rounded border border-slate-300 bg-white px-2 py-1 text-left hover:border-teal-600 disabled:opacity-50"
+                  className="rounded-control border border-line-strong bg-surface px-2 py-1 text-left text-foreground transition-colors duration-150 hover:border-foreground hover:bg-muted disabled:opacity-50"
                   data-demo-code={d.code}
                 >
-                  <Code>{d.code}</Code> <span className="text-xs text-slate-500">{d.label}</span>
+                  <Code>{d.code}</Code> <span className="text-xs text-muted-foreground">{d.label}</span>
                 </button>
               ))
             ) : (
-              <span className="text-xs text-slate-500">{demo.loading ? "Loading…" : "No codes for this screen right now"}</span>
+              <span className="text-xs text-muted-foreground">{demo.loading ? "Loading…" : "No codes for this screen right now"}</span>
             )}
           </div>
         </details>
@@ -162,12 +169,12 @@ function CameraScanner({ onCode, onClose }: { onCode: (code: string) => void; on
   }, []);
 
   return (
-    <div className="rounded-md border border-slate-300 bg-black p-2">
-      <video ref={videoRef} className={cx("mx-auto max-h-72 w-full rounded object-contain", error && "hidden")} muted playsInline />
-      {error && <p className="p-3 text-sm text-red-200">{error}</p>}
-      <div className="mt-2 flex justify-between text-xs text-slate-300">
+    <div className="theme-dark animate-fade-in rounded-control border border-line-strong bg-black p-2 text-foreground">
+      <video ref={videoRef} className={cx("mx-auto max-h-72 w-full rounded-md object-contain", error && "hidden")} muted playsInline />
+      {error && <p className="p-3 text-sm text-danger">{error}</p>}
+      <div className="mt-2 flex justify-between px-1 text-xs text-muted-foreground">
         <span>Point the camera at a barcode or QR code</span>
-        <button type="button" onClick={onClose} className="underline">
+        <button type="button" onClick={onClose} className="rounded underline underline-offset-4 hover:text-foreground">
           Close
         </button>
       </div>
@@ -191,12 +198,12 @@ export function ScanLog({ entries }: { entries: ScanLogEntry[] }) {
         <li
           key={e.id}
           data-ok={e.ok}
-          className={cx("flex flex-wrap items-baseline gap-x-2 rounded-md border px-3 py-2 text-sm", e.ok ? "border-green-200 bg-green-50 text-green-900" : "border-red-200 bg-red-50 text-red-900")}
+          className={cx("flex animate-rise-in flex-wrap items-center gap-x-2.5 gap-y-1 rounded-control border px-3 py-2 text-sm text-foreground", e.ok ? "border-success-line bg-success-soft" : "border-danger-line bg-danger-soft")}
         >
-          <span className="font-semibold">{e.ok ? "✓" : "✗"}</span>
+          {e.ok ? <IconCircleCheck size={16} className="text-success" aria-label="OK" aria-hidden={false} role="img" /> : <IconCircleX size={16} className="text-danger" aria-label="Failed" aria-hidden={false} role="img" />}
           <Code>{e.code}</Code>
-          <span className="flex-1">{e.message}</span>
-          <span className="text-xs opacity-70">{new Date(e.at).toLocaleTimeString()}</span>
+          <span className={cx("flex-1", e.ok ? "text-foreground" : "font-medium text-danger")}>{e.message}</span>
+          <span className="text-xs text-muted-foreground tabular">{new Date(e.at).toLocaleTimeString()}</span>
         </li>
       ))}
     </ul>

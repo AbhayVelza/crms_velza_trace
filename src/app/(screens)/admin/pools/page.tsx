@@ -46,8 +46,8 @@ export default function PoolsPage() {
             key={device.id}
             title={
               <span>
-                {device.name} <span className="font-normal text-slate-500">· {manufacturer}</span>{" "}
-                <span className={device.offline ? "text-slate-700" : "text-green-700"}>{device.offline ? "● Offline" : "● Online"}</span>
+                {device.name} <span className="font-normal text-muted-foreground">· {manufacturer}</span>{" "}
+                <span className={device.offline ? "text-foreground-2" : "text-success"}>{device.offline ? "● Offline" : "● Online"}</span>
               </span>
             }
             actions={
@@ -67,7 +67,7 @@ export default function PoolsPage() {
               </div>
             }
           >
-            <p className="mb-2 text-sm text-slate-600">
+            <p className="mb-2 text-sm text-muted-foreground">
               <b>{reserved}</b> reserved · {used} used
             </p>
             <Table head={["Code", "Status", "Issued", "Used"]} empty={codes.length ? null : <Empty>No codes issued</Empty>}>

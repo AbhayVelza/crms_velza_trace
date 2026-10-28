@@ -6,7 +6,8 @@ import { useState } from "react";
 import { api, errorText } from "@/lib/client";
 import type { Device } from "@/lib/core/types";
 import { notifyDataChanged } from "@/lib/events";
-import { cx } from "./ui";
+import { IconCpu, IconRefresh, IconWifi, IconWifiOff } from "./icons";
+import { cx, Pill } from "./ui";
 import { useApi } from "./useApi";
 
 interface DeviceInfo extends Device {
@@ -54,31 +55,39 @@ export function DeviceBar() {
   const pending = device.unsynced.lots + device.unsynced.batches;
   return (
     <div className="flex flex-wrap items-center gap-2 text-xs" data-testid="device-bar">
-      <span className="font-medium text-slate-600">{device.name}</span>
+      <span className="flex items-center gap-1.5 font-medium text-foreground-2">
+        <IconCpu size={16} className="text-muted-foreground" />
+        {device.name}
+      </span>
       <button
         type="button"
         onClick={toggle}
         disabled={busy}
         aria-pressed={!device.offline}
-        className={cx("rounded-full px-3 py-1 font-semibold", device.offline ? "bg-slate-700 text-white" : "bg-green-600 text-white")}
+        className={cx(
+          "inline-flex min-h-8 items-center gap-1.5 rounded-full border px-3 font-semibold transition-colors duration-150 disabled:opacity-60",
+          device.offline ? "border-line-strong bg-muted text-foreground hover:bg-muted-strong" : "border-success-line bg-success-soft text-success hover:brightness-110",
+        )}
         title="Simulate network loss for this device"
       >
-        {device.offline ? "● Offline" : "● Online"}
+        {device.offline ? <IconWifiOff size={15} /> : <IconWifi size={15} />}
+        {device.offline ? "Offline" : "Online"}
       </button>
-      <span className={cx("rounded px-2 py-1", pending ? "bg-amber-100 text-amber-900" : "bg-slate-100 text-slate-600")}>
+      <Pill tone={pending ? "warn" : "neutral"}>
         Unsynced: {device.unsynced.lots} lot{device.unsynced.lots === 1 ? "" : "s"}
-      </span>
+      </Pill>
       <button
         type="button"
         onClick={sync}
         disabled={busy || device.offline}
-        className="rounded-md border border-slate-300 bg-white px-3 py-1 font-semibold text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
+        className="inline-flex min-h-8 items-center gap-1.5 rounded-full border border-line-strong bg-surface px-3 font-semibold text-foreground transition-colors duration-150 hover:bg-muted disabled:cursor-not-allowed disabled:text-subtle-foreground disabled:hover:bg-surface"
         title={device.offline ? "Switch the device Online first" : "Upload unsynced batches and lots to Velza"}
       >
+        <IconRefresh size={15} className={busy ? "animate-spin" : undefined} />
         Sync
       </button>
-      <span className="text-slate-500">Pool: {device.reservedCodes} codes</span>
-      {msg && <span className={msg.ok ? "text-green-700" : "text-red-700"}>{msg.text}</span>}
+      <span className="text-muted-foreground">Pool: {device.reservedCodes} codes</span>
+      {msg && <span className={msg.ok ? "text-success" : "text-danger"}>{msg.text}</span>}
     </div>
   );
 }

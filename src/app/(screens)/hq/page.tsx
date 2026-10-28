@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useEffect } from "react";
-import { Button, Card, Code, Empty, fmtTime, Notice, PageTitle, Stat, StatusBadge, Table, Td } from "@/components/ui";
+import { IconArrowRight, IconRefresh, IconTriangleAlert } from "@/components/icons";
+import { Button, Card, Code, Empty, fmtTime, Loading, Notice, PageTitle, Pill, Stat, StatusBadge, Table, Td } from "@/components/ui";
 import { useApi } from "@/components/useApi";
 import { ITEM_STATUSES } from "@/lib/core/types";
 
@@ -28,7 +29,7 @@ export default function DashboardPage() {
   }, [reload]);
 
   if (error) return <Notice tone="error">{error}</Notice>;
-  if (!d) return <p className="text-sm text-slate-500">Loading…</p>;
+  if (!d) return <Loading />;
 
   const alertTotal = Object.values(d.alertCounts).reduce((a, b) => a + b, 0);
   return (
@@ -38,11 +39,12 @@ export default function DashboardPage() {
         subtitle={`Synced data only. NOT_RECEIVED after ${d.threshold.label}${d.threshold.demoMode ? " (demo mode)" : ""}. Refreshes every 15 s.`}
         actions={
           <Button variant="secondary" onClick={reload}>
+            <IconRefresh size={17} />
             Refresh
           </Button>
         }
       />
-      <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-5">
+      <div className="mb-4 grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-5 lg:mb-5 lg:gap-5">
         <Stat label="Batches" value={d.totals.batches} />
         <Stat label="Lots" value={d.totals.lots} />
         <Stat label="Packs" value={d.totals.packs} />
@@ -50,7 +52,7 @@ export default function DashboardPage() {
         <Stat label="Alerts" value={alertTotal} tone={alertTotal ? "danger" : undefined} />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-2 lg:gap-5">
         <Card title="Counts by status">
           <Table head={["Status", "Lots", "Packs"]}>
             {ITEM_STATUSES.filter((s) => d.lotCounts[s] || d.packCounts[s]).map((s) => (
@@ -63,24 +65,32 @@ export default function DashboardPage() {
               </tr>
             ))}
           </Table>
-          <p className="mt-2 text-xs text-slate-500">Cases and trays include opened ones; loose packs are the packs of opened cases and trays still there.</p>
+          <p className="mt-2 text-xs text-muted-foreground">Cases and trays include opened ones; loose packs are the packs of opened cases and trays still there.</p>
         </Card>
 
-        <Card title="Alerts" actions={<Link href="/hq/alerts" className="text-sm text-teal-800 hover:underline">All alerts →</Link>}>
+        <Card
+          title="Alerts"
+          actions={
+            <Link href="/hq/alerts" className="group inline-flex items-center gap-1 text-sm font-semibold text-foreground underline-offset-4 hover:underline">
+              All alerts
+              <IconArrowRight size={16} className="transition-transform duration-150 group-hover:translate-x-0.5" />
+            </Link>
+          }
+        >
           <div className="mb-3 flex flex-wrap gap-2">
             {ALERT_TYPES.map((t) => (
-              <span key={t} className={d.alertCounts[t] ? "rounded bg-red-100 px-2 py-1 text-xs font-semibold text-red-800" : "rounded bg-slate-100 px-2 py-1 text-xs text-slate-500"}>
+              <Pill key={t} tone={d.alertCounts[t] ? "danger" : "muted"} dot={!!d.alertCounts[t]}>
                 {t.replace(/_/g, " ")}: {d.alertCounts[t] ?? 0}
-              </span>
+              </Pill>
             ))}
           </div>
           {d.recentAlerts.length ? (
-            <ul className="space-y-1 text-sm">
+            <ul className="divide-y divide-line text-sm">
               {d.recentAlerts.map((a) => (
-                <li key={a.id} className="flex gap-2">
-                  <span className="whitespace-nowrap text-xs text-slate-500">{fmtTime(a.at)}</span>
-                  <span className="font-semibold text-red-800">{a.type}</span>
-                  <span className="truncate">{a.message}</span>
+                <li key={a.id} className="flex items-baseline gap-2 py-1.5">
+                  <span className="whitespace-nowrap text-xs text-muted-foreground tabular">{fmtTime(a.at)}</span>
+                  <span className="whitespace-nowrap text-xs font-bold tracking-wide text-danger">{a.type}</span>
+                  <span className="truncate text-foreground">{a.message}</span>
                 </li>
               ))}
             </ul>
@@ -93,7 +103,7 @@ export default function DashboardPage() {
           <Table head={["Tier", "Partner", "Cases", "Trays", "Loose packs", "Damaged"]} empty={d.stock.length ? null : <Empty>No stock</Empty>}>
             {d.stock.map((s) => (
               <tr key={s.partnerId}>
-                <Td className="whitespace-nowrap text-xs text-slate-500">{s.tierLabel}</Td>
+                <Td className="whitespace-nowrap text-xs font-semibold uppercase tracking-wide text-muted-foreground">{s.tierLabel}</Td>
                 <Td>{s.partner}</Td>
                 <Td>
                   <Opened total={s.cases} opened={s.openedCases} />
@@ -113,18 +123,20 @@ export default function DashboardPage() {
         <Card title={`In transit (${d.inTransit.length})`}>
           <Table head={["Code", "From → To", "Age"]} empty={d.inTransit.length ? null : <Empty>Nothing in transit</Empty>}>
             {d.inTransit.map((t) => (
-              <tr key={t.code} className={t.overdue ? "bg-amber-50" : ""}>
+              <tr key={t.code} className={t.overdue ? "bg-warning-soft" : ""}>
                 <Td>
-                  <Link href={`/hq/search?code=${t.code}`} className="hover:underline">
+                  <Link href={`/hq/search?code=${t.code}`} className="underline-offset-4 hover:underline">
                     <Code>{t.code}</Code>
                   </Link>
                 </Td>
                 <Td className="text-xs">
                   {t.from} → {t.to}
                 </Td>
-                <Td className={t.overdue ? "font-semibold text-amber-800" : ""}>
-                  {t.age}
-                  {t.overdue && " ⚠"}
+                <Td className={t.overdue ? "whitespace-nowrap font-semibold text-warning" : "whitespace-nowrap"}>
+                  <span className="inline-flex items-center gap-1">
+                    {t.age}
+                    {t.overdue && <IconTriangleAlert size={16} aria-label="Overdue" aria-hidden={false} role="img" />}
+                  </span>
                 </Td>
               </tr>
             ))}
@@ -150,7 +162,7 @@ function DamagedSummary({ counts }: { counts: DamagedCounts }) {
   ]
     .filter(([n]) => n)
     .map(([n, w]) => `${n} ${w}${n === 1 ? "" : "s"}`);
-  return parts.length ? <span className="font-semibold text-red-800">{parts.join(" · ")}</span> : <span className="text-slate-400">0</span>;
+  return parts.length ? <span className="font-semibold text-danger">{parts.join(" · ")}</span> : <span className="text-subtle-foreground">0</span>;
 }
 
 /** A case or tray count, with how many of them are opened. */
@@ -158,7 +170,7 @@ function Opened({ total, opened }: { total: number; opened: number }) {
   return (
     <>
       {total}
-      {opened > 0 && <div className="whitespace-nowrap text-xs text-slate-500">{opened} opened</div>}
+      {opened > 0 && <div className="whitespace-nowrap text-xs text-muted-foreground">{opened} opened</div>}
     </>
   );
 }

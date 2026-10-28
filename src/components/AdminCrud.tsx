@@ -6,6 +6,7 @@ import { useState, type ReactNode } from "react";
 import { api, errorText } from "@/lib/client";
 import { useSession } from "./session";
 import { useApi } from "./useApi";
+import { IconTrash } from "./icons";
 import { Button, Card, Empty, Input, Notice, Select, Table, Td } from "./ui";
 
 export interface Option {
@@ -144,7 +145,7 @@ export function AdminCrud({
 
   const cell = (c: Column, row: Row) => {
     const value = row[c.key];
-    if (!shows(c, row)) return <span className="text-slate-400">—</span>;
+    if (!shows(c, row)) return <span className="text-subtle-foreground">—</span>;
     if (c.type === "display") return c.render?.(row) ?? String(value ?? "—");
     if (c.type === "password") return <PasswordCell onSave={(pw) => save(row.id, { [c.key]: pw }, "Password changed")} />;
     if (c.createOnly) {
@@ -152,7 +153,7 @@ export function AdminCrud({
       return <span className={c.key === "code" ? "font-mono" : ""}>{label ?? String(value ?? "—")}</span>;
     }
     if (c.type === "bool") {
-      return <input type="checkbox" aria-label={c.label} checked={!!value} onChange={(e) => save(row.id, { [c.key]: e.target.checked })} className="h-5 w-5 accent-teal-700" />;
+      return <input type="checkbox" aria-label={c.label} checked={!!value} onChange={(e) => save(row.id, { [c.key]: e.target.checked })} className="h-5 w-5 accent-foreground" />;
     }
     if (c.type === "select") {
       return (
@@ -197,7 +198,8 @@ export function AdminCrud({
                   <div className="flex flex-wrap justify-end gap-1">
                     {rowActions?.(row, { reload: load, setMsg })}
                     {allowDelete && (
-                      <Button variant="ghost" className="min-h-8 px-2 py-1 text-xs text-red-700 hover:bg-red-50" onClick={() => remove(row)}>
+                      <Button variant="ghost" className="min-h-8 px-3 py-1 text-xs text-danger hover:bg-danger-soft" onClick={() => remove(row)}>
+                        <IconTrash size={15} />
                         Delete
                       </Button>
                     )}
@@ -215,9 +217,9 @@ export function AdminCrud({
               .filter((c) => shows(c, draft))
               .map((c) => (
                 <label key={c.key} className="block text-sm">
-                  <span className="mb-1 block font-medium text-slate-700">{c.label}</span>
+                  <span className="mb-1.5 block text-[0.8125rem] font-semibold text-foreground-2">{c.label}</span>
                   {c.type === "bool" ? (
-                    <input type="checkbox" checked={!!draft[c.key]} onChange={(e) => setDraft({ ...draft, [c.key]: e.target.checked })} className="h-5 w-5 accent-teal-700" />
+                    <input type="checkbox" checked={!!draft[c.key]} onChange={(e) => setDraft({ ...draft, [c.key]: e.target.checked })} className="h-5 w-5 accent-foreground" />
                   ) : c.type === "select" ? (
                     <Select value={String(draft[c.key] ?? "")} onChange={(e) => setDraft({ ...draft, [c.key]: e.target.value })}>
                       <option value="">—</option>

@@ -31,7 +31,7 @@ export default function MyPartnersPage() {
             <tr key={p.id}>
               <Td>
                 {p.name}
-                {!p.active && <span className="ml-2 text-xs text-slate-500">(inactive)</span>}
+                {!p.active && <span className="ml-2 text-xs text-muted-foreground">(inactive)</span>}
               </Td>
               {showTier && <Td>{PARTNER_TYPE_LABELS[p.type]}</Td>}
               <Td className="font-mono text-xs">{p.id}</Td>
@@ -40,7 +40,7 @@ export default function MyPartnersPage() {
               </Td>
               <Td className="text-xs">
                 {p.contactPerson}
-                <div className="text-slate-500">{p.phone}</div>
+                <div className="text-muted-foreground">{p.phone}</div>
               </Td>
               <Td>{p.lotsInStock}</Td>
               <Td>{p.loosePacksInStock}</Td>

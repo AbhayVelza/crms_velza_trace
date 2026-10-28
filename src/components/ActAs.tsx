@@ -3,10 +3,11 @@
 // While sign-in is off (development): pick who to act as — a role, then a person — with no password.
 // Shown in the header and on the start page; renders nothing when sign-in is on.
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { api, errorText } from "@/lib/client";
 import { ROLE_LABELS, ROLES, type Role } from "@/lib/core/types";
-import { Button, Notice, Select } from "./ui";
+import { IconShield, IconUser } from "./icons";
+import { Button, cx, Notice, Select } from "./ui";
 
 export interface DevUser {
   id: string;
@@ -40,36 +41,43 @@ async function actAs(userId: string, next: string) {
 }
 
 /** Compact Role + User selects for the header; switching reloads the page as that person. */
-export function ActAsSwitcher({ users, current }: { users: DevUser[]; current: { id: string; role: Role } }) {
+export function ActAsSwitcher({ users, current, className }: { users: DevUser[]; current: { id: string; role: Role }; className?: string }) {
   const [error, setError] = useState<string | null>(null);
   const go = (id: string) => actAs(id, window.location.pathname + window.location.search).catch((e) => setError(errorText(e)));
   const roles = ROLES.filter((r) => users.some((u) => u.role === r));
   return (
-    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-      <label className="flex items-center gap-1">
-        Role
-        <Select aria-label="Role" className="min-h-8 w-auto py-1" value={current.role} onChange={(e) => go(users.find((u) => u.role === e.target.value)!.id)}>
-          {roles.map((r) => (
-            <option key={r} value={r}>
-              {ROLE_LABELS[r]}
+    <div className={cx("grid grid-cols-2 items-center gap-2 md:flex", className)}>
+      <ActAsSelect label="Role" Icon={IconShield} width="md:w-[10.5rem] lg:w-[12rem] xl:w-[10.5rem] 2xl:w-[11.5rem]" value={current.role} onChange={(v) => go(users.find((u) => u.role === v)!.id)}>
+        {roles.map((r) => (
+          <option key={r} value={r}>
+            {ROLE_LABELS[r]}
+          </option>
+        ))}
+      </ActAsSelect>
+      <ActAsSelect label="User" Icon={IconUser} width="md:w-[13rem] lg:w-[18rem] xl:w-[13rem] 2xl:w-[17rem]" value={current.id} onChange={go}>
+        {users
+          .filter((u) => u.role === current.role)
+          .map((u) => (
+            <option key={u.id} value={u.id}>
+              {label(u)}
             </option>
           ))}
-        </Select>
-      </label>
-      <label className="flex items-center gap-1">
-        User
-        <Select aria-label="User" className="min-h-8 w-auto max-w-[18rem] py-1" value={current.id} onChange={(e) => go(e.target.value)}>
-          {users
-            .filter((u) => u.role === current.role)
-            .map((u) => (
-              <option key={u.id} value={u.id}>
-                {label(u)}
-              </option>
-            ))}
-        </Select>
-      </label>
-      {error && <span className="text-red-700">{error}</span>}
+      </ActAsSelect>
+      {error && <span className="col-span-2 text-xs text-danger">{error}</span>}
     </div>
+  );
+}
+
+/** One header select: icon inside the box, the label for screen readers and as a tooltip. */
+function ActAsSelect({ label, Icon, width, value, onChange, children }: { label: string; Icon: typeof IconUser; width: string; value: string; onChange: (v: string) => void; children: ReactNode }) {
+  return (
+    <label className={cx("relative block min-w-0", width)} title={`Act as: ${label.toLowerCase()}`}>
+      <span className="sr-only">{label}</span>
+      <Icon size={15} className="pointer-events-none absolute left-2.5 top-1/2 z-10 -translate-y-1/2 text-muted-foreground" />
+      <Select aria-label={label} wrapperClassName="relative flex w-full" className="min-h-9 w-full truncate bg-surface-2 py-1.5 pl-8 text-[0.8125rem] font-medium hover:bg-muted" value={value} onChange={(e) => onChange(e.target.value)}>
+        {children}
+      </Select>
+    </label>
   );
 }
 

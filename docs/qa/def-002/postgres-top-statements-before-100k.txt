@@ -1,0 +1,15 @@
+85|2235.72|13773.30|6800850|SELECT code AS "id", code AS "packCode", lot_code AS "lotCode", pack_sequence AS "seq", pack_size AS "packSize", status AS "status", location_id AS "locationId"
+90|1799.70|5700.65|9371430|SELECT event_id AS "id", to_char(event_time AT TIME ZONE $2, $3) AS "at", event AS "type", item_kind AS "itemKind", code AS "itemCode", from_id AS "fromId", to_
+102|1438.87|33730.62|2040204|SELECT code AS "id", code AS "lotCode", batch_code AS "batchCode", flavour AS "flavour", lot_type AS "lotType", pack_size AS "packSize", lot_number AS "lotNumbe
+51|547.18|3479.02|1024590|SELECT event_id AS "id", to_char(event_time AT TIME ZONE $2, $3) AS "at", context AS "context", code AS "code", ok AS "ok", result AS "result", message AS "mess
+17|777.75|2139.69|340034|SELECT code AS "id", code AS "lotCode", batch_code AS "batchCode", flavour AS "flavour", lot_type AS "lotType", pack_size AS "packSize", lot_number AS "lotNumbe
+216|10.89|22.28|435909|SELECT partner_id AS "id", partner_type AS "type", name AS "name", place AS "place", address AS "address", city AS "city", state AS "state", pincode AS "pincode
+17|39.54|60.47|0|SELECT code AS "id", code AS "lotCode", batch_code AS "batchCode", flavour AS "flavour", lot_type AS "lotType", pack_size AS "packSize", lot_number AS "lotNumbe
+17|8.34|16.23|3417|SELECT print_order_id AS "id", to_char(created_at AT TIME ZONE $2, $3) AS "createdAt", created_by AS "createdBy", device_id AS "deviceId", manufacturer_id AS "m
+96|0.68|32.11|96|INSERT INTO code_history (event_id, event_time, context, code, ok, result, message, login_id, location_id, device_id, record_type, event) VALUES ($1, $2::timest
+209|0.18|1.68|4389|SELECT login_id AS "id", name AS "name", role AS "role", partner_id AS "partnerId", active AS "active", password_hash AS "passwordHash", to_char(password_change
+211|0.17|2.78|211|SELECT session_id AS "id", login_id AS "userId", to_char(created_at AT TIME ZONE $2, $3) AS "createdAt", to_char(expires_at AT TIME ZONE $4, $5) AS "expiresAt"
+17|1.81|3.33|3434|SELECT id AS "id", batch_code AS "code", country_code AS "country", flavour AS "flavour", to_char(mfg_date, $2) AS "mfgDate", to_char(expiry_date, $3) AS "expir
+17|1.71|3.02|3434|SELECT id AS "id", batch_code AS "code", country_code AS "country", flavour AS "flavour", to_char(mfg_date, $2) AS "mfgDate", to_char(expiry_date, $3) AS "expir
+17|1.59|2.92|3434|SELECT id AS "id", batch_code AS "code", country_code AS "country", flavour AS "flavour", to_char(mfg_date, $1) AS "mfgDate", to_char(expiry_date, $2) AS "expir
+306|0.06|2.70|299|SELECT login_id AS "id", name AS "name", role AS "role", partner_id AS "partnerId", active AS "active", password_hash AS "passwordHash", to_char(password_change

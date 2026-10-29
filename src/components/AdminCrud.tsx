@@ -8,6 +8,7 @@ import { useSession } from "./session";
 import { useApi } from "./useApi";
 import { IconTrash } from "./icons";
 import { Button, Card, Empty, Input, Notice, Select, Table, Td } from "./ui";
+import { useAction } from "./useAction";
 
 export interface Option {
   value: string;
@@ -46,6 +47,7 @@ const emptyDraft = (columns: Column[]) =>
 function PasswordCell({ onSave }: { onSave: (pw: string) => Promise<boolean> }) {
   const [open, setOpen] = useState(false);
   const [pw, setPw] = useState("");
+  const [saving, runSave] = useAction(async () => (await onSave(pw)) && (setOpen(false), setPw("")));
   if (!open) {
     return (
       <Button variant="secondary" className="min-h-8 whitespace-nowrap px-2 py-1 text-xs" onClick={() => setOpen(true)}>
@@ -56,7 +58,7 @@ function PasswordCell({ onSave }: { onSave: (pw: string) => Promise<boolean> }) 
   return (
     <div className="flex min-w-[14rem] gap-1">
       <Input type="password" aria-label="New password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="New password" />
-      <Button className="min-h-8 px-2 py-1 text-xs" disabled={!pw} onClick={async () => (await onSave(pw)) && (setOpen(false), setPw(""))}>
+      <Button className="min-h-8 px-2 py-1 text-xs" disabled={!pw} loading={saving} onClick={() => runSave()}>
         Save
       </Button>
       <Button variant="ghost" className="min-h-8 px-2 py-1 text-xs" onClick={() => (setOpen(false), setPw(""))}>
@@ -98,6 +100,8 @@ export function AdminCrud({
 
   const [draft, setDraft] = useState<Record<string, unknown>>(() => emptyDraft(columns));
   const [msg, setMsg] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+  const [creating, runCreate] = useAction(create);
+  const [, runRemove] = useAction(remove);
 
   const load = async () => list.reload();
   const shows = (c: Column, row: Record<string, unknown>) => !c.visible || c.visible(row);
@@ -198,7 +202,7 @@ export function AdminCrud({
                   <div className="flex flex-wrap justify-end gap-1">
                     {rowActions?.(row, { reload: load, setMsg })}
                     {allowDelete && (
-                      <Button variant="ghost" className="min-h-8 px-3 py-1 text-xs text-danger hover:bg-danger-soft" onClick={() => remove(row)}>
+                      <Button variant="ghost" className="min-h-8 px-3 py-1 text-xs text-danger hover:bg-danger-soft" onClick={() => runRemove(row)}>
                         <IconTrash size={15} />
                         Delete
                       </Button>
@@ -241,7 +245,7 @@ export function AdminCrud({
                 </label>
               ))}
           </div>
-          <Button className="mt-3" onClick={create}>
+          <Button className="mt-3" onClick={runCreate} loading={creating}>
             Add
           </Button>
         </Card>

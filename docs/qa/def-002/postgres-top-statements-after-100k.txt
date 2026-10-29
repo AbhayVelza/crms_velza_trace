@@ -1,0 +1,15 @@
+17|3359.70|6759.45|1360170|SELECT code AS "id", code AS "packCode", lot_code AS "lotCode", pack_sequence AS "seq", pack_size AS "packSize", status AS "status", location_id AS "locationId"
+17|714.19|1869.14|340034|SELECT code AS "id", code AS "lotCode", batch_code AS "batchCode", flavour AS "flavour", lot_type AS "lotType", pack_size AS "packSize", lot_number AS "lotNumbe
+17|242.02|779.05|340034|SELECT code AS "id", code AS "lotCode", batch_code AS "batchCode", flavour AS "flavour", lot_type AS "lotType", pack_size AS "packSize", lot_number AS "lotNumbe
+17|148.47|183.33|340034|SELECT code AS "id", code AS "lotCode", batch_code AS "batchCode", flavour AS "flavour", lot_type AS "lotType", pack_size AS "packSize", lot_number AS "lotNumbe
+17|105.65|171.71|341666|SELECT event_id AS "id", to_char(event_time AT TIME ZONE $2, $3) AS "at", context AS "context", code AS "code", ok AS "ok", result AS "result", message AS "mess
+17|53.02|76.44|141032|SELECT code AS "id", code AS "packCode", lot_code AS "lotCode", pack_sequence AS "seq", pack_size AS "packSize", status AS "status", location_id AS "locationId"
+75|10.33|23.61|151371|SELECT partner_id AS "id", partner_type AS "type", name AS "name", place AS "place", address AS "address", city AS "city", state AS "state", pincode AS "pincode
+17|40.30|56.88|0|SELECT code AS "id", code AS "lotCode", batch_code AS "batchCode", flavour AS "flavour", lot_type AS "lotType", pack_size AS "packSize", lot_number AS "lotNumbe
+34|15.74|44.78|38675|SELECT code AS "id", code AS "lotCode", batch_code AS "batchCode", flavour AS "flavour", lot_type AS "lotType", pack_size AS "packSize", lot_number AS "lotNumbe
+17|30.51|49.36|69564|SELECT code AS "id", code AS "packCode", lot_code AS "lotCode", pack_sequence AS "seq", pack_size AS "packSize", status AS "status", location_id AS "locationId"
+17|25.30|45.75|35258|SELECT code AS "id", code AS "lotCode", batch_code AS "batchCode", flavour AS "flavour", lot_type AS "lotType", pack_size AS "packSize", lot_number AS "lotNumbe
+34|7.96|20.94|612|SELECT event_id AS "id", to_char(event_time AT TIME ZONE $3, $4) AS "at", context AS "context", code AS "code", ok AS "ok", result AS "result", message AS "mess
+17|13.81|25.28|17391|SELECT code AS "id", code AS "lotCode", batch_code AS "batchCode", flavour AS "flavour", lot_type AS "lotType", pack_size AS "packSize", lot_number AS "lotNumbe
+17|12.79|18.90|17391|SELECT code AS "id", code AS "lotCode", batch_code AS "batchCode", flavour AS "flavour", lot_type AS "lotType", pack_size AS "packSize", lot_number AS "lotNumbe
+17|7.99|12.51|3417|SELECT print_order_id AS "id", to_char(created_at AT TIME ZONE $2, $3) AS "createdAt", created_by AS "createdBy", device_id AS "deviceId", manufacturer_id AS "m

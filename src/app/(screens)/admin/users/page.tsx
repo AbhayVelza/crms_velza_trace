@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { AdminCrud } from "@/components/AdminCrud";
 import { PasswordInput } from "@/components/PasswordInput";
+import { useAction } from "@/components/useAction";
 import { useSession } from "@/components/session";
 import { Button, Card, Field, fmtTime, Input, Notice, PageTitle, Select } from "@/components/ui";
 import { api, errorText } from "@/lib/client";
@@ -18,6 +19,7 @@ function NewSignIn() {
   const [password, setPassword] = useState("");
   const [msg, setMsg] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
   const partnerType = role ? ROLE_PARTNER_TYPE[role] : null;
+  const [creating, runCreate] = useAction(create);
 
   async function create() {
     setMsg(null);
@@ -70,7 +72,7 @@ function NewSignIn() {
           <PasswordInput value={password} onChange={setPassword} />
         </Field>
       </div>
-      <Button className="mt-3" onClick={create} disabled={!role || !name || !password}>
+      <Button className="mt-3" onClick={runCreate} disabled={!role || !name || !password} loading={creating}>
         Create sign-in
       </Button>
       {msg && (

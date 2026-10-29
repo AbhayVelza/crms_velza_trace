@@ -169,10 +169,27 @@ export function Sidebar() {
     document.getElementById(MENU_BUTTON_ID)?.focus();
   }, [setDrawerOpen]);
 
-  // Drawer open: Escape closes it, the page behind doesn't scroll, focus moves into it.
+  // Drawer open: Escape closes it, Tab stays inside it (the page behind is under the backdrop), the page behind
+  // doesn't scroll, focus moves into it.
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") return close();
+      if (e.key !== "Tab" || !panel.current) return;
+      const items = [...panel.current.querySelectorAll<HTMLElement>("a[href], button:not([disabled])")];
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      const at = document.activeElement;
+      const outside = !panel.current.contains(at);
+      if (e.shiftKey && (at === first || outside)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (at === last || outside)) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
     document.addEventListener("keydown", onKey);
     const overflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";

@@ -5,6 +5,7 @@
 import { useState } from "react";
 import { IconChevronRight, IconTriangleAlert } from "@/components/icons";
 import { Button, Card, Code, cx, Empty, Field, fmtTime, Input, Loading, Notice, PageTitle, Stat, StatusBadge, Table, Td } from "@/components/ui";
+import { useAction } from "@/components/useAction";
 import { useApi } from "@/components/useApi";
 import { api, errorText } from "@/lib/client";
 import { notifyDataChanged } from "@/lib/events";
@@ -85,6 +86,7 @@ function BatchReport({ code }: { code: string }) {
   const [reason, setReason] = useState("");
   const [msg, setMsg] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [recalling, runRecall] = useAction(recall);
 
   async function recall() {
     setMsg(null);
@@ -181,10 +183,10 @@ function BatchReport({ code }: { code: string }) {
                     <IconTriangleAlert size={17} />
                     This cannot be undone.
                   </span>
-                  <Button variant="danger" onClick={recall}>
+                  <Button variant="danger" onClick={runRecall} loading={recalling}>
                     Yes, recall {r.summary.lots} lot(s)
                   </Button>
-                  <Button variant="secondary" onClick={() => setConfirming(false)}>
+                  <Button variant="secondary" onClick={() => setConfirming(false)} disabled={recalling}>
                     Cancel
                   </Button>
                 </div>

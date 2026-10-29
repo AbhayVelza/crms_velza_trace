@@ -1,0 +1,468 @@
+{
+  "ranAt": "2026-10-28T05:53:27.303Z",
+  "base": "http://localhost:3300",
+  "summary": {
+    "PASS": 64,
+    "FAIL": 0,
+    "BLOCKED": 0,
+    "NOT RUN": 1,
+    "NEEDS INVESTIGATION": 0
+  },
+  "results": [
+    {
+      "area": "UI roles",
+      "test": "ADMIN: sidebar shows exactly its menu",
+      "status": "PASS",
+      "expected": "Partners | Sign-ins & passwords | Devices | Countries & flavours | Batch code pools | Settings",
+      "actual": "Partners | Sign-ins & passwords | Devices | Countries & flavours | Batch code pools | Settings"
+    },
+    {
+      "area": "UI roles",
+      "test": "ADMIN: /hq by URL shows \"not part of your portal\"",
+      "status": "PASS",
+      "expected": "refusal message",
+      "actual": "shown"
+    },
+    {
+      "area": "UI roles",
+      "test": "ADMIN: first menu item opens and is marked current",
+      "status": "PASS",
+      "expected": "Partners",
+      "actual": "Partners"
+    },
+    {
+      "area": "UI roles",
+      "test": "ADMIN: no sideways scrolling at 1440 px",
+      "status": "PASS",
+      "expected": "none",
+      "actual": "none"
+    },
+    {
+      "area": "UI roles",
+      "test": "ADMIN: reload keeps the session and the page",
+      "status": "PASS",
+      "expected": "http://localhost:3300/admin/partners",
+      "actual": "http://localhost:3300/admin/partners"
+    },
+    {
+      "area": "UI roles",
+      "test": "ADMIN: back and forward work",
+      "status": "PASS",
+      "expected": "back to the previous page, forward to http://localhost:3300/admin/partners",
+      "actual": "http://localhost:3300/hq → http://localhost:3300/admin/partners"
+    },
+    {
+      "area": "UI roles",
+      "test": "ADMIN: no console errors apart from the sign-in-mode probe",
+      "status": "PASS",
+      "expected": "0",
+      "actual": "0 (dev-users probe 404s: 4)"
+    },
+    {
+      "area": "UI roles",
+      "test": "ADMIN: Sign out ends the session",
+      "status": "PASS",
+      "expected": "401",
+      "actual": "401"
+    },
+    {
+      "area": "UI roles",
+      "test": "TRACE_OWNER: sidebar shows exactly its menu",
+      "status": "PASS",
+      "expected": "Dashboard | Search code | Alerts | Batches & recall | Scan audit",
+      "actual": "Dashboard | Search code | Alerts | Batches & recall | Scan audit"
+    },
+    {
+      "area": "UI roles",
+      "test": "TRACE_OWNER: /admin/partners by URL shows \"not part of your portal\"",
+      "status": "PASS",
+      "expected": "refusal message",
+      "actual": "shown"
+    },
+    {
+      "area": "UI roles",
+      "test": "TRACE_OWNER: first menu item opens and is marked current",
+      "status": "PASS",
+      "expected": "Dashboard",
+      "actual": "Dashboard"
+    },
+    {
+      "area": "UI roles",
+      "test": "TRACE_OWNER: no sideways scrolling at 1440 px",
+      "status": "PASS",
+      "expected": "none",
+      "actual": "none"
+    },
+    {
+      "area": "UI roles",
+      "test": "TRACE_OWNER: reload keeps the session and the page",
+      "status": "PASS",
+      "expected": "http://localhost:3300/hq",
+      "actual": "http://localhost:3300/hq"
+    },
+    {
+      "area": "UI roles",
+      "test": "TRACE_OWNER: back and forward work",
+      "status": "PASS",
+      "expected": "back to the previous page, forward to http://localhost:3300/hq",
+      "actual": "http://localhost:3300/admin/partners → http://localhost:3300/hq"
+    },
+    {
+      "area": "UI roles",
+      "test": "TRACE_OWNER: no console errors apart from the sign-in-mode probe",
+      "status": "PASS",
+      "expected": "0",
+      "actual": "0 (dev-users probe 404s: 4)"
+    },
+    {
+      "area": "UI roles",
+      "test": "TRACE_OWNER: Sign out ends the session",
+      "status": "PASS",
+      "expected": "401",
+      "actual": "401"
+    },
+    {
+      "area": "UI roles",
+      "test": "OPERATOR: sidebar shows exactly its menu",
+      "status": "PASS",
+      "expected": "New print order | Print orders | Dispatch | Reprint | Void lot | My stock | Damaged",
+      "actual": "New print order | Print orders | Dispatch | Reprint | Void lot | My stock | Damaged"
+    },
+    {
+      "area": "UI roles",
+      "test": "OPERATOR: /qc/verify by URL shows \"not part of your portal\"",
+      "status": "PASS",
+      "expected": "refusal message",
+      "actual": "shown"
+    },
+    {
+      "area": "UI roles",
+      "test": "OPERATOR: first menu item opens and is marked current",
+      "status": "PASS",
+      "expected": "New print order",
+      "actual": "New print order"
+    },
+    {
+      "area": "UI roles",
+      "test": "OPERATOR: no sideways scrolling at 1440 px",
+      "status": "PASS",
+      "expected": "none",
+      "actual": "none"
+    },
+    {
+      "area": "UI roles",
+      "test": "OPERATOR: reload keeps the session and the page",
+      "status": "PASS",
+      "expected": "http://localhost:3300/operator/new",
+      "actual": "http://localhost:3300/operator/new"
+    },
+    {
+      "area": "UI roles",
+      "test": "OPERATOR: back and forward work",
+      "status": "PASS",
+      "expected": "back to the previous page, forward to http://localhost:3300/operator/new",
+      "actual": "http://localhost:3300/qc/verify → http://localhost:3300/operator/new"
+    },
+    {
+      "area": "UI roles",
+      "test": "OPERATOR: no console errors apart from the sign-in-mode probe",
+      "status": "PASS",
+      "expected": "0",
+      "actual": "0 (dev-users probe 404s: 4)"
+    },
+    {
+      "area": "UI roles",
+      "test": "OPERATOR: Sign out ends the session",
+      "status": "PASS",
+      "expected": "401",
+      "actual": "401"
+    },
+    {
+      "area": "UI roles",
+      "test": "QC: sidebar shows exactly its menu",
+      "status": "PASS",
+      "expected": "Verify | My stock",
+      "actual": "Verify | My stock"
+    },
+    {
+      "area": "UI roles",
+      "test": "QC: /operator/new by URL shows \"not part of your portal\"",
+      "status": "PASS",
+      "expected": "refusal message",
+      "actual": "shown"
+    },
+    {
+      "area": "UI roles",
+      "test": "QC: first menu item opens and is marked current",
+      "status": "PASS",
+      "expected": "Verify",
+      "actual": "Verify"
+    },
+    {
+      "area": "UI roles",
+      "test": "QC: no sideways scrolling at 1440 px",
+      "status": "PASS",
+      "expected": "none",
+      "actual": "none"
+    },
+    {
+      "area": "UI roles",
+      "test": "QC: reload keeps the session and the page",
+      "status": "PASS",
+      "expected": "http://localhost:3300/qc/verify",
+      "actual": "http://localhost:3300/qc/verify"
+    },
+    {
+      "area": "UI roles",
+      "test": "QC: back and forward work",
+      "status": "PASS",
+      "expected": "back to the previous page, forward to http://localhost:3300/qc/verify",
+      "actual": "http://localhost:3300/operator/new → http://localhost:3300/qc/verify"
+    },
+    {
+      "area": "UI roles",
+      "test": "QC: no console errors apart from the sign-in-mode probe",
+      "status": "PASS",
+      "expected": "0",
+      "actual": "0 (dev-users probe 404s: 4)"
+    },
+    {
+      "area": "UI roles",
+      "test": "QC: Sign out ends the session",
+      "status": "PASS",
+      "expected": "401",
+      "actual": "401"
+    },
+    {
+      "area": "UI roles",
+      "test": "SS: sidebar shows exactly its menu",
+      "status": "PASS",
+      "expected": "Receive | Dispatch | My stock | Damaged | My partners",
+      "actual": "Receive | Dispatch | My stock | Damaged | My partners"
+    },
+    {
+      "area": "UI roles",
+      "test": "SS: /admin/partners by URL shows \"not part of your portal\"",
+      "status": "PASS",
+      "expected": "refusal message",
+      "actual": "shown"
+    },
+    {
+      "area": "UI roles",
+      "test": "SS: first menu item opens and is marked current",
+      "status": "PASS",
+      "expected": "Receive",
+      "actual": "Receive"
+    },
+    {
+      "area": "UI roles",
+      "test": "SS: no sideways scrolling at 1440 px",
+      "status": "PASS",
+      "expected": "none",
+      "actual": "none"
+    },
+    {
+      "area": "UI roles",
+      "test": "SS: reload keeps the session and the page",
+      "status": "PASS",
+      "expected": "http://localhost:3300/receive",
+      "actual": "http://localhost:3300/receive"
+    },
+    {
+      "area": "UI roles",
+      "test": "SS: back and forward work",
+      "status": "PASS",
+      "expected": "back to the previous page, forward to http://localhost:3300/receive",
+      "actual": "http://localhost:3300/admin/partners → http://localhost:3300/receive"
+    },
+    {
+      "area": "UI roles",
+      "test": "SS: no console errors apart from the sign-in-mode probe",
+      "status": "PASS",
+      "expected": "0",
+      "actual": "0 (dev-users probe 404s: 4)"
+    },
+    {
+      "area": "UI roles",
+      "test": "SS: Sign out ends the session",
+      "status": "PASS",
+      "expected": "401",
+      "actual": "401"
+    },
+    {
+      "area": "UI roles",
+      "test": "DB: sidebar shows exactly its menu",
+      "status": "PASS",
+      "expected": "Receive | Dispatch | My stock | Damaged | My retailers",
+      "actual": "Receive | Dispatch | My stock | Damaged | My retailers"
+    },
+    {
+      "area": "UI roles",
+      "test": "DB: /hq/search by URL shows \"not part of your portal\"",
+      "status": "PASS",
+      "expected": "refusal message",
+      "actual": "shown"
+    },
+    {
+      "area": "UI roles",
+      "test": "DB: first menu item opens and is marked current",
+      "status": "PASS",
+      "expected": "Receive",
+      "actual": "Receive"
+    },
+    {
+      "area": "UI roles",
+      "test": "DB: no sideways scrolling at 1440 px",
+      "status": "PASS",
+      "expected": "none",
+      "actual": "none"
+    },
+    {
+      "area": "UI roles",
+      "test": "DB: reload keeps the session and the page",
+      "status": "PASS",
+      "expected": "http://localhost:3300/receive",
+      "actual": "http://localhost:3300/receive"
+    },
+    {
+      "area": "UI roles",
+      "test": "DB: back and forward work",
+      "status": "PASS",
+      "expected": "back to the previous page, forward to http://localhost:3300/receive",
+      "actual": "http://localhost:3300/hq/search → http://localhost:3300/receive"
+    },
+    {
+      "area": "UI roles",
+      "test": "DB: no console errors apart from the sign-in-mode probe",
+      "status": "PASS",
+      "expected": "0",
+      "actual": "0 (dev-users probe 404s: 4)"
+    },
+    {
+      "area": "UI roles",
+      "test": "DB: Sign out ends the session",
+      "status": "PASS",
+      "expected": "401",
+      "actual": "401"
+    },
+    {
+      "area": "UI roles",
+      "test": "RETAILER: sidebar shows exactly its menu",
+      "status": "PASS",
+      "expected": "Receive | Open lot | My stock | Damaged",
+      "actual": "Receive | Open lot | My stock | Damaged"
+    },
+    {
+      "area": "UI roles",
+      "test": "RETAILER: /dispatch by URL shows \"not part of your portal\"",
+      "status": "PASS",
+      "expected": "refusal message",
+      "actual": "shown"
+    },
+    {
+      "area": "UI roles",
+      "test": "RETAILER: first menu item opens and is marked current",
+      "status": "PASS",
+      "expected": "Receive",
+      "actual": "Receive"
+    },
+    {
+      "area": "UI roles",
+      "test": "RETAILER: no sideways scrolling at 1440 px",
+      "status": "PASS",
+      "expected": "none",
+      "actual": "none"
+    },
+    {
+      "area": "UI roles",
+      "test": "RETAILER: reload keeps the session and the page",
+      "status": "PASS",
+      "expected": "http://localhost:3300/receive",
+      "actual": "http://localhost:3300/receive"
+    },
+    {
+      "area": "UI roles",
+      "test": "RETAILER: back and forward work",
+      "status": "PASS",
+      "expected": "back to the previous page, forward to http://localhost:3300/receive",
+      "actual": "http://localhost:3300/dispatch → http://localhost:3300/receive"
+    },
+    {
+      "area": "UI roles",
+      "test": "RETAILER: no console errors apart from the sign-in-mode probe",
+      "status": "PASS",
+      "expected": "0",
+      "actual": "0 (dev-users probe 404s: 4)"
+    },
+    {
+      "area": "UI roles",
+      "test": "RETAILER: Sign out ends the session",
+      "status": "PASS",
+      "expected": "401",
+      "actual": "401"
+    },
+    {
+      "area": "Search & filters",
+      "test": "Partners table lists all 18 QA partners",
+      "status": "PASS",
+      "expected": "18 rows",
+      "actual": "18"
+    },
+    {
+      "area": "Search & filters",
+      "test": "Filter \"Distributors and retailers of QA-MH-2026-SS-001 Deccan Super Stockist (3)\" shows SS-001's partners only",
+      "status": "PASS",
+      "expected": "DB0001, DB0002, DB0003",
+      "actual": "DB0001, DB0002, DB0003"
+    },
+    {
+      "area": "Search & filters",
+      "test": "Filter \"Retailers of QA-MH-2026-DST-004 Kolhapur Distributors (2)\" shows its 2 retailers",
+      "status": "PASS",
+      "expected": "RT0007, RT0008",
+      "actual": "RT0007, RT0008"
+    },
+    {
+      "area": "Search & filters",
+      "test": "Text search, sorting controls and pagination on the partners table",
+      "status": "NOT RUN",
+      "expected": "exists?",
+      "actual": "not implemented: a 'Show' filter only; all rows render on one page"
+    },
+    {
+      "area": "Search & filters",
+      "test": "Available filter options",
+      "status": "PASS",
+      "expected": "listed",
+      "actual": "All partners | Manufacturers | Super Stockists | Distributors | Retailers | Not assigned yet | Distributors and retailers of QA-MH-2026-SS-001 Deccan Super Stockist (3) | Distributors and retailers of QA-MH-2026-SS-002 Konkan Coast Super Stockist (2) | Retailers of QA-MH-2026-DST-001 Shivajinagar Distributors (2) | Retailers of QA-MH-2026-DST-002 Nashik Valley Distributors (2) | Retailers of QA-MH-2026-DST-003 Andheri Distributors (2) | Retailers of QA-MH-2026-DST-004 Kolhapur Distributors (2) | Retailers of QA-MH-2026-DST-005 Solapur Distributors (2)"
+    },
+    {
+      "area": "UI mobile",
+      "test": "Retailer on a phone: drawer shows its menu",
+      "status": "PASS",
+      "expected": "Receive | Open lot | My stock | Damaged",
+      "actual": "Receive | Open lot | My stock | Damaged"
+    },
+    {
+      "area": "UI mobile",
+      "test": "Escape closes the drawer; no sideways scrolling",
+      "status": "PASS",
+      "expected": "closed, no overflow",
+      "actual": "inert=true, overflow=false"
+    },
+    {
+      "area": "UI public",
+      "test": "Public page for case 918UWPAFOR00001",
+      "status": "PASS",
+      "expected": "/Genuine/",
+      "actual": "Genuine Velza product"
+    },
+    {
+      "area": "UI public",
+      "test": "Public page for tray 91DA2P1PGA00001",
+      "status": "PASS",
+      "expected": "/Recalled — do not consume/",
+      "actual": "Recalled — do not consume"
+    }
+  ]
+}

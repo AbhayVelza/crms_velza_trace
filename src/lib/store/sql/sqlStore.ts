@@ -316,7 +316,14 @@ function makeRepo<R extends Row>(q: Query, spec: Spec): Repo<R> {
       const col = colOf.get(field);
       if (!col) throw new Error(`${spec.table}: no column for field ${field}`);
       if (value === null) parts.push(`${col[1]} IS NULL`);
-      else {
+      else if (Array.isArray(value)) {
+        // "Any of": = ANY(array), so an index on the column is used; null in the list matches NULL, as in the JSON store.
+        if (col[2] === "json" || col[2] === "textarr") throw new Error(`${spec.table}: field ${field} takes equality only`);
+        const values = value.filter((v) => v !== null);
+        params.push(values.map((v) => toParam(v, col[2])));
+        const any = `${col[1]} = ANY($${params.length}${castOf(col[2]) || "::text"}[])`;
+        parts.push(values.length < value.length ? `(${any} OR ${col[1]} IS NULL)` : any);
+      } else {
         params.push(toParam(value, col[2]));
         parts.push(`${col[1]} = $${params.length}${castOf(col[2])}`);
       }

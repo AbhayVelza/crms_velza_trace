@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect } from "react";
 import { IconArrowRight, IconRefresh, IconTriangleAlert } from "@/components/icons";
-import { Button, Card, Code, Empty, fmtTime, Loading, Notice, PageTitle, Pill, Stat, StatusBadge, Table, Td } from "@/components/ui";
+import { Button, Card, Code, Empty, fmtTime, LoadingPage, Notice, PageTitle, Pill, Skeleton, Stat, StatusBadge, Table, Td } from "@/components/ui";
 import { useApi } from "@/components/useApi";
 import { ITEM_STATUSES } from "@/lib/core/types";
 
@@ -21,7 +21,7 @@ interface Dashboard {
 const ALERT_TYPES = ["NOT_RECEIVED", "WRONG_RECEIVER", "UNKNOWN_CODE", "DUPLICATE_RECEIPT", "BLOCKED_CODE", "DAMAGED"];
 
 export default function DashboardPage() {
-  const { data: d, error, reload } = useApi<Dashboard>("/api/dashboard", { refreshOnChange: true });
+  const { data: d, error, reload, refreshing } = useApi<Dashboard>("/api/dashboard", { refreshOnChange: true });
 
   useEffect(() => {
     const t = setInterval(reload, 15_000);
@@ -29,7 +29,7 @@ export default function DashboardPage() {
   }, [reload]);
 
   if (error) return <Notice tone="error">{error}</Notice>;
-  if (!d) return <Loading />;
+  if (!d) return <DashboardSkeleton />;
 
   const alertTotal = Object.values(d.alertCounts).reduce((a, b) => a + b, 0);
   return (
@@ -38,13 +38,13 @@ export default function DashboardPage() {
         title="HQ dashboard"
         subtitle={`Synced data only. NOT_RECEIVED after ${d.threshold.label}${d.threshold.demoMode ? " (demo mode)" : ""}. Refreshes every 15 s.`}
         actions={
-          <Button variant="secondary" onClick={reload}>
-            <IconRefresh size={17} />
+          <Button variant="secondary" onClick={reload} loading={refreshing}>
+            {!refreshing && <IconRefresh size={17} />}
             Refresh
           </Button>
         }
       />
-      <div className="mb-4 grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-5 lg:mb-5 lg:gap-5">
+      <div className="mb-4 grid animate-fade-in grid-cols-2 gap-3 sm:gap-4 md:grid-cols-5 lg:mb-5 lg:gap-5">
         <Stat label="Batches" value={d.totals.batches} />
         <Stat label="Lots" value={d.totals.lots} />
         <Stat label="Packs" value={d.totals.packs} />
@@ -52,7 +52,7 @@ export default function DashboardPage() {
         <Stat label="Alerts" value={alertTotal} tone={alertTotal ? "danger" : undefined} />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2 lg:gap-5">
+      <div className="grid animate-fade-in gap-4 lg:grid-cols-2 lg:gap-5">
         <Card title="Counts by status">
           <Table head={["Status", "Lots", "Packs"]}>
             {ITEM_STATUSES.filter((s) => d.lotCounts[s] || d.packCounts[s]).map((s) => (
@@ -172,5 +172,42 @@ function Opened({ total, opened }: { total: number; opened: number }) {
       {total}
       {opened > 0 && <div className="whitespace-nowrap text-xs text-muted-foreground">{opened} opened</div>}
     </>
+  );
+}
+
+/** Same grid as the loaded dashboard (title, 5 stat tiles, 4 cards), so nothing jumps when the data arrives. */
+function DashboardSkeleton() {
+  return (
+    <LoadingPage
+      title="HQ dashboard"
+      subtitle
+      actions={
+        <Button variant="secondary" disabled>
+          <IconRefresh size={17} />
+          Refresh
+        </Button>
+      }
+    >
+      <div className="mb-4 grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-5 lg:mb-5 lg:gap-5">
+        {["Batches", "Lots", "Packs", "In transit", "Alerts"].map((label) => (
+          <div key={label} className="rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
+            <div className="text-xs font-semibold uppercase tracking-[0.05em] text-muted-foreground">{label}</div>
+            <Skeleton className="mt-2.5 h-[1.875rem] w-16" />
+          </div>
+        ))}
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2 lg:gap-5">
+        {["Counts by status", "Alerts", "Stock by location", "In transit"].map((title) => (
+          <Card key={title} title={title}>
+            <div className="space-y-3">
+              <Skeleton className="h-9" />
+              <Skeleton className="h-6 w-11/12" />
+              <Skeleton className="h-6 w-10/12" />
+              <Skeleton className="h-6 w-9/12" />
+            </div>
+          </Card>
+        ))}
+      </div>
+    </LoadingPage>
   );
 }

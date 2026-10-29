@@ -1,0 +1,394 @@
+{
+  "label": "base-json-10000",
+  "ranAt": "2026-10-28T06:48:54.304Z",
+  "store": "JSON file (STORE=json)",
+  "dataset": {
+    "lots": 2002,
+    "packs": 8010,
+    "codeRecords": 10012,
+    "partners": 218,
+    "movements": 10253,
+    "scans": 2047
+  },
+  "settings": {
+    "sequential": 15,
+    "concurrency": 10,
+    "concurrentRequests": 30,
+    "warmup": 2
+  },
+  "results": [
+    {
+      "scenario": "Exact code lookup (HQ trace of a case)",
+      "method": "GET",
+      "endpoint": "/api/lookup/91H71RIXGA00064",
+      "sequential": {
+        "n": 15,
+        "medianMs": 734,
+        "p95Ms": 912,
+        "p99Ms": null,
+        "maxMs": 912,
+        "throughputPerS": 1.37,
+        "errorRate": 0,
+        "errorStatuses": [],
+        "payloadKB": 2
+      },
+      "concurrency10": {
+        "n": 30,
+        "medianMs": 5390,
+        "p95Ms": 6593,
+        "p99Ms": null,
+        "maxMs": 6720,
+        "throughputPerS": 1.76,
+        "errorRate": 0,
+        "errorStatuses": [],
+        "payloadKB": 2
+      }
+    },
+    {
+      "scenario": "Exact code lookup (HQ trace of a pack)",
+      "method": "GET",
+      "endpoint": "/api/lookup/91H71RIXGA0006461",
+      "sequential": {
+        "n": 15,
+        "medianMs": 399,
+        "p95Ms": 492,
+        "p99Ms": null,
+        "maxMs": 492,
+        "throughputPerS": 2.47,
+        "errorRate": 0,
+        "errorStatuses": [],
+        "payloadKB": 2
+      },
+      "concurrency10": {
+        "n": 30,
+        "medianMs": 3891,
+        "p95Ms": 5086,
+        "p99Ms": null,
+        "maxMs": 5217,
+        "throughputPerS": 2.3,
+        "errorRate": 0,
+        "errorStatuses": [],
+        "payloadKB": 2
+      }
+    },
+    {
+      "scenario": "Public QR check",
+      "method": "GET",
+      "endpoint": "/api/lookup/91H71RIXGA00064",
+      "sequential": {
+        "n": 15,
+        "medianMs": 361,
+        "p95Ms": 536,
+        "p99Ms": null,
+        "maxMs": 536,
+        "throughputPerS": 2.72,
+        "errorRate": 0,
+        "errorStatuses": [],
+        "payloadKB": 0
+      },
+      "concurrency10": {
+        "n": 30,
+        "medianMs": 2583,
+        "p95Ms": 3537,
+        "p99Ms": null,
+        "maxMs": 3759,
+        "throughputPerS": 3.57,
+        "errorRate": 0,
+        "errorStatuses": [],
+        "payloadKB": 0
+      }
+    },
+    {
+      "scenario": "HQ dashboard",
+      "method": "GET",
+      "endpoint": "/api/dashboard",
+      "sequential": {
+        "n": 15,
+        "medianMs": 251,
+        "p95Ms": 480,
+        "p99Ms": null,
+        "maxMs": 480,
+        "throughputPerS": 3.4,
+        "errorRate": 0,
+        "errorStatuses": [],
+        "payloadKB": 63
+      },
+      "concurrency10": {
+        "n": 30,
+        "medianMs": 2127,
+        "p95Ms": 2518,
+        "p99Ms": null,
+        "maxMs": 2559,
+        "throughputPerS": 4.49,
+        "errorRate": 0,
+        "errorStatuses": [],
+        "payloadKB": 63
+      }
+    },
+    {
+      "scenario": "HQ alerts",
+      "method": "GET",
+      "endpoint": "/api/alerts",
+      "sequential": {
+        "n": 15,
+        "medianMs": 86,
+        "p95Ms": 119,
+        "p99Ms": null,
+        "maxMs": 119,
+        "throughputPerS": 11.23,
+        "errorRate": 0,
+        "errorStatuses": [],
+        "payloadKB": 30
+      },
+      "concurrency10": {
+        "n": 30,
+        "medianMs": 879,
+        "p95Ms": 945,
+        "p99Ms": null,
+        "maxMs": 963,
+        "throughputPerS": 10.91,
+        "errorRate": 0,
+        "errorStatuses": [],
+        "payloadKB": 30
+      }
+    },
+    {
+      "scenario": "Scan audit (latest 300)",
+      "method": "GET",
+      "endpoint": "/api/scans",
+      "sequential": {
+        "n": 15,
+        "medianMs": 23,
+        "p95Ms": 53,
+        "p99Ms": null,
+        "maxMs": 53,
+        "throughputPerS": 35.66,
+        "errorRate": 0,
+        "errorStatuses": [],
+        "payloadKB": 88
+      },
+      "concurrency10": {
+        "n": 30,
+        "medianMs": 187,
+        "p95Ms": 269,
+        "p99Ms": null,
+        "maxMs": 271,
+        "throughputPerS": 46.62,
+        "errorRate": 0,
+        "errorStatuses": [],
+        "payloadKB": 88
+      }
+    },
+    {
+      "scenario": "Batch list",
+      "method": "GET",
+      "endpoint": "/api/batches",
+      "sequential": {
+        "n": 15,
+        "medianMs": 23,
+        "p95Ms": 38,
+        "p99Ms": null,
+        "maxMs": 38,
+        "throughputPerS": 40.84,
+        "errorRate": 0,
+        "errorStatuses": [],
+        "payloadKB": 12
+      },
+      "concurrency10": {
+        "n": 30,
+        "medianMs": 227,
+        "p95Ms": 321,
+        "p99Ms": null,
+        "maxMs": 331,
+        "throughputPerS": 38.95,
+        "errorRate": 0,
+        "errorStatuses": [],
+        "payloadKB": 12
+      }
+    },
+    {
+      "scenario": "Partner list (Admin, all partners)",
+      "method": "GET",
+      "endpoint": "/api/admin/partners",
+      "sequential": {
+        "n": 15,
+        "medianMs": 7,
+        "p95Ms": 13,
+        "p99Ms": null,
+        "maxMs": 13,
+        "throughputPerS": 128.99,
+        "errorRate": 0,
+        "errorStatuses": [],
+        "payloadKB": 73
+      },
+      "concurrency10": {
+        "n": 30,
+        "medianMs": 59,
+        "p95Ms": 75,
+        "p99Ms": null,
+        "maxMs": 77,
+        "throughputPerS": 149.7,
+        "errorRate": 0,
+        "errorStatuses": [],
+        "payloadKB": 73
+      }
+    },
+    {
+      "scenario": "My partners (Super Stockist)",
+      "method": "GET",
+      "endpoint": "/api/my-partners",
+      "sequential": {
+        "n": 15,
+        "medianMs": 70,
+        "p95Ms": 284,
+        "p99Ms": null,
+        "maxMs": 284,
+        "throughputPerS": 9.64,
+        "errorRate": 0,
+        "errorStatuses": [],
+        "payloadKB": 5
+      },
+      "concurrency10": {
+        "n": 30,
+        "medianMs": 831,
+        "p95Ms": 933,
+        "p99Ms": null,
+        "maxMs": 941,
+        "throughputPerS": 11.79,
+        "errorRate": 0,
+        "errorStatuses": [],
+        "payloadKB": 5
+      }
+    },
+    {
+      "scenario": "My stock (Retailer)",
+      "method": "GET",
+      "endpoint": "/api/stock",
+      "sequential": {
+        "n": 15,
+        "medianMs": 81,
+        "p95Ms": 128,
+        "p99Ms": null,
+        "maxMs": 128,
+        "throughputPerS": 11.49,
+        "errorRate": 0,
+        "errorStatuses": [],
+        "payloadKB": 6
+      },
+      "concurrency10": {
+        "n": 30,
+        "medianMs": 1113,
+        "p95Ms": 1165,
+        "p99Ms": null,
+        "maxMs": 1171,
+        "throughputPerS": 9.52,
+        "errorRate": 0,
+        "errorStatuses": [],
+        "payloadKB": 6
+      }
+    },
+    {
+      "scenario": "Print orders list (Operator)",
+      "method": "GET",
+      "endpoint": "/api/print-orders",
+      "sequential": {
+        "n": 15,
+        "medianMs": 29,
+        "p95Ms": 80,
+        "p99Ms": null,
+        "maxMs": 80,
+        "throughputPerS": 26.04,
+        "errorRate": 0,
+        "errorStatuses": [],
+        "payloadKB": 1
+      },
+      "concurrency10": {
+        "n": 30,
+        "medianMs": 295,
+        "p95Ms": 401,
+        "p99Ms": null,
+        "maxMs": 409,
+        "throughputPerS": 31.28,
+        "errorRate": 0,
+        "errorStatuses": [],
+        "payloadKB": 1
+      }
+    },
+    {
+      "scenario": "Print order preview (Operator; plan only, no lot scan)",
+      "method": "POST",
+      "endpoint": "/api/print-orders",
+      "sequential": {
+        "n": 15,
+        "medianMs": 10,
+        "p95Ms": 11,
+        "p99Ms": null,
+        "maxMs": 11,
+        "throughputPerS": 99.67,
+        "errorRate": 0,
+        "errorStatuses": [],
+        "payloadKB": 1
+      },
+      "concurrency10": {
+        "n": 30,
+        "medianMs": 46,
+        "p95Ms": 58,
+        "p99Ms": null,
+        "maxMs": 63,
+        "throughputPerS": 201.03,
+        "errorRate": 0,
+        "errorStatuses": [],
+        "payloadKB": 1
+      }
+    },
+    {
+      "scenario": "Dispatch scan check (write: appends a scan)",
+      "method": "POST",
+      "endpoint": "/api/dispatch",
+      "sequential": {
+        "n": 15,
+        "medianMs": 310,
+        "p95Ms": 513,
+        "p99Ms": null,
+        "maxMs": 513,
+        "throughputPerS": 3.07,
+        "errorRate": 0,
+        "errorStatuses": [],
+        "payloadKB": 0
+      },
+      "concurrency10": {
+        "n": 30,
+        "medianMs": 2590,
+        "p95Ms": 4019,
+        "p99Ms": null,
+        "maxMs": 4145,
+        "throughputPerS": 3.39,
+        "errorRate": 0,
+        "errorStatuses": [],
+        "payloadKB": 0
+      }
+    },
+    {
+      "scenario": "Register a partner (write: create)",
+      "method": "POST",
+      "endpoint": "/api/admin/partners",
+      "sequential": {
+        "n": 5,
+        "medianMs": 233,
+        "p95Ms": 322,
+        "p99Ms": null,
+        "maxMs": 322,
+        "throughputPerS": 3.83,
+        "errorRate": 0,
+        "errorStatuses": [],
+        "payloadKB": 1
+      },
+      "concurrency10": null
+    }
+  ],
+  "code": "before: HEAD 8393c95",
+  "serverMemoryMB": {
+    "WorkingSetMB": 496,
+    "PeakWorkingSetMB": 512
+  }
+}

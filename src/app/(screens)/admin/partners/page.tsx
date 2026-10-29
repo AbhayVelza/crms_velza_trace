@@ -158,7 +158,7 @@ function RegisterForm({ partners }: { partners: Partner[] }) {
           </Field>
         )}
       </div>
-      <Button className="mt-4" onClick={submit} disabled={busy || !type}>
+      <Button className="mt-4" onClick={submit} disabled={!type} loading={busy}>
         {busy ? "Registering…" : "Register"}
       </Button>
       {msg && (

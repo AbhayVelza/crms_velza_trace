@@ -1,0 +1,67 @@
+PASS    UI roles · ADMIN: sidebar shows exactly its menu
+PASS    UI roles · ADMIN: /hq by URL shows "not part of your portal"
+PASS    UI roles · ADMIN: first menu item opens and is marked current
+PASS    UI roles · ADMIN: no sideways scrolling at 1440 px
+PASS    UI roles · ADMIN: reload keeps the session and the page
+PASS    UI roles · ADMIN: back and forward work
+PASS    UI roles · ADMIN: no console errors apart from the sign-in-mode probe
+PASS    UI roles · ADMIN: Sign out ends the session
+PASS    UI roles · TRACE_OWNER: sidebar shows exactly its menu
+PASS    UI roles · TRACE_OWNER: /admin/partners by URL shows "not part of your portal"
+PASS    UI roles · TRACE_OWNER: first menu item opens and is marked current
+PASS    UI roles · TRACE_OWNER: no sideways scrolling at 1440 px
+PASS    UI roles · TRACE_OWNER: reload keeps the session and the page
+PASS    UI roles · TRACE_OWNER: back and forward work
+PASS    UI roles · TRACE_OWNER: no console errors apart from the sign-in-mode probe
+PASS    UI roles · TRACE_OWNER: Sign out ends the session
+PASS    UI roles · OPERATOR: sidebar shows exactly its menu
+PASS    UI roles · OPERATOR: /qc/verify by URL shows "not part of your portal"
+PASS    UI roles · OPERATOR: first menu item opens and is marked current
+PASS    UI roles · OPERATOR: no sideways scrolling at 1440 px
+PASS    UI roles · OPERATOR: reload keeps the session and the page
+PASS    UI roles · OPERATOR: back and forward work
+PASS    UI roles · OPERATOR: no console errors apart from the sign-in-mode probe
+PASS    UI roles · OPERATOR: Sign out ends the session
+PASS    UI roles · QC: sidebar shows exactly its menu
+PASS    UI roles · QC: /operator/new by URL shows "not part of your portal"
+PASS    UI roles · QC: first menu item opens and is marked current
+PASS    UI roles · QC: no sideways scrolling at 1440 px
+PASS    UI roles · QC: reload keeps the session and the page
+PASS    UI roles · QC: back and forward work
+PASS    UI roles · QC: no console errors apart from the sign-in-mode probe
+PASS    UI roles · QC: Sign out ends the session
+PASS    UI roles · SS: sidebar shows exactly its menu
+PASS    UI roles · SS: /admin/partners by URL shows "not part of your portal"
+PASS    UI roles · SS: first menu item opens and is marked current
+PASS    UI roles · SS: no sideways scrolling at 1440 px
+PASS    UI roles · SS: reload keeps the session and the page
+PASS    UI roles · SS: back and forward work
+PASS    UI roles · SS: no console errors apart from the sign-in-mode probe
+PASS    UI roles · SS: Sign out ends the session
+PASS    UI roles · DB: sidebar shows exactly its menu
+PASS    UI roles · DB: /hq/search by URL shows "not part of your portal"
+PASS    UI roles · DB: first menu item opens and is marked current
+PASS    UI roles · DB: no sideways scrolling at 1440 px
+PASS    UI roles · DB: reload keeps the session and the page
+PASS    UI roles · DB: back and forward work
+PASS    UI roles · DB: no console errors apart from the sign-in-mode probe
+PASS    UI roles · DB: Sign out ends the session
+PASS    UI roles · RETAILER: sidebar shows exactly its menu
+PASS    UI roles · RETAILER: /dispatch by URL shows "not part of your portal"
+PASS    UI roles · RETAILER: first menu item opens and is marked current
+PASS    UI roles · RETAILER: no sideways scrolling at 1440 px
+PASS    UI roles · RETAILER: reload keeps the session and the page
+PASS    UI roles · RETAILER: back and forward work
+PASS    UI roles · RETAILER: no console errors apart from the sign-in-mode probe
+PASS    UI roles · RETAILER: Sign out ends the session
+PASS    Search & filters · Partners table lists all 18 QA partners
+PASS    Search & filters · Filter "Distributors and retailers of QA-MH-2026-SS-001 Deccan Super Stockist (3)" shows SS-001's partners only
+PASS    Search & filters · Filter "Retailers of QA-MH-2026-DST-004 Kolhapur Distributors (2)" shows its 2 retailers
+NOT RUN Search & filters · Text search, sorting controls and pagination on the partners table — expected exists?; actual not implemented: a 'Show' filter only; all rows render on one page
+PASS    Search & filters · Available filter options
+PASS    UI mobile · Retailer on a phone: drawer shows its menu
+PASS    UI mobile · Escape closes the drawer; no sideways scrolling
+PASS    UI public · Public page for case 918UWPAFOR00001
+PASS    UI public · Public page for tray 91DA2P1PGA00001
+
+{"PASS":64,"FAIL":0,"BLOCKED":0,"NOT RUN":1,"NEEDS INVESTIGATION":0}

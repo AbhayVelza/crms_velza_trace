@@ -133,8 +133,8 @@ export async function createPrintOrder(userId: string | null, body: unknown) {
       }
     }
 
-    const existing = new Set((await tx.lots.list()).map((l) => l.lotCode));
-    if (lotRows.some((l) => existing.has(l.lotCode))) throw new Error("Duplicate lot code generated — aborting");
+    // Look up only the new codes (indexed), not every lot ever generated.
+    if ((await tx.lots.list({ lotCode: lotRows.map((l) => l.lotCode) })).length) throw new Error("Duplicate lot code generated — aborting");
     await tx.lots.createMany(lotRows);
     await tx.packs.createMany(packRows);
 
@@ -234,7 +234,7 @@ export async function codesForOrder(userId: string | null, printOrderId: string)
   const actor = await loadActor(store, userId);
   requireAction(actor, "printOrder");
   const order = await requireOwnOrder(store, actor, printOrderId);
-  const [lots, batches, packs] = await Promise.all([store.lots.list({ printOrderId }), store.batches.list({ printOrderId }), store.packs.list()]);
+  const [lots, batches, packs] = await Promise.all([store.lots.list({ printOrderId }), store.batches.list({ printOrderId }), store.packs.list({ lotCode: order.lotCodes })]);
   const batchOf = new Map(batches.map((b) => [b.code, b]));
   const byLot = new Map<string, Pack[]>(lots.map((l) => [l.lotCode, []]));
   for (const p of packs) byLot.get(p.lotCode)?.push(p);

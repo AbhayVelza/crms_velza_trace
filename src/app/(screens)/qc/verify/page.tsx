@@ -132,7 +132,7 @@ export default function VerifyPage() {
                 })}
               </ul>
               <div className="flex flex-wrap gap-2">
-                <Button onClick={() => finish("confirm")} disabled={!complete || busy}>
+                <Button onClick={() => finish("confirm")} disabled={!complete || busy} loading={busy}>
                   Confirm → PACKED
                 </Button>
                 <Button variant="secondary" onClick={() => (setLot(null), setScanned([]))} disabled={busy}>

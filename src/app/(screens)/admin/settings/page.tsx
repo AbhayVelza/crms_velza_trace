@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useSession } from "@/components/session";
+import { useAction } from "@/components/useAction";
 import { Button, Card, Field, Input, Loading, Notice, PageTitle, Select } from "@/components/ui";
 import { api, errorText } from "@/lib/client";
 import type { Settings } from "@/lib/core/types";
@@ -14,6 +15,7 @@ export default function SettingsPage() {
   useEffect(() => {
     api<Settings>("/api/admin/settings").then(setS, (e) => setMsg({ tone: "error", text: errorText(e) }));
   }, []);
+  const [saving, runSave] = useAction(save);
 
   if (!s) return msg ? <Notice tone="error">{msg.text}</Notice> : <Loading />;
 
@@ -95,7 +97,7 @@ export default function SettingsPage() {
           </div>
         </Card>
       </div>
-      <Button className="mt-4" onClick={save}>
+      <Button className="mt-4" onClick={runSave} loading={saving}>
         Save settings
       </Button>
     </>

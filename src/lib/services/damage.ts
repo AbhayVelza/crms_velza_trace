@@ -116,13 +116,16 @@ export async function listDamaged(userId: string | null) {
   const actor = await loadActor(store, userId);
   requireAction(actor, "damage");
   const partner = requirePartner(actor);
-  const [lots, packs, moves, users, flavours] = await Promise.all([
-    store.lots.list(),
-    store.packs.list(),
+  // damagedUnits only looks at damaged lots and packs and at the lots of damage reports and damaged packs.
+  const [damagedLots, packs, moves, users, flavours] = await Promise.all([
+    store.lots.list({ status: "DAMAGED" }),
+    store.packs.list({ status: "DAMAGED" }),
     store.movements.list({ type: "DAMAGED" }),
     store.users.list(),
     store.flavours.list(),
   ]);
+  const related = await store.lots.list({ lotCode: [...new Set([...moves.map((m) => m.itemCode.slice(0, 15)), ...packs.map((p) => p.lotCode)])] });
+  const lots = [...new Map([...damagedLots, ...related].map((l) => [l.id, l])).values()];
   const units = damagedUnits(lots, packs, moves).filter((u) => u.partnerId === partner.id);
   const items = units.map((u) => ({
     code: u.code,

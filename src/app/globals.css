@@ -128,9 +128,26 @@
   --shadow-card: 0 1px 2px hsl(var(--shadow-color) / 0.04), 0 1px 1px hsl(var(--shadow-color) / 0.02);
   --shadow-pop: 0 8px 24px -8px hsl(var(--shadow-color) / 0.18);
 
+  /* Motion system. Short, restrained, opacity/transform only; everything collapses under reduced motion
+     (rule at the end of this file). Use the tokens instead of ad-hoc durations:
+     fast = hover/press feedback, base = state changes and entrances, panel = drawers and overlays. */
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --duration-panel: 220ms;
   --ease-out-soft: cubic-bezier(0.2, 0.8, 0.2, 1);
-  --animate-fade-in: fade-in 180ms var(--ease-out-soft) both;
+  --ease-in-out-soft: cubic-bezier(0.4, 0, 0.2, 1);
+  --animate-fade-in: fade-in var(--duration-base) var(--ease-out-soft) both;
   --animate-rise-in: rise-in 200ms var(--ease-out-soft) both;
+  /* Loading indicators wait 150 ms before appearing, so fast loads never flash a spinner. */
+  --animate-fade-in-late: fade-in var(--duration-base) var(--ease-out-soft) 150ms both;
+  /* Skeleton placeholders breathe slowly; static under reduced motion. */
+  --animate-skeleton: skeleton-pulse 1.6s var(--ease-in-out-soft) infinite;
+}
+
+@keyframes skeleton-pulse {
+  50% {
+    opacity: 0.55;
+  }
 }
 
 @keyframes fade-in {

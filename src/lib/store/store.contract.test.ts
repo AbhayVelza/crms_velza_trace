@@ -200,6 +200,36 @@ describe.each(IMPLS)("Store contract: $name", (impl) => {
     expect(await store.partners.get("XX0000")).toBeNull();
   });
 
+  it("filters by 'any of' a list (with equality, null included), in insertion order; an empty list matches nothing", async () => {
+    await store.partners.create({ ...ss, id: "DB0001", type: "DB", name: "DB", phone: "4", parentId: "SS0001" });
+    await store.partners.create(retailer);
+    await store.partners.create({ ...retailer, id: "RT0002", phone: "5", parentId: "DB0001" });
+    expect((await store.partners.list({ id: ["RT0002", "MF0001", "XX0000"] })).map((p) => p.id)).toEqual(["MF0001", "RT0002"]);
+    expect((await store.partners.list({ parentId: ["SS0001", "DB0001"], type: "RETAILER" })).map((p) => p.id)).toEqual(["RT0001", "RT0002"]);
+    expect((await store.partners.list({ parentId: [null, "DB0001"] })).map((p) => p.id)).toEqual(["MF0001", "SS0001", "RT0002"]);
+    expect(await store.partners.list({ id: [] })).toEqual([]);
+    expect(await store.partners.findOne({ type: ["DB", "RETAILER"] })).toMatchObject({ id: "DB0001" });
+
+    // Lots and packs share one table in PostgreSQL: a list on either never returns the other's rows.
+    await store.batches.create(batch("AAA111"));
+    const [a, b] = [lot("91AAA111OR00001"), lot("91AAA111OR00002", { status: "IN_TRANSIT", locationId: "SS0001", inTransitToId: "RT0001" })];
+    await store.lots.createMany([a, b]);
+    await store.packs.createMany([...packs(a), ...packs(b)]);
+    expect((await store.lots.list({ lotCode: [b.lotCode, `${a.lotCode}61`] })).map((l) => l.id)).toEqual([b.lotCode]);
+    expect((await store.packs.list({ lotCode: [a.lotCode, b.lotCode], seq: [1, 4] })).map((p) => p.id)).toEqual([`${a.lotCode}61`, `${a.lotCode}64`, `${b.lotCode}61`, `${b.lotCode}64`]);
+    expect((await store.lots.list({ inTransitToId: ["RT0001"], synced: [true] })).map((l) => l.id)).toEqual([b.lotCode]);
+
+    // The ledger too (the trace timeline reads one item's history this way).
+    for (const [code, type] of [[a.lotCode, "PRINTED"], [b.lotCode, "PRINTED"], ["AAA111", "RECALLED"], [a.lotCode, "VERIFIED"]] as const) {
+      await store.appendMovement({ type, itemKind: code.length === 6 ? "BATCH" : "LOT", itemCode: code, fromId: null, toId: null, fromStatus: null, toStatus: null, userId: null, deviceId: null, invoice: null, note: null });
+    }
+    expect((await store.movements.list({ itemCode: [a.lotCode, "AAA111"] })).map((m) => [m.itemCode, m.type])).toEqual([
+      [a.lotCode, "PRINTED"],
+      ["AAA111", "RECALLED"],
+      [a.lotCode, "VERIFIED"],
+    ]);
+  });
+
   it("updates and deletes; a missing row is NotFound", async () => {
     expect(await store.partners.update("SS0001", { name: "Renamed", active: false })).toMatchObject({ id: "SS0001", name: "Renamed", active: false });
     await expect(store.partners.update("SS0099", { name: "x" })).rejects.toThrow(/not found/);

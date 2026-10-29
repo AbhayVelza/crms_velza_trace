@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { ScanInput } from "@/components/ScanInput";
+import { useAction } from "@/components/useAction";
 import { IconPrinter } from "@/components/icons";
 import { Button, Card, Code, Empty, Field, fmtTime, Input, Notice, PageTitle, Table, Td } from "@/components/ui";
 import { useApi } from "@/components/useApi";
@@ -16,6 +17,7 @@ export default function ReprintPage() {
   const [reason, setReason] = useState("");
   const [msg, setMsg] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
   const [ready, setReady] = useState<string | null>(null);
+  const [reprinting, runSubmit] = useAction(submit);
 
   async function submit() {
     setMsg(null);
@@ -58,7 +60,7 @@ export default function ReprintPage() {
             Reprinting a sticker of a quarantined lot takes the lot out of quarantine and back to QC: it must be verified again
             before it can be dispatched. A quarantined lot that can&apos;t be fixed is voided instead (Void lot).
           </p>
-          <Button className="mt-3" onClick={submit} disabled={!code || !reason.trim()}>
+          <Button className="mt-3" onClick={runSubmit} disabled={!code || !reason.trim()} loading={reprinting}>
             Log reprint
           </Button>
           {msg && (

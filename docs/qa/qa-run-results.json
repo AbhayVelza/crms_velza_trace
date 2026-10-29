@@ -1,0 +1,891 @@
+{
+  "startedAt": "2026-10-28T05:47:24.834Z",
+  "finishedAt": "2026-10-28T05:47:32.006Z",
+  "base": "http://localhost:3300",
+  "dataFile": "data\\qa-mh-2026.json",
+  "summary": {
+    "PASS": 87,
+    "FAIL": 1,
+    "BLOCKED": 0,
+    "NOT RUN": 0,
+    "NEEDS INVESTIGATION": 1
+  },
+  "roleApiMatrix": {
+    "/api/admin/partners": {
+      "ADMIN": 200,
+      "TRACE_OWNER": 403,
+      "OPERATOR": 403,
+      "QC": 403,
+      "SS": 403,
+      "DB": 403,
+      "RETAILER": 403
+    },
+    "/api/admin/users": {
+      "ADMIN": 200,
+      "TRACE_OWNER": 403,
+      "OPERATOR": 403,
+      "QC": 403,
+      "SS": 403,
+      "DB": 403,
+      "RETAILER": 403
+    },
+    "/api/admin/devices": {
+      "ADMIN": 200,
+      "TRACE_OWNER": 403,
+      "OPERATOR": 403,
+      "QC": 403,
+      "SS": 403,
+      "DB": 403,
+      "RETAILER": 403
+    },
+    "/api/admin/pools": {
+      "ADMIN": 200,
+      "TRACE_OWNER": 403,
+      "OPERATOR": 403,
+      "QC": 403,
+      "SS": 403,
+      "DB": 403,
+      "RETAILER": 403
+    },
+    "/api/dashboard": {
+      "ADMIN": 403,
+      "TRACE_OWNER": 200,
+      "OPERATOR": 403,
+      "QC": 403,
+      "SS": 403,
+      "DB": 403,
+      "RETAILER": 403
+    },
+    "/api/alerts": {
+      "ADMIN": 403,
+      "TRACE_OWNER": 200,
+      "OPERATOR": 403,
+      "QC": 403,
+      "SS": 403,
+      "DB": 403,
+      "RETAILER": 403
+    },
+    "/api/scans": {
+      "ADMIN": 403,
+      "TRACE_OWNER": 200,
+      "OPERATOR": 403,
+      "QC": 403,
+      "SS": 403,
+      "DB": 403,
+      "RETAILER": 403
+    },
+    "/api/batches": {
+      "ADMIN": 403,
+      "TRACE_OWNER": 200,
+      "OPERATOR": 200,
+      "QC": 200,
+      "SS": 200,
+      "DB": 200,
+      "RETAILER": 200
+    },
+    "/api/lookup/91ZZZZZZOR00001": {
+      "ADMIN": 403,
+      "TRACE_OWNER": 200,
+      "OPERATOR": 403,
+      "QC": 403,
+      "SS": 403,
+      "DB": 403,
+      "RETAILER": 403
+    },
+    "/api/print-orders": {
+      "ADMIN": 403,
+      "TRACE_OWNER": 403,
+      "OPERATOR": 200,
+      "QC": 403,
+      "SS": 403,
+      "DB": 403,
+      "RETAILER": 403
+    },
+    "/api/reprint": {
+      "ADMIN": 403,
+      "TRACE_OWNER": 403,
+      "OPERATOR": 200,
+      "QC": 403,
+      "SS": 403,
+      "DB": 403,
+      "RETAILER": 403
+    },
+    "/api/devices": {
+      "ADMIN": 200,
+      "TRACE_OWNER": 403,
+      "OPERATOR": 200,
+      "QC": 403,
+      "SS": 403,
+      "DB": 403,
+      "RETAILER": 403
+    },
+    "/api/stock": {
+      "ADMIN": 403,
+      "TRACE_OWNER": 403,
+      "OPERATOR": 200,
+      "QC": 200,
+      "SS": 200,
+      "DB": 200,
+      "RETAILER": 200
+    },
+    "/api/my-partners": {
+      "ADMIN": 403,
+      "TRACE_OWNER": 403,
+      "OPERATOR": 403,
+      "QC": 403,
+      "SS": 200,
+      "DB": 200,
+      "RETAILER": 403
+    },
+    "/api/dispatch": {
+      "ADMIN": 403,
+      "TRACE_OWNER": 403,
+      "OPERATOR": 200,
+      "QC": 403,
+      "SS": 200,
+      "DB": 200,
+      "RETAILER": 403
+    },
+    "/api/damaged": {
+      "ADMIN": 403,
+      "TRACE_OWNER": 403,
+      "OPERATOR": 200,
+      "QC": 403,
+      "SS": 200,
+      "DB": 200,
+      "RETAILER": 200
+    },
+    "/api/bootstrap": {
+      "ADMIN": 200,
+      "TRACE_OWNER": 200,
+      "OPERATOR": 200,
+      "QC": 200,
+      "SS": 200,
+      "DB": 200,
+      "RETAILER": 200
+    },
+    "/api/auth/me": {
+      "ADMIN": 200,
+      "TRACE_OWNER": 200,
+      "OPERATOR": 200,
+      "QC": 200,
+      "SS": 200,
+      "DB": 200,
+      "RETAILER": 200
+    }
+  },
+  "results": [
+    {
+      "id": "QA-001",
+      "area": "Environment",
+      "test": "Server is up and sign-in is ON",
+      "status": "PASS",
+      "expected": "200, sign-in required",
+      "actual": "200 {\"signInRequired\":true}"
+    },
+    {
+      "id": "QA-002",
+      "area": "Environment",
+      "test": "QA run uses its own data file, not data/db.json",
+      "status": "PASS",
+      "expected": "a dedicated file",
+      "actual": "data\\qa-mh-2026.json"
+    },
+    {
+      "id": "QA-003",
+      "area": "Dataset",
+      "test": "All 18 partners present after create-or-find",
+      "status": "PASS",
+      "expected": "18",
+      "actual": "18 (0 created this run)"
+    },
+    {
+      "id": "QA-004",
+      "area": "Dataset",
+      "test": "Count of MANUFACTURER",
+      "status": "PASS",
+      "expected": "1",
+      "actual": "API 1, file 1"
+    },
+    {
+      "id": "QA-005",
+      "area": "Dataset",
+      "test": "Count of SS",
+      "status": "PASS",
+      "expected": "2",
+      "actual": "API 2, file 2"
+    },
+    {
+      "id": "QA-006",
+      "area": "Dataset",
+      "test": "Count of DB",
+      "status": "PASS",
+      "expected": "5",
+      "actual": "API 5, file 5"
+    },
+    {
+      "id": "QA-007",
+      "area": "Dataset",
+      "test": "Count of RETAILER",
+      "status": "PASS",
+      "expected": "10",
+      "actual": "API 10, file 10"
+    },
+    {
+      "id": "QA-008",
+      "area": "Dataset",
+      "test": "Total QA partners (API and data file)",
+      "status": "PASS",
+      "expected": "18",
+      "actual": "API 18, file 18"
+    },
+    {
+      "id": "QA-009",
+      "area": "Dataset",
+      "test": "No duplicate partner IDs",
+      "status": "PASS",
+      "expected": "unique",
+      "actual": "18/18"
+    },
+    {
+      "id": "QA-010",
+      "area": "Dataset",
+      "test": "Every record's type, parent, city, state and PIN verified in API and data file",
+      "status": "PASS",
+      "expected": "18 verified",
+      "actual": "18 verified"
+    },
+    {
+      "id": "QA-011",
+      "area": "Dataset",
+      "test": "No broken parent references",
+      "status": "PASS",
+      "expected": "0",
+      "actual": "0"
+    },
+    {
+      "id": "QA-012",
+      "area": "Dataset",
+      "test": "All records in Maharashtra except SS-002 (one SS per state)",
+      "status": "PASS",
+      "expected": "only SS-002 outside (Goa)",
+      "actual": "QA-MH-2026-SS-002=Goa"
+    },
+    {
+      "id": "QA-013",
+      "area": "Dataset",
+      "test": "Every QA partner has its sign-in(s)",
+      "status": "PASS",
+      "expected": "all present",
+      "actual": "all present"
+    },
+    {
+      "id": "QA-014",
+      "area": "Business rules",
+      "test": "Second Super Stockist in Maharashtra refused",
+      "status": "PASS",
+      "expected": "400 STATE_TAKEN",
+      "actual": "400 STATE_TAKEN"
+    },
+    {
+      "id": "QA-015",
+      "area": "Auth",
+      "test": "API without a session is refused",
+      "status": "PASS",
+      "expected": "401",
+      "actual": "401"
+    },
+    {
+      "id": "QA-016",
+      "area": "Auth",
+      "test": "Page without a session redirects to /login",
+      "status": "PASS",
+      "expected": "307 → /login",
+      "actual": "307"
+    },
+    {
+      "id": "QA-017",
+      "area": "Auth",
+      "test": "Wrong password refused without saying which part was wrong",
+      "status": "PASS",
+      "expected": "401 generic message",
+      "actual": "401 BAD_CREDENTIALS"
+    },
+    {
+      "id": "QA-018",
+      "area": "Auth",
+      "test": "Sign-in locked after 5 wrong passwords (non-existent ID, so no real account is locked)",
+      "status": "PASS",
+      "expected": "6th try 429",
+      "actual": "429,429,429,429,429,429"
+    },
+    {
+      "id": "QA-019",
+      "area": "Auth",
+      "test": "Sign-in returns the right user and partner",
+      "status": "PASS",
+      "expected": "RT0001",
+      "actual": "200 RT0001"
+    },
+    {
+      "id": "QA-020",
+      "area": "Auth",
+      "test": "Session cookie is HttpOnly and SameSite=Lax",
+      "status": "PASS",
+      "expected": "HttpOnly; SameSite=Lax",
+      "actual": "velza_session=[hidden]; Path=/; HttpOnly; SameSite=Lax; Max-Age=43199"
+    },
+    {
+      "id": "QA-021",
+      "area": "Auth",
+      "test": "Sign-out ends the session (old cookie refused)",
+      "status": "PASS",
+      "expected": "logout 200, reuse 401",
+      "actual": "200, 401"
+    },
+    {
+      "id": "QA-022",
+      "area": "Roles",
+      "test": "7 roles × 18 APIs match the permission map (126 requests)",
+      "status": "PASS",
+      "expected": "all as PERMISSIONS says",
+      "actual": "0 mismatches"
+    },
+    {
+      "id": "QA-023",
+      "area": "Roles",
+      "test": "SS batch list is empty (it made no batches)",
+      "status": "PASS",
+      "expected": "[]",
+      "actual": "0 batch(es)"
+    },
+    {
+      "id": "QA-024",
+      "area": "Roles",
+      "test": "DB batch list is empty (it made no batches)",
+      "status": "PASS",
+      "expected": "[]",
+      "actual": "0 batch(es)"
+    },
+    {
+      "id": "QA-025",
+      "area": "Roles",
+      "test": "RETAILER batch list is empty (it made no batches)",
+      "status": "PASS",
+      "expected": "[]",
+      "actual": "0 batch(es)"
+    },
+    {
+      "id": "QA-026",
+      "area": "Roles",
+      "test": "ADMIN bootstrap returns all partners",
+      "status": "PASS",
+      "expected": "≥ 18",
+      "actual": "18"
+    },
+    {
+      "id": "QA-027",
+      "area": "Roles",
+      "test": "TRACE_OWNER bootstrap returns all partners",
+      "status": "PASS",
+      "expected": "≥ 18",
+      "actual": "18"
+    },
+    {
+      "id": "QA-028",
+      "area": "Roles",
+      "test": "OPERATOR bootstrap returns only its own partner",
+      "status": "PASS",
+      "expected": "1",
+      "actual": "1"
+    },
+    {
+      "id": "QA-029",
+      "area": "Roles",
+      "test": "QC bootstrap returns only its own partner",
+      "status": "PASS",
+      "expected": "1",
+      "actual": "1"
+    },
+    {
+      "id": "QA-030",
+      "area": "Roles",
+      "test": "SS bootstrap returns only its own partner",
+      "status": "PASS",
+      "expected": "1",
+      "actual": "1"
+    },
+    {
+      "id": "QA-031",
+      "area": "Roles",
+      "test": "DB bootstrap returns only its own partner",
+      "status": "PASS",
+      "expected": "1",
+      "actual": "1"
+    },
+    {
+      "id": "QA-032",
+      "area": "Roles",
+      "test": "RETAILER bootstrap returns only its own partner",
+      "status": "PASS",
+      "expected": "1",
+      "actual": "1"
+    },
+    {
+      "id": "QA-033",
+      "area": "Security",
+      "test": "TRACE_OWNER cannot create, edit or delete partners (server-side)",
+      "status": "PASS",
+      "expected": "403 / 403 / 403",
+      "actual": "403 / 403 / 403"
+    },
+    {
+      "id": "QA-034",
+      "area": "Security",
+      "test": "OPERATOR cannot create, edit or delete partners (server-side)",
+      "status": "PASS",
+      "expected": "403 / 403 / 403",
+      "actual": "403 / 403 / 403"
+    },
+    {
+      "id": "QA-035",
+      "area": "Security",
+      "test": "SS cannot create, edit or delete partners (server-side)",
+      "status": "PASS",
+      "expected": "403 / 403 / 403",
+      "actual": "403 / 403 / 403"
+    },
+    {
+      "id": "QA-036",
+      "area": "Security",
+      "test": "DB cannot create, edit or delete partners (server-side)",
+      "status": "PASS",
+      "expected": "403 / 403 / 403",
+      "actual": "403 / 403 / 403"
+    },
+    {
+      "id": "QA-037",
+      "area": "Security",
+      "test": "RETAILER cannot create, edit or delete partners (server-side)",
+      "status": "PASS",
+      "expected": "403 / 403 / 403",
+      "actual": "403 / 403 / 403"
+    },
+    {
+      "id": "QA-038",
+      "area": "Security",
+      "test": "Refused writes left the record unchanged",
+      "status": "PASS",
+      "expected": "unchanged",
+      "actual": "unchanged"
+    },
+    {
+      "id": "QA-039",
+      "area": "Security",
+      "test": "No record was created by refused requests",
+      "status": "PASS",
+      "expected": "0",
+      "actual": "0"
+    },
+    {
+      "id": "QA-040",
+      "area": "Security",
+      "test": "Admin settings are not readable without signing in",
+      "status": "FAIL",
+      "expected": "401/403",
+      "actual": "200; fields: notReceivedThresholdDays, demoMode, demoThresholdMinutes, lotSticker, packSticker, publicBaseUrl, poolIssueSize, poolRefillBelow, defaultCountry, id"
+    },
+    {
+      "id": "QA-041",
+      "area": "Security",
+      "test": "Non-admin cannot change settings (PUT)",
+      "status": "PASS",
+      "expected": "403",
+      "actual": "403 FORBIDDEN"
+    },
+    {
+      "id": "QA-042",
+      "area": "Security",
+      "test": "Cross-site write refused",
+      "status": "PASS",
+      "expected": "403",
+      "actual": "403 FORBIDDEN"
+    },
+    {
+      "id": "QA-043",
+      "area": "Security",
+      "test": "Non-JSON body refused (blocks plain HTML form posts)",
+      "status": "PASS",
+      "expected": "415",
+      "actual": "415"
+    },
+    {
+      "id": "QA-044",
+      "area": "Security",
+      "test": "Malformed JSON refused",
+      "status": "PASS",
+      "expected": "400 BAD_JSON",
+      "actual": "400 BAD_JSON"
+    },
+    {
+      "id": "QA-045",
+      "area": "Security",
+      "test": "Body over 256 KB refused",
+      "status": "PASS",
+      "expected": "413",
+      "actual": "413"
+    },
+    {
+      "id": "QA-046",
+      "area": "Hierarchy",
+      "test": "SS-001 sees exactly DST-001..003 (not SS-002's distributors or any retailer)",
+      "status": "PASS",
+      "expected": "DST-001..003",
+      "actual": "DB0001, DB0002, DB0003"
+    },
+    {
+      "id": "QA-047",
+      "area": "Hierarchy",
+      "test": "SS-002 sees exactly DST-004..005",
+      "status": "PASS",
+      "expected": "DST-004..005",
+      "actual": "DB0004, DB0005"
+    },
+    {
+      "id": "QA-048",
+      "area": "Hierarchy",
+      "test": "Each distributor sees and can dispatch to exactly its 2 retailers",
+      "status": "PASS",
+      "expected": "2 own retailers each",
+      "actual": "DST-001: RT0001+RT0002; DST-002: RT0003+RT0004; DST-003: RT0005+RT0006; DST-004: RT0007+RT0008; DST-005: RT0009+RT0010"
+    },
+    {
+      "id": "QA-049",
+      "area": "Hierarchy",
+      "test": "The plant can dispatch to both Super Stockists (no plant → SS assignment exists)",
+      "status": "PASS",
+      "expected": "SS-001, SS-002",
+      "actual": "SS0001, SS0002"
+    },
+    {
+      "id": "QA-050",
+      "area": "Hierarchy",
+      "test": "A retailer has no partner list",
+      "status": "PASS",
+      "expected": "403",
+      "actual": "403"
+    },
+    {
+      "id": "QA-051",
+      "area": "Security",
+      "test": "Retailer cannot trace codes (HQ only)",
+      "status": "PASS",
+      "expected": "403",
+      "actual": "403"
+    },
+    {
+      "id": "QA-052",
+      "area": "Business rules",
+      "test": "Partner tier cannot be changed",
+      "status": "PASS",
+      "expected": "400 TYPE_LOCKED",
+      "actual": "400 TYPE_LOCKED"
+    },
+    {
+      "id": "QA-053",
+      "area": "Business rules",
+      "test": "Distributor cannot be assigned to a retailer",
+      "status": "PASS",
+      "expected": "400 BAD_PARENT",
+      "actual": "400 BAD_PARENT"
+    },
+    {
+      "id": "QA-054",
+      "area": "Business rules",
+      "test": "Parent that does not exist refused",
+      "status": "PASS",
+      "expected": "400 BAD_PARENT",
+      "actual": "400 BAD_PARENT"
+    },
+    {
+      "id": "QA-055",
+      "area": "Business rules",
+      "test": "SS cannot move into a state that already has one",
+      "status": "PASS",
+      "expected": "400 STATE_TAKEN",
+      "actual": "400 STATE_TAKEN"
+    },
+    {
+      "id": "QA-056",
+      "area": "Validation",
+      "test": "Unsupported status value refused",
+      "status": "PASS",
+      "expected": "400",
+      "actual": "400 VALIDATION"
+    },
+    {
+      "id": "QA-057",
+      "area": "Validation",
+      "test": "Unexpected fields (id, createdBy) are ignored",
+      "status": "PASS",
+      "expected": "200, id/createdBy unchanged",
+      "actual": "200, createdBy=AD0001"
+    },
+    {
+      "id": "QA-058",
+      "area": "Validation",
+      "test": "Registration refuses empty name",
+      "status": "PASS",
+      "expected": "400 VALIDATION",
+      "actual": "400 VALIDATION"
+    },
+    {
+      "id": "QA-059",
+      "area": "Validation",
+      "test": "Registration refuses missing phone",
+      "status": "PASS",
+      "expected": "400 VALIDATION",
+      "actual": "400 VALIDATION"
+    },
+    {
+      "id": "QA-060",
+      "area": "Validation",
+      "test": "Registration refuses bad email",
+      "status": "PASS",
+      "expected": "400 BAD_EMAIL",
+      "actual": "400 BAD_EMAIL"
+    },
+    {
+      "id": "QA-061",
+      "area": "Validation",
+      "test": "Registration refuses bad phone",
+      "status": "PASS",
+      "expected": "400 BAD_PHONE",
+      "actual": "400 BAD_PHONE"
+    },
+    {
+      "id": "QA-062",
+      "area": "Validation",
+      "test": "Registration refuses 5-digit PIN",
+      "status": "PASS",
+      "expected": "400 BAD_PINCODE",
+      "actual": "400 BAD_PINCODE"
+    },
+    {
+      "id": "QA-063",
+      "area": "Validation",
+      "test": "Registration refuses no state",
+      "status": "PASS",
+      "expected": "400 BAD_STATE",
+      "actual": "400 BAD_STATE"
+    },
+    {
+      "id": "QA-064",
+      "area": "Validation",
+      "test": "Registration refuses state not in India",
+      "status": "PASS",
+      "expected": "400 BAD_STATE",
+      "actual": "400 BAD_STATE"
+    },
+    {
+      "id": "QA-065",
+      "area": "Validation",
+      "test": "Registration refuses name over 100 characters",
+      "status": "PASS",
+      "expected": "400 VALIDATION",
+      "actual": "400 VALIDATION"
+    },
+    {
+      "id": "QA-066",
+      "area": "Validation",
+      "test": "Registration refuses unknown tier",
+      "status": "PASS",
+      "expected": "400 VALIDATION",
+      "actual": "400 VALIDATION"
+    },
+    {
+      "id": "QA-067",
+      "area": "Validation",
+      "test": "Registration refuses weak password",
+      "status": "PASS",
+      "expected": "400 WEAK_PASSWORD",
+      "actual": "400 WEAK_PASSWORD"
+    },
+    {
+      "id": "QA-068",
+      "area": "Validation",
+      "test": "Registration refuses duplicate phone",
+      "status": "PASS",
+      "expected": "400 DUPLICATE",
+      "actual": "400 DUPLICATE"
+    },
+    {
+      "id": "QA-069",
+      "area": "Validation",
+      "test": "PIN code from another state (Delhi 110001 for Maharashtra)",
+      "status": "NEEDS INVESTIGATION",
+      "expected": "refused, if PIN/state consistency is required",
+      "actual": "200 — accepted: only the 6-digit format is checked"
+    },
+    {
+      "id": "QA-070",
+      "area": "Concurrency",
+      "test": "Two identical registrations at once: exactly one is created",
+      "status": "PASS",
+      "expected": "1 created, 1 DUPLICATE",
+      "actual": "400 DUPLICATE / 200 "
+    },
+    {
+      "id": "QA-071",
+      "area": "Lifecycle",
+      "test": "Edit persists (re-read)",
+      "status": "PASS",
+      "expected": "contactPerson updated",
+      "actual": "200, QA Disposable Edited"
+    },
+    {
+      "id": "QA-072",
+      "area": "Lifecycle",
+      "test": "Deactivating a partner stops its open session and its sign-in",
+      "status": "PASS",
+      "expected": "session 401, sign-in refused",
+      "actual": "session 401, sign-in 403 DISABLED"
+    },
+    {
+      "id": "QA-073",
+      "area": "Lifecycle",
+      "test": "Partner with assigned partners cannot be deleted",
+      "status": "PASS",
+      "expected": "400",
+      "actual": "400 IN_USE: Cannot delete: still used by 3 assigned partner(s), 4 movement(s), 2 scan(s), sign-in DB0001 (2 movement(s), 2 scan(s)) — untick Active instead"
+    },
+    {
+      "id": "QA-074",
+      "area": "Lifecycle",
+      "test": "Disposable partner without history is deleted with its sign-in",
+      "status": "PASS",
+      "expected": "deleted, sign-in removed",
+      "actual": "200, listed=false, login=false"
+    },
+    {
+      "id": "QA-075",
+      "area": "Traceability",
+      "test": "Scan chain already created by an earlier run (not repeated); re-verifying",
+      "status": "PASS",
+      "expected": "existing QA print order",
+      "actual": "918UWPAFOR00001"
+    },
+    {
+      "id": "QA-076",
+      "area": "Traceability",
+      "test": "HQ trace of the case shows every step in order",
+      "status": "PASS",
+      "expected": "GENERATED → PRINTED → VERIFIED → DISPATCHED → RECEIVED → DISPATCHED → RECEIVED → DISPATCHED → RECEIVED → OPENED",
+      "actual": "GENERATED → PRINTED → VERIFIED → DISPATCHED → RECEIVED → DISPATCHED → RECEIVED → DISPATCHED → RECEIVED → OPENED"
+    },
+    {
+      "id": "QA-077",
+      "area": "Traceability",
+      "test": "Trace shows location, status and batch",
+      "status": "PASS",
+      "expected": "OPENED at RTL-001",
+      "actual": "OPENED at QA-MH-2026-RTL-001 Kothrud Fresh Mart"
+    },
+    {
+      "id": "QA-078",
+      "area": "Audit",
+      "test": "Every movement in the trace names the person",
+      "status": "PASS",
+      "expected": "10",
+      "actual": "10"
+    },
+    {
+      "id": "QA-079",
+      "area": "Traceability",
+      "test": "Pack trace shows its parent case",
+      "status": "PASS",
+      "expected": "918UWPAFOR00001",
+      "actual": "200 918UWPAFOR00001"
+    },
+    {
+      "id": "QA-080",
+      "area": "Security",
+      "test": "Public QR check shows no business data",
+      "status": "PASS",
+      "expected": "no invoices, partners or contacts",
+      "actual": "200 Genuine Velza product"
+    },
+    {
+      "id": "QA-081",
+      "area": "Roles",
+      "test": "Operator batch list holds only its own plant's batches",
+      "status": "PASS",
+      "expected": "all MF0001",
+      "actual": "2: MF0001"
+    },
+    {
+      "id": "QA-082",
+      "area": "Traceability",
+      "test": "Unknown code → UNKNOWN_CODE (safe message)",
+      "status": "PASS",
+      "expected": "found:false UNKNOWN_CODE",
+      "actual": "200 UNKNOWN_CODE"
+    },
+    {
+      "id": "QA-083",
+      "area": "Security",
+      "test": "Malformed code handled safely (no 500, no echo as HTML)",
+      "status": "PASS",
+      "expected": "JSON, < 500",
+      "actual": "200 {\"found\":false,\"code\":\"script>\",\"result\":\"UNKNOWN_CODE\",\"mes"
+    },
+    {
+      "id": "QA-084",
+      "area": "Security",
+      "test": "Injection-style code on the public check handled safely",
+      "status": "PASS",
+      "expected": "< 500",
+      "actual": "200 {\"code\":\"'; DROP TABLE codes;--\",\"product\":\"Velza Beverage\","
+    },
+    {
+      "id": "QA-085",
+      "area": "Audit",
+      "test": "Scan audit records failures too (wrong receiver, unknown code, blocked)",
+      "status": "PASS",
+      "expected": "both present",
+      "actual": "UNKNOWN_CODE, WRONG_DESTINATION, BLOCKED_CODE, DUPLICATE_RECEIPT, WRONG_RECEIVER, WRONG_LOT"
+    },
+    {
+      "id": "QA-086",
+      "area": "Audit",
+      "test": "No API can delete or edit the scan audit",
+      "status": "PASS",
+      "expected": "405 / 405",
+      "actual": "405 / 405"
+    },
+    {
+      "id": "QA-087",
+      "area": "Reporting",
+      "test": "Dashboard lot total equals the lots in the data file",
+      "status": "PASS",
+      "expected": "2",
+      "actual": "2"
+    },
+    {
+      "id": "QA-088",
+      "area": "Integrity",
+      "test": "No orphan partners, sign-ins, packs or locations; every parent is an allowed tier",
+      "status": "PASS",
+      "expected": "0 each",
+      "actual": "parents 0, users 0, packs 0, locations 0, tier 0"
+    },
+    {
+      "id": "QA-089",
+      "area": "Integrity",
+      "test": "No pre-existing sign-in was removed by this run",
+      "status": "PASS",
+      "expected": "0 removed",
+      "actual": "0 removed"
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 // HQ traceability: search + timeline, public lookup, dashboard, alerts, stock, batch report, recall.
 
 import { z } from "zod";
-import { computeAlerts, formatAge, ageMs, notReceivedThresholdMs, type InTransitUnit } from "@/lib/core/alerts";
+import { computeAlerts, formatAge, ageMs, notReceivedThresholdMs, type ComputeAlertsInput, type InTransitUnit } from "@/lib/core/alerts";
 import { extractScannedCode } from "@/lib/core/codes";
 import { publicStatus, recallPatch } from "@/lib/core/rules";
 import { ITEM_STATUSES, PARTNER_TYPE_LABELS, type ItemStatus, type Lot, type Movement, type Pack, type Partner } from "@/lib/core/types";
@@ -11,8 +11,17 @@ import { badRequest, findItem, isVisible, loadActor, logScan, notFound, nowIso, 
 
 export const recallSchema = z.object({ batchCode: z.string(), reason: z.string() });
 
-async function names(tx: StoreTx) {
-  const [partners, users, devices, flavours] = await Promise.all([tx.partners.list(), tx.users.list(), tx.devices.list(), tx.flavours.list()]);
+type Ids = (string | null | undefined)[];
+const uniqueIds = (ids: Ids) => [...new Set(ids.filter((x): x is string => !!x))];
+
+/** Display names. `only` reads just the partners, users and devices a response refers to (one query each). */
+async function names(tx: StoreTx, only?: { partners: Ids; users: Ids; devices: Ids }) {
+  const [partners, users, devices, flavours] = await Promise.all([
+    tx.partners.list(only && { id: uniqueIds(only.partners) }),
+    tx.users.list(only && { id: uniqueIds(only.users) }),
+    tx.devices.list(only && { id: uniqueIds(only.devices) }),
+    tx.flavours.list(),
+  ]);
   return {
     partners,
     partner: (id: string | null | undefined) => partnerName(partners, id),
@@ -32,67 +41,80 @@ function locationLabel(partners: Partner[], item: { status: ItemStatus; location
 
 export async function lookup(userId: string | null, rawCode: string) {
   const code = extractScannedCode(rawCode);
-  return getStore().transaction(async (tx) => {
-    const actor = await loadActor(tx, userId);
-    requireAction(actor, "search");
-    const found = await findItem(tx, code, actor.partner?.id ?? null);
-    if (!found.ok) {
-      await logScan(tx, { context: "LOOKUP", code, actor, ok: false, result: found.code, message: found.message });
-      return { found: false as const, code, result: found.code, message: found.message };
-    }
-    const { item } = found;
-    const n = await names(tx);
-    const batch = await tx.batches.findOne({ code: item.lot.batchCode });
-    const codes = item.kind === "LOT" ? [item.lot.lotCode] : [item.lot.lotCode, item.pack!.packCode];
-    const movements = (await tx.movements.list()).filter((m) => codes.includes(m.itemCode) || (m.itemKind === "BATCH" && m.itemCode === item.lot.batchCode));
-    const timeline = movements
-      .sort((a, b) => a.at.localeCompare(b.at))
-      .map((m: Movement) => ({
-        at: m.at,
-        event: m.type,
-        itemCode: m.itemCode,
-        itemKind: m.itemKind,
-        from: n.partner(m.fromId),
-        to: n.partner(m.toId),
-        fromStatus: m.fromStatus,
-        toStatus: m.toStatus,
-        user: n.user(m.userId),
-        device: n.device(m.deviceId),
-        invoice: m.invoice,
-        note: m.note,
-      }));
-    const current = item.kind === "LOT" ? item.lot : item.pack!;
-    const packs = await tx.packs.list({ lotCode: item.lot.lotCode });
-    await logScan(tx, { context: "LOOKUP", code, actor, ok: true, result: "OK", message: `${item.kind} ${current.status}` });
-    return {
-      found: true as const,
-      code,
-      kind: item.kind,
-      status: current.status,
-      location: locationLabel(n.partners, current),
-      locationTier: n.partners.find((p) => p.id === current.locationId)?.type ?? null,
-      quarantineReason: item.lot.quarantineReason,
-      batch: batch && {
-        code: batch.code,
-        flavour: n.flavour(batch.flavour),
-        mfgDate: batch.mfgDate,
-        expiryDate: batch.expiryDate,
-        status: batch.status,
-        manufacturer: n.partner(batch.manufacturerId),
-      },
-      parent:
-        item.kind === "PACK"
-          ? { code: item.lot.lotCode, status: item.lot.status, lotType: item.lot.lotType, location: locationLabel(n.partners, item.lot) }
-          : null,
-      lot: { code: item.lot.lotCode, lotType: item.lot.lotType, packSize: item.lot.packSize },
-      children:
-        item.kind === "LOT"
-          ? packs.sort((a, b) => a.seq - b.seq).map((p) => ({ code: p.packCode, seq: p.seq, status: p.status, location: locationLabel(n.partners, p) }))
-          : [],
-      timeline,
-      reprints: (await tx.reprints.list()).filter((r) => codes.includes(r.code)).map((r) => ({ ...r, userName: n.user(r.userId) })),
-    };
+  // Reads see the latest committed data; the audit scan is then appended on its own (one short transaction).
+  // In one serializable transaction, concurrent lookups of a code each read the history the others append
+  // their scan to, and PostgreSQL aborted them (serialization failures under load, DEF-002 re-test).
+  const store = getStore();
+  const actor = await loadActor(store, userId);
+  requireAction(actor, "search");
+  const found = await findItem(store, code, actor.partner?.id ?? null);
+  if (!found.ok) {
+    await logScan(store, { context: "LOOKUP", code, actor, ok: false, result: found.code, message: found.message });
+    return { found: false as const, code, result: found.code, message: found.message };
+  }
+  const { item } = found;
+  const batch = await store.batches.findOne({ code: item.lot.batchCode });
+  const codes = item.kind === "LOT" ? [item.lot.lotCode] : [item.lot.lotCode, item.pack!.packCode];
+  // This item's history only (its lot, its pack, batch-wide events such as a recall), never the whole ledger.
+  const [itemMoves, batchMoves, reprints, packs] = await Promise.all([
+    store.movements.list({ itemCode: codes }),
+    store.movements.list({ itemKind: "BATCH", itemCode: item.lot.batchCode }),
+    store.reprints.list({ code: codes }),
+    store.packs.list({ lotCode: item.lot.lotCode }),
+  ]);
+  const movements = [...itemMoves, ...batchMoves];
+  const at = (x: { locationId: string | null; inTransitToId: string | null }) => [x.locationId, x.inTransitToId];
+  const n = await names(store, {
+    partners: [...movements.flatMap((m) => [m.fromId, m.toId]), ...at(item.lot), ...(item.pack ? at(item.pack) : []), ...packs.flatMap(at), batch?.manufacturerId],
+    users: [...movements.map((m) => m.userId), ...reprints.map((r) => r.userId)],
+    devices: movements.map((m) => m.deviceId),
   });
+  const timeline = movements
+    .sort((a, b) => a.at.localeCompare(b.at))
+    .map((m: Movement) => ({
+      at: m.at,
+      event: m.type,
+      itemCode: m.itemCode,
+      itemKind: m.itemKind,
+      from: n.partner(m.fromId),
+      to: n.partner(m.toId),
+      fromStatus: m.fromStatus,
+      toStatus: m.toStatus,
+      user: n.user(m.userId),
+      device: n.device(m.deviceId),
+      invoice: m.invoice,
+      note: m.note,
+    }));
+  const current = item.kind === "LOT" ? item.lot : item.pack!;
+  await logScan(store, { context: "LOOKUP", code, actor, ok: true, result: "OK", message: `${item.kind} ${current.status}` });
+  return {
+    found: true as const,
+    code,
+    kind: item.kind,
+    status: current.status,
+    location: locationLabel(n.partners, current),
+    locationTier: n.partners.find((p) => p.id === current.locationId)?.type ?? null,
+    quarantineReason: item.lot.quarantineReason,
+    batch: batch && {
+      code: batch.code,
+      flavour: n.flavour(batch.flavour),
+      mfgDate: batch.mfgDate,
+      expiryDate: batch.expiryDate,
+      status: batch.status,
+      manufacturer: n.partner(batch.manufacturerId),
+    },
+    parent:
+      item.kind === "PACK"
+        ? { code: item.lot.lotCode, status: item.lot.status, lotType: item.lot.lotType, location: locationLabel(n.partners, item.lot) }
+        : null,
+    lot: { code: item.lot.lotCode, lotType: item.lot.lotType, packSize: item.lot.packSize },
+    children:
+      item.kind === "LOT"
+        ? packs.sort((a, b) => a.seq - b.seq).map((p) => ({ code: p.packCode, seq: p.seq, status: p.status, location: locationLabel(n.partners, p) }))
+        : [],
+    timeline,
+    reprints: reprints.map((r) => ({ ...r, userName: n.user(r.userId) })),
+  };
 }
 
 /** Public QR page: safe fields only, no partners, invoices or history. Logged in the scan audit. */
@@ -155,20 +177,31 @@ function inTransitUnits(lots: Lot[], packs: Pack[], lotByCode: Map<string, Lot>)
   return units;
 }
 
+/** Only damage on synced (visible) lots; the code's first 15 characters are its lot code. */
+const visibleDamage = (damaged: Movement[], lotByCode: Map<string, Lot>) => damaged.filter((m) => lotByCode.has(m.itemCode.slice(0, 15)));
+
+async function namedAlerts(tx: StoreTx, input: Omit<ComputeAlertsInput, "now">) {
+  const list = computeAlerts({ ...input, now: new Date() });
+  const n = await names(tx, { partners: list.map((a) => a.partnerId), users: list.map((a) => a.userId), devices: [] });
+  return list.map((a) => ({ ...a, partner: n.partner(a.partnerId), user: n.user(a.userId) }));
+}
+
 export async function alerts(userId: string | null) {
   const store = getStore();
   const actor = await loadActor(store, userId);
   requireAction(actor, "dashboard");
-  const { lots, packs, lotByCode } = await visibleItems(store);
-  const [scans, settings, damaged] = await Promise.all([store.scans.list(), store.getSettings(), store.movements.list({ type: "DAMAGED" })]);
-  const n = await names(store);
-  // Only damage on synced (visible) lots; the code's first 15 characters are its lot code.
-  const damageReports = damaged.filter((m) => lotByCode.has(m.itemCode.slice(0, 15)));
-  return computeAlerts({ scans, inTransit: inTransitUnits(lots, packs, lotByCode), damageReports, settings, now: new Date() }).map((a) => ({
-    ...a,
-    partner: n.partner(a.partnerId),
-    user: n.user(a.userId),
-  }));
+  // Only what can raise an alert: units in transit, failed scans and damage reports — not every lot and pack.
+  const [lots, packs, scans, settings, damaged] = await Promise.all([
+    store.lots.list({ status: "IN_TRANSIT", synced: true }),
+    store.packs.list({ status: "IN_TRANSIT" }),
+    store.scans.list({ ok: false }),
+    store.getSettings(),
+    store.movements.list({ type: "DAMAGED" }),
+  ]);
+  // The visible lots those packs and damage reports belong to.
+  const related = await store.lots.list({ lotCode: uniqueIds([...packs.map((p) => p.lotCode), ...damaged.map((m) => m.itemCode.slice(0, 15))]), synced: true });
+  const lotByCode = new Map(related.map((l) => [l.lotCode, l]));
+  return namedAlerts(store, { scans, inTransit: inTransitUnits(lots, packs, lotByCode), damageReports: visibleDamage(damaged, lotByCode), settings });
 }
 
 /**
@@ -196,29 +229,38 @@ export async function dashboard(userId: string | null) {
   const actor = await loadActor(store, userId);
   requireAction(actor, "dashboard");
   const { lots, packs, lotByCode } = await visibleItems(store);
-  const [settings, damageReports] = await Promise.all([store.getSettings(), store.movements.list({ type: "DAMAGED" })]);
+  const [settings, damageReports, failedScans] = await Promise.all([store.getSettings(), store.movements.list({ type: "DAMAGED" }), store.scans.list({ ok: false })]);
   const n = await names(store);
   const now = new Date();
   const damaged = damagedUnits(lots, packs, damageReports);
 
-  const countBy = (rows: { status: ItemStatus }[]) =>
-    Object.fromEntries(ITEM_STATUSES.map((s) => [s, rows.filter((r) => r.status === s).length]).filter(([, c]) => c)) as Record<string, number>;
+  const countBy = (rows: { status: ItemStatus }[]) => {
+    const counts = new Map<ItemStatus, number>();
+    for (const r of rows) counts.set(r.status, (counts.get(r.status) ?? 0) + 1);
+    return Object.fromEntries(ITEM_STATUSES.filter((s) => counts.has(s)).map((s) => [s, counts.get(s)!])) as Record<string, number>;
+  };
 
+  // Grouped by location once: scanning every lot and pack for each partner grew with partners × codes.
+  const lotsAt = Map.groupBy(lots, (l) => l.locationId);
+  const packsAt = Map.groupBy(packs, (p) => p.locationId);
+  const damagedAt = Map.groupBy(damaged, (u) => u.partnerId);
   const stock = n.partners
     .map((p) => {
       // Cases and trays count whether they were opened or not, damaged ones too.
-      const c = stockCounts(p.id, lots, packs, lotByCode);
-      const d = damagedCounts(damaged.filter((u) => u.partnerId === p.id));
+      const c = stockCounts(p.id, lotsAt.get(p.id) ?? [], packsAt.get(p.id) ?? [], lotByCode);
+      const d = damagedCounts(damagedAt.get(p.id) ?? []);
       return { partnerId: p.id, partner: p.name, tier: p.type, tierLabel: PARTNER_TYPE_LABELS[p.type], ...c, damaged: d };
     })
     .filter((s) => s.cases || s.trays || s.loosePacks || s.damaged.cases || s.damaged.trays || s.damaged.packs);
 
   const threshold = notReceivedThresholdMs(settings);
-  const inTransit = inTransitUnits(lots, packs, lotByCode)
+  const units = inTransitUnits(lots, packs, lotByCode);
+  const inTransit = units
     .map((u) => ({ ...u, from: n.partner(u.fromId), to: n.partner(u.toId), age: formatAge(ageMs(u.dispatchedAt, now)), overdue: ageMs(u.dispatchedAt, now) > threshold }))
     .sort((a, b) => a.dispatchedAt.localeCompare(b.dispatchedAt));
 
-  const allAlerts = await alerts(userId);
+  // The same alerts as GET /api/alerts, from the data already read here (not read a second time).
+  const allAlerts = await namedAlerts(store, { scans: failedScans, inTransit: units, damageReports: visibleDamage(damageReports, lotByCode), settings });
   const alertCounts = allAlerts.reduce<Record<string, number>>((acc, a) => ((acc[a.type] = (acc[a.type] ?? 0) + 1), acc), {});
   const unsyncedLots = (await store.lots.list({ synced: false })).length;
 
@@ -242,13 +284,22 @@ export async function myStock(userId: string | null) {
   requireAction(actor, "stock");
   const partner = requirePartner(actor);
   const n = await names(store);
-  const lots = (await store.lots.list()).filter((l) => isVisible(l, partner.id));
-  const lotByCode = new Map(lots.map((l) => [l.lotCode, l]));
-  const packs = (await store.packs.list()).filter((p) => lotByCode.get(p.lotCode)?.status === "OPENED");
+  // Only what is here or on its way here (indexed by location / destination), never every lot and pack.
+  const [lotsHere, lotsIncoming, packsHere, packsIncoming, wholeReports] = await Promise.all([
+    store.lots.list({ locationId: partner.id }),
+    store.lots.list({ inTransitToId: partner.id }),
+    store.packs.list({ locationId: partner.id }),
+    store.packs.list({ inTransitToId: partner.id }),
+    store.movements.list({ type: "DAMAGED", itemKind: "LOT", fromId: partner.id }),
+  ]);
+  const packLots = await store.lots.list({ lotCode: uniqueIds([...packsHere, ...packsIncoming].map((p) => p.lotCode)) });
+  const visible = (ls: Lot[]) => ls.filter((l) => isVisible(l, partner.id));
+  const lotByCode = new Map([...visible(packLots), ...visible(lotsHere), ...visible(lotsIncoming)].map((l) => [l.lotCode, l]));
+  const once = <R extends { id: string }>(rows: R[]) => [...new Map(rows.map((r) => [r.id, r])).values()];
+  const lots = once([...visible(lotsHere), ...visible(lotsIncoming)]);
+  const packs = once([...packsHere, ...packsIncoming]).filter((p) => lotByCode.get(p.lotCode)?.status === "OPENED");
   // An opened lot reported damaged here as a whole leaves stock with its packs.
-  const reportedWhole = new Set(
-    (await store.movements.list({ type: "DAMAGED" })).filter((m) => m.itemKind === "LOT" && m.fromId === partner.id).map((m) => m.itemCode),
-  );
+  const reportedWhole = new Set(wholeReports.map((m) => m.itemCode));
   const view = (l: Lot) => ({ code: l.lotCode, kind: "LOT" as const, lotType: l.lotType, flavour: n.flavour(l.flavour), batchCode: l.batchCode, status: l.status, synced: l.synced, from: n.partner(l.locationId), to: n.partner(l.inTransitToId), dispatchedAt: l.dispatchedAt });
   const packView = (p: Pack) => {
     const l = lotByCode.get(p.lotCode)!;
@@ -280,20 +331,23 @@ export async function listBatches(userId: string | null) {
   const actor = await loadActor(store, userId);
   const isHq = actor.partner === null;
   if (isHq) requireAction(actor, "dashboard");
-  const n = await names(store);
-  const [batches, lots, reprints] = await Promise.all([store.batches.list(), store.lots.list(), store.reprints.list()]);
+  const batches = await store.batches.list(isHq ? { synced: true } : { manufacturerId: actor.partner!.id });
+  const [lots, reprints] = await Promise.all([store.lots.list({ batchCode: batches.map((b) => b.code) }), store.reprints.list()]);
+  const n = await names(store, { partners: batches.map((b) => b.manufacturerId), users: [], devices: [] });
+  // Grouped once: filtering every lot for each batch grew with batches × lots.
+  const lotsOf = Map.groupBy(lots, (l) => l.batchCode);
+  const reprintsOf = Map.groupBy(reprints, (r) => r.code.slice(2, 8));
   return batches
-    .filter((b) => (isHq ? b.synced : b.manufacturerId === actor.partner!.id))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .map((b) => {
-      const bl = lots.filter((l) => l.batchCode === b.code);
+      const bl = lotsOf.get(b.code) ?? [];
       return {
         ...b,
         flavourName: n.flavour(b.flavour),
         manufacturer: n.partner(b.manufacturerId),
         lots: bl.length,
         statusCounts: bl.reduce<Record<string, number>>((acc, l) => ((acc[l.status] = (acc[l.status] ?? 0) + 1), acc), {}),
-        reprints: reprints.filter((r) => r.code.slice(2, 8) === b.code).length,
+        reprints: reprintsOf.get(b.code)?.length ?? 0,
       };
     });
 }
@@ -307,7 +361,7 @@ export async function batchReport(userId: string | null, batchCode: string) {
   const n = await names(store);
   const lots = (await store.lots.list({ batchCode })).sort((a, b) => a.lotNumber - b.lotNumber);
   const lotCodes = new Set(lots.map((l) => l.lotCode));
-  const movements = (await store.movements.list()).filter((m) => lotCodes.has(m.itemCode));
+  const movements = await store.movements.list({ itemCode: [...lotCodes] });
   const ever = (type: Movement["type"]) => new Set(movements.filter((m) => m.type === type).map((m) => m.itemCode)).size;
   const reprints = (await store.reprints.list()).filter((r) => lotCodes.has(r.code.slice(0, 15)));
   return {
@@ -364,7 +418,8 @@ export async function recallReport(userId: string | null, batchCode: string) {
   if (!batch || !batch.synced) throw notFound(`Batch ${batchCode}`);
   const n = await names(store);
   const lots = (await store.lots.list({ batchCode })).sort((a, b) => a.lotNumber - b.lotNumber);
-  const packs = await store.packs.list();
+  // Packs are listed for lots that were opened when recalled; read only theirs.
+  const packs = await store.packs.list({ lotCode: lots.filter((l) => l.statusBeforeRecall === "OPENED").map((l) => l.lotCode) });
   const where = (x: { statusBeforeRecall: ItemStatus | null; locationId: string; inTransitToId: string | null }) =>
     x.statusBeforeRecall === "IN_TRANSIT" ? `In transit: ${n.partner(x.locationId)} → ${n.partner(x.inTransitToId)}` : n.partner(x.locationId);
   return {

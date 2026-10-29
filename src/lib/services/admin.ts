@@ -284,19 +284,22 @@ async function referencesTo(tx: StoreTx, entity: AdminEntity, row: { id: string;
   const found: string[] = [];
   const add = (n: number, what: string) => n && found.push(`${n} ${what}`);
   if (entity === "partners") {
+    // Each reference read by its own filter (indexed where it matters), never whole tables; a row
+    // matching on two fields is counted once.
     const [devices, children, lots, packs, moves, scans] = await Promise.all([
       tx.devices.list({ manufacturerId: id }),
       tx.partners.list({ parentId: id }),
-      tx.lots.list(),
-      tx.packs.list(),
-      tx.movements.list(),
+      Promise.all([tx.lots.list({ manufacturerId: id }), tx.lots.list({ locationId: id }), tx.lots.list({ inTransitToId: id })]),
+      Promise.all([tx.packs.list({ locationId: id }), tx.packs.list({ inTransitToId: id })]),
+      Promise.all([tx.movements.list({ fromId: id }), tx.movements.list({ toId: id })]),
       tx.scans.list({ partnerId: id }),
     ]);
+    const distinct = (lists: { id: string }[][]) => new Set(lists.flat().map((r) => r.id)).size;
     add(devices.length, "device(s)");
     add(children.length, "assigned partner(s)");
-    add(lots.filter((l) => l.manufacturerId === id || l.locationId === id || l.inTransitToId === id).length, "lot(s)");
-    add(packs.filter((p) => p.locationId === id || p.inTransitToId === id).length, "pack(s)");
-    add(moves.filter((m) => m.fromId === id || m.toId === id).length, "movement(s)");
+    add(distinct(lots), "lot(s)");
+    add(distinct(packs), "pack(s)");
+    add(distinct(moves), "movement(s)");
     add(scans.length, "scan(s)");
   }
   if (entity === "users") {

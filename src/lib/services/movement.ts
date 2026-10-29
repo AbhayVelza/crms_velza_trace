@@ -35,11 +35,21 @@ export async function myPartners(userId: string | null) {
   requireAction(actor, "territory");
   const me = requirePartner(actor);
   const childTypes = assignedTypesOf(me.type);
-  const [assigned, lots, packs] = await Promise.all([store.partners.list({ parentId: me.id }), store.lots.list(), store.packs.list()]);
-  const children = assigned.filter((p) => childTypes.includes(p.type));
-  const lotByCode = new Map(lots.map((l) => [l.lotCode, l]));
-  const opened = new Set(lots.filter((l) => l.status === "OPENED").map((l) => l.lotCode));
-  const loose = packs.filter((p) => opened.has(p.lotCode));
+  const children = (await store.partners.list({ parentId: me.id })).filter((p) => childTypes.includes(p.type));
+  const childIds = children.map((c) => c.id);
+  // Only what is at my partners or on its way to them from me (indexed by location), never every lot and pack.
+  const [lotsThere, packsThere, lotsSent, packsSent] = await Promise.all([
+    store.lots.list({ locationId: childIds }),
+    store.packs.list({ locationId: childIds }),
+    store.lots.list({ locationId: me.id, status: "IN_TRANSIT", inTransitToId: childIds }),
+    store.packs.list({ locationId: me.id, status: "IN_TRANSIT", inTransitToId: childIds }),
+  ]);
+  // The lots of those packs, to tell loose packs (of an opened lot) from packs inside a sealed one.
+  const packLots = await store.lots.list({ lotCode: [...new Set([...packsThere, ...packsSent].map((p) => p.lotCode))] });
+  const lotByCode = new Map([...packLots, ...lotsThere].map((l) => [l.lotCode, l]));
+  const loose = packsSent.filter((p) => lotByCode.get(p.lotCode)?.status === "OPENED");
+  const lotsAt = Map.groupBy(lotsThere, (l) => l.locationId);
+  const packsAt = Map.groupBy(packsThere, (p) => p.locationId);
   return {
     me,
     childTypes,
@@ -47,14 +57,12 @@ export async function myPartners(userId: string | null) {
       .sort((x, y) => childTypes.indexOf(x.type) - childTypes.indexOf(y.type) || x.name.localeCompare(y.name))
       .map((c) => {
         // Counted as on My stock and the HQ dashboard: an opened case counts while any of its packs is still there.
-        const stock = stockCounts(c.id, lots, packs, lotByCode);
+        const stock = stockCounts(c.id, lotsAt.get(c.id) ?? [], packsAt.get(c.id) ?? [], lotByCode);
         return {
           ...c,
           lotsInStock: stock.cases + stock.trays,
           loosePacksInStock: stock.loosePacks,
-          onTheWayFromMe:
-            lots.filter((l) => l.status === "IN_TRANSIT" && l.locationId === me.id && l.inTransitToId === c.id).length +
-            loose.filter((p) => p.status === "IN_TRANSIT" && p.locationId === me.id && p.inTransitToId === c.id).length,
+          onTheWayFromMe: lotsSent.filter((l) => l.inTransitToId === c.id).length + loose.filter((p) => p.inTransitToId === c.id).length,
         };
       }),
   };

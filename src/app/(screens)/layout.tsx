@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { AppHeader } from "@/components/AppHeader";
+import { PageFade } from "@/components/PageFade";
 import { RoleGate } from "@/components/RoleGate";
 import { SessionProvider } from "@/components/session";
 import { ShellProvider, Sidebar } from "@/components/Sidebar";
@@ -22,7 +23,9 @@ export default function ScreensLayout({ children }: LayoutProps<"/">) {
             </Suspense>
             <main className="mx-auto w-full max-w-app flex-1 px-4 py-6 sm:px-6 sm:py-8 lg:px-8 xl:px-9">
               <Suspense fallback={<Loading />}>
-                <RoleGate>{children}</RoleGate>
+                <RoleGate>
+                  <PageFade>{children}</PageFade>
+                </RoleGate>
               </Suspense>
             </main>
           </div>

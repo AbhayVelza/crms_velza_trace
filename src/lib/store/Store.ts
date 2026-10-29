@@ -24,8 +24,11 @@ export interface Row {
   id: string;
 }
 
-/** Equality filter on top-level fields (maps to a SQL WHERE a = ? AND b = ?). */
-export type Where<T> = Partial<T>;
+/**
+ * Filter on top-level fields: a value means equality, an array means "any of these" (maps to a SQL
+ * WHERE a = ? AND b = ANY(?)). An empty array matches nothing. Array-valued fields take equality only.
+ */
+export type Where<T> = { [K in keyof T]?: T[K] | (T[K] extends readonly unknown[] ? never : readonly T[K][]) };
 
 export interface Repo<T extends Row> {
   get(id: string): Promise<T | null>;

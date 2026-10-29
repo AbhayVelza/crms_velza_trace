@@ -130,7 +130,7 @@ export default function DispatchPage() {
                 ))}
               </ul>
             )}
-            <Button className="mt-4 w-full sm:w-auto" onClick={confirm} disabled={!ready || !list.length || busy}>
+            <Button className="mt-4 w-full sm:w-auto" onClick={confirm} disabled={!ready || !list.length} loading={busy}>
               Confirm dispatch of {list.length} item{list.length === 1 ? "" : "s"}
             </Button>
             {result && (

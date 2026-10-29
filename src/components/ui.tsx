@@ -76,7 +76,7 @@ export function Field({ label, hint, error, children }: { label: string; hint?: 
       <span className="mb-1.5 block text-sm font-semibold text-foreground-2">{label}</span>
       {children}
       {hint && !error && <span className="mt-1.5 block text-[0.8125rem] leading-snug text-muted-foreground">{hint}</span>}
-      {error && <span className="mt-1.5 block text-[0.8125rem] font-medium text-danger">{error}</span>}
+      {error && <span className="mt-1.5 block animate-fade-in text-[0.8125rem] font-medium text-danger">{error}</span>}
     </label>
   );
 }
@@ -201,13 +201,48 @@ export function Empty({ children }: { children: ReactNode }) {
   return <p className="px-3 py-10 text-center text-[0.9375rem] text-muted-foreground">{children}</p>;
 }
 
-/** Loading text with a small spinner (the spinner stops under reduced motion; the text stays). */
+/**
+ * Loading text with a small spinner (the spinner stops under reduced motion; the text stays). It fades in after
+ * 150 ms, so a fast load shows nothing instead of a flash.
+ */
 export function Loading({ children = "Loading…", className }: { children?: ReactNode; className?: string }) {
   return (
-    <p className={cx("flex items-center gap-2 text-sm text-muted-foreground", className)} role="status">
+    <p className={cx("flex animate-fade-in-late items-center gap-2 text-sm text-muted-foreground", className)} role="status">
       <IconLoader size={16} className="animate-spin" />
       {children}
     </p>
+  );
+}
+
+/** A placeholder block shaped like the content it stands in for. Size it with `className` (h-*, w-*). */
+export function Skeleton({ className }: { className?: string }) {
+  return <span data-skeleton aria-hidden="true" className={cx("block animate-skeleton rounded-control bg-muted", className)} />;
+}
+
+/**
+ * A page-shaped loading state: the real title (so nothing jumps when data arrives) over skeleton blocks.
+ * Screen readers hear one "Loading…" status; the blocks are hidden from them.
+ */
+export function LoadingPage({ title, subtitle, actions, children }: { title: string; subtitle?: boolean; actions?: ReactNode; children: ReactNode }) {
+  // A subtitle wraps to two lines on phones; the placeholder does too, and `actions` (the page's own buttons,
+  // disabled) keep their row, so the content below doesn't move when the data arrives.
+  const sub = subtitle ? (
+    <>
+      <Skeleton className="inline-block h-4 w-[28rem] max-w-full align-middle" />
+      <span className="sm:hidden">
+        <br />
+        <Skeleton className="inline-block h-4 w-40 align-middle" />
+      </span>
+    </>
+  ) : undefined;
+  return (
+    <div className="animate-fade-in-late">
+      <PageTitle title={title} subtitle={sub} actions={actions} />
+      <p role="status" className="sr-only">
+        Loading {title}…
+      </p>
+      {children}
+    </div>
   );
 }
 

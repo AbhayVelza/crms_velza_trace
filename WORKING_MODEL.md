@@ -17,6 +17,7 @@ Oct 27, 2026 · Abhay Velza · living document, updated 28 Oct 2026 (see [Change
   [Development and release](#development-and-release)
 - **Part 2 — Plans and decisions** · [Python backend plan](#python-backend-plan-proposal-no-code-yet) · [Key notes to discuss](#key-notes-to-discuss)
 - **Part 3 — UI redesign (27–28 Oct 2026)** · [Velza Global brand redesign](#part-3--ui-redesign-velza-global-brand-2728-oct-2026)
+- **Part 4 — QA, test data and scalability (28 Oct 2026)** · [QA and scalability](#part-4--qa-test-data-and-scalability-28-oct-2026)
 - **[Change log](#change-log)**
 
 ---
@@ -370,7 +371,7 @@ handling is not. Assessed on 27 Oct 2026; no code was changed.
 |---|---|---|
 | Code numbering | Ready: 99,999 cases or trays per batch and 6-character batch codes; 2 crore stickers is about 35–40 lakh cases and trays plus their packs | Nothing |
 | Data file | Rewrites one file on every scan; too slow beyond about 1 lakh stickers | PostgreSQL in production |
-| Whole-table loading | 19 places load whole tables into memory: each new print order loads every case and tray ever printed; the HQ dashboard, My stock and My partners load every case, tray and pack; the scan audit loads every scan | Ask the database only for what each screen needs (filters, counts, pages, indexes) |
+| Whole-table loading | 19 places loaded whole tables into memory. **28 Oct 2026 (DEF-002):** HQ trace, alerts, My stock, My partners, Damaged, batch report, recall report, print-order codes, new print orders and partner delete now ask the store only for the rows they need (indexed filters). Still whole-table: the **HQ dashboard** (every synced case, tray and pack, to count stock per partner), the batch list (every case and tray of the listed batches) and the scan audit (every scan, to show the latest 300) | Counts in the database for the dashboard and batch list; `LIMIT`/pages for the scan audit, alerts and partner list |
 | Plant offline | Only a switch; an internet or server outage stops printing | On-site plant server with its own database that syncs to the cloud |
 | Updates | The server restarts | New version starts beside the old one; database changes work with both |
 | Database failure | One database | Standby copy that takes over in about a minute |
@@ -395,10 +396,13 @@ handling is not. Assessed on 27 Oct 2026; no code was changed.
 | Role checklist: one person per role | Each screen does what that person needs |
 | Restore drill: restore yesterday's backup to a spare server | Backups actually work |
 
-Today 267 automated tests (on the data file and on PostgreSQL) and a 12-step browser demo pass.
-*(28 Oct 2026 note: on the development PC used for the UI redesign, the embedded-PostgreSQL test suites time out while
-starting — `Hook timed out in 10000ms` — before and after the redesign alike; all JSON-store tests and the 12-step
-browser demo pass. See [Part 3, Verification](#verification).)*
+Today 283 automated tests (on the data file and on PostgreSQL; 267 before the QA dataset test was added on 28 Oct) and
+a 12-step browser demo exist. *(28 Oct 2026: on the development PC the embedded-PostgreSQL test files time out while
+starting — `Hook timed out in 10000ms` — so `npm test` is not green there; every JSON-store test and the 12-step browser
+demo pass. Measured at 100,000 code records the JSON store misses the lookup and dashboard targets — see
+[Part 4](#part-4--qa-test-data-and-scalability-28-oct-2026). Later on 28 Oct: after the DEF-002 remediation's new tests, 325 test runs
+(249 JSON project + 76 PostgreSQL project) all pass with the PostgreSQL files run one at a time; the time-outs come from starting several
+embedded databases at once on this PC — see [DEF-002 remediation](#def-002-remediation-28-oct-2026).)*
 
 ## Wrong scans and wrong stickers
 
@@ -442,7 +446,7 @@ their own branch.
 
 | Phase | What it added |
 |---|---|
-| UI (uncommitted, 27–28 Oct 2026) | Velza Global brand redesign: brand-book colours, logo and Open Sans; light/dark/system themes; icon set; left sidebar shell. See [Part 3](#part-3--ui-redesign-velza-global-brand-2728-oct-2026) |
+| UI (commit `8393c95`, 27–28 Oct 2026) | Velza Global brand redesign: brand-book colours, logo and Open Sans; light/dark/system themes; icon set; left sidebar shell. See [Part 3](#part-3--ui-redesign-velza-global-brand-2728-oct-2026) |
 | 16 | Retailer chain without Suppliers; retailers under a distributor or directly under a Super Stockist |
 | 15 | Sign-in switch for development |
 | 14 | Damaged stock, opened-case counts, quarantine recovery |
@@ -548,12 +552,13 @@ Items 1–3 and 11–12 decide when the system can go live: sign-in, a real data
 | 8 | End of the chain | Tracking ends when the Retailer receives or opens the stock. | Should retailers record sales, or is receipt enough? | Open |
 | 9 | Scanning hardware | Camera at the plant and SS; scanners at Distributors and Retailers. | Budget and timing for a 2D USB scanner at the plant QC table (highest volume). | Open |
 | 10 | Alert timing | Stock in transit for more than 3 days raises a Not-received alert. | The right threshold per leg (plant → SS may differ from Distributor → Retailer). | Open |
-| 11 | Scale to 2 crore stickers | Not ready: several screens load whole tables into memory and would slow down, then crash, at millions of codes (see Scale and readiness). | When to schedule the scale work and the load tests before go-live. | Open |
+| 11 | Scale to 2 crore stickers | Not ready, now measured (28 Oct): at 100,000 code records a lookup takes 4.3 s and the HQ dashboard 9.2 s on the JSON store, because services read whole tables (DEF-002, Part 4). | When to schedule the scale work and the load tests before go-live. | Open |
 | 12 | Zero downtime at the plant | Offline mode is only a switch; an internet or server outage stops the plant today. | On-site plant server with its own database that syncs to the cloud; spare printer and scanner; downtime procedure. | Open |
 | 13 | Wrong stickers after stock leaves the plant | Caught and alerted, but there is no relabel, return-to-plant or cancel-dispatch flow (see Wrong scans and wrong stickers). | Which correction flows to build, and who approves them (HQ?). | Open |
 | 14 | Source code and teamwork | Code on GitHub; each developer works on their own branch and merges into main through a reviewed pull request. | Turn on branch protection for main. | Decided |
 | 15 | Backend in Python | Plan written (see Python backend plan); no code yet. The current TypeScript backend keeps running. | Approve the plan and phase order; who maintains the Python code. | Open |
-| 16 | UI redesign (new, 28 Oct 2026) | Velza Global brand redesign done on `develop/aditya`, not yet committed (see Part 3). Browser demo 12/12 passes on it. | Review the UI and commit it through a pull request; keep or change the sign-in panel tagline; clear the 6 test scan records on the redesign PC. | Open |
+| 16 | UI redesign (new, 28 Oct 2026) | Velza Global brand redesign committed on `develop/aditya` as `8393c95` (not pushed; see Part 3). Browser demo 12/12 passes on it. | Push and open a pull request into main; keep or change the sign-in panel tagline; clear the 6 test scan records on the redesign PC. | Open |
+| 17 | QA findings (new, 28 Oct 2026) | End-to-end QA done (Part 4): roles, hierarchy and traceability pass; 18-partner Maharashtra dataset in `data/qa-mh-2026.json`. Defects: DEF-002 (P1, scale), DEF-001 (P3, settings readable without sign-in), DEF-003, DEF-004 (P3). | Approve fixes for DEF-001/DEF-002; decide PIN/state validation (INFO-1). | Open |
 
 ---
 
@@ -561,7 +566,7 @@ Items 1–3 and 11–12 decide when the system can go live: sign-in, a real data
 
 The screens were redesigned to match the official **Velza Global Brand Book** and velzaglobal.com, in four passes.
 It is a presentation-only change: no route, API, permission, rule, form field, status value, sticker size or test
-changed. Work is in the working tree of branch `develop/aditya`, **not committed yet**.
+changed. Committed on branch `develop/aditya` as `8393c95` (28 Oct 2026; not pushed).
 
 ## Brand sources and rules applied
 
@@ -691,7 +696,9 @@ Every export and prop kept; additions are optional.
 | `Notice` | Icon per tone (ok, error, warn, info), fades in |
 | `StatusBadge` | Pill with a status dot, label unchanged: neutral for normal states, green *At retailer*, amber *In transit / Quarantined*, red *Damaged / Recalled*, struck-through *Void* |
 | `Pill` (new) | Small label used for counts and flags (alert counts, unsynced, device status) |
-| `Loading` (new) | Spinner + text for existing loading states |
+| `Loading` (new) | Spinner + text for existing loading states; since 28 Oct it fades in after 150 ms, so a fast load shows nothing instead of a flash |
+| `Skeleton`, `LoadingPage` (new, 28 Oct) | Placeholder blocks shaped like the content (slow pulse, static under reduced motion) under the real page title, with one screen-reader "Loading …" status; used where a page has a genuine load (HQ dashboard); `actions` shows the page's own buttons (disabled) and the subtitle placeholder wraps like the real one on phones, so nothing moves when data arrives (measured 0 px shift at 360–1440 px) |
+| `useAction` (new hook, 28 Oct, `useAction.ts`) | Runs a save/submit at most once at a time: a second click while it is in flight is ignored and `busy` drives `<Button loading>`. Request, payload and error handling unchanged |
 | `Table`, `Td`, `Empty`, `Stat` | 12 px uppercase table heads, roomier rows with hover, 30 px stat numbers, larger empty states |
 
 ## Screens covered
@@ -707,6 +714,19 @@ screens); public QR check page; print view (toolbar only — sticker markup and 
 - Transitions 75–220 ms: button colour and press, nav and sidebar hover/active, sidebar width, drawer slide and backdrop,
   tooltip fade, card hover lift (2 px, only on cards that are links), notice entrance, disclosure fade, theme colours.
 - `prefers-reduced-motion`: all animation and the theme fade are switched off.
+- **Motion tokens (28 Oct)** in `globals.css`: `--duration-fast` 120 ms (hover/press), `--duration-base` 180 ms (state
+  changes, entrances), `--duration-panel` 220 ms (drawers, overlays), `--ease-out-soft`, `--ease-in-out-soft`; utilities
+  `animate-fade-in`, `animate-rise-in`, `animate-fade-in-late` (150 ms delay, for loading indicators), `animate-skeleton`.
+  Only opacity and transform are animated.
+- **Page fade (28 Oct):** `PageFade` (`src/components/PageFade.tsx`) eases the page content in over 180 ms when the path
+  changes — opacity only, nothing remounts, navigation is not delayed, not on first load, search-param changes on the
+  same page do not replay it, skipped under reduced motion. (A `template.tsx` was not used: it remounts only when the
+  top-level segment changes and resets page state.)
+- **Mobile drawer focus (28 Oct):** while the drawer is open, Tab and Shift+Tab cycle inside it (before, focus moved to
+  the page behind the backdrop); Escape and focus return to the menu button as before.
+- **Busy buttons (28 Oct):** every save/submit shows a spinner while its request runs and ignores a second click —
+  settings, account password, void, reprint, recall, pool issue, new sign-in, reference-data add/delete/password, and
+  (spinner only, they already blocked repeats) dispatch, partner registration and QC confirm.
 - Visible focus outline on every link and button; inputs show a border + ring instead.
 - On scan pages the scan box still refocuses itself after a blur, except when focus moves to another field or into the
   menu drawer (so the drawer is usable from the keyboard).
@@ -744,7 +764,7 @@ Run on 28 Oct 2026 in an isolated copy of the project (its own data file, port 3
 
 ## Open items from the redesign
 
-- **Commit:** the redesign is uncommitted on `develop/aditya`; review and merge through a pull request.
+- **Commit:** committed as `8393c95` on `develop/aditya` (not pushed); push and merge into main through a pull request.
 - **Test scan records:** 6 `UNKNOWN_CODE` scan-audit records were created on the redesign PC's local data during visual
   checks (lookups of the demo made-up code). `npm run clear-activity` removes them; not run without approval.
 - **Tagline:** the sign-in panel's line "Every case, tray and pack — from plant to retailer." was written for the
@@ -758,6 +778,178 @@ Run on 28 Oct 2026 in an isolated copy of the project (its own data file, port 3
 
 ---
 
+# Part 4 — QA, test data and scalability (28 Oct 2026)
+
+End-to-end QA of the implementation at commit `8393c95` on `develop/aditya`. Detail and evidence:
+[docs/QA_REPORT.md](docs/QA_REPORT.md), [docs/SCALABILITY_REPORT.md](docs/SCALABILITY_REPORT.md),
+[docs/MANUAL_QA_GUIDE.md](docs/MANUAL_QA_GUIDE.md), [docs/qa/](docs/qa/). Facts below are **verified** (run or read in
+the code) unless marked otherwise.
+
+## Repository, stack and environment (verified)
+
+| Item | Value |
+|---|---|
+| Repo / branch | `C:\Users\ADMIN\Desktop\crms_velza\crms_velza_trace`, `develop/aditya`; remote `AbhayVelza/crms_velza_trace`. The only long-standing local change is `package-lock.json` (unrelated, never committed or modified by QA) |
+| Stack | Next.js 16.4.3 (App Router, Turbopack), React 19.3, TypeScript, Tailwind CSS 4.3, zod 4; route handlers in `src/app/api` → services in `src/lib/services` → rules in `src/lib/core` → `Store` (`src/lib/store`) |
+| Store | JSON file by default (`data/db.json`, or `VELZA_DB_PATH`); PostgreSQL when `DATABASE_URL` is set; embedded PostgreSQL (`STORE=pglite`) for tests. No ORM: hand-written SQL in `src/lib/store/sql`, schema version check instead of migrations (`npm run db:migrate`, `db/schema.sql`) |
+| Auth | Session cookie `velza_session` (HttpOnly, SameSite=Lax, 12 h), scrypt password hashes, lock for 5 min after 5 wrong passwords; `SIGN_IN=on/off` (off by default under `npm run dev`) |
+| Authorization | `PERMISSIONS` in `src/lib/core/permissions.ts`, enforced by `requireAction` in every service; data scope by partner in the services; `src/lib/menu.ts` drives the menu and the client-side "not part of your portal" message |
+| Environment variables (names only) | `DATABASE_URL`, `PG_POOL_MAX`, `VELZA_ADMIN_PASSWORD`, `VELZA_HQ_PASSWORD` (`.env.example`); also `STORE`, `VELZA_DB_PATH`, `PGLITE_DIR`, `SIGN_IN`, `HTTPS_ONLY`, `RATE_LIMIT_PER_MIN`, `RATE_LIMIT_WRITES_PER_MIN`, `RATE_LIMIT_PUBLIC_PER_MIN`, `RATE_LIMIT_GLOBAL_PER_MIN`, `NEXT_PUBLIC_DEMO_HELPER`. No `.env.local` on the QA PC |
+| Side effects | None: no e-mail, SMS, webhooks or outbound calls |
+| Dev PC | Windows 11, 8 GB RAM, Node 22.13.1 (README asks for Node 24) |
+
+## Commands (all run on 28 Oct 2026)
+
+| Purpose | Command | Result on the QA PC |
+|---|---|---|
+| Lint | `npm run lint` | pass |
+| Typecheck | `npm run typecheck` | pass |
+| Unit (json + postgres projects, 283 tests) | `npm test` | all JSON-store tests pass; embedded-PostgreSQL files time out at start-up on this PC (`Hook timed out in 10000ms`, environmental, also before QA) |
+| New dataset unit test | `npx vitest run tests/unit/maharashtraDataset.test.ts` | 8/8 on JSON; 8/8 on PostgreSQL when run alone |
+| Build + 12-step browser demo | `npm run test:e2e` | 12/12 (2.4 min) |
+| QA server (own data file, sign-in ON) | `node tests/qa/startQaServer.mjs [start]` | port 3300, `data/qa-mh-2026.json` |
+| Live API QA (creates/verifies the 18 partners) | `QA_BASE=http://localhost:3300 npx tsx tests/qa/qaRun.ts` | 87 PASS, 1 FAIL (DEF-001), 1 NEEDS INVESTIGATION (INFO-1) |
+| Browser QA, all 7 roles | `QA_BASE=http://localhost:3300 node tests/qa/qaUi.mjs` | 64 PASS, 1 NOT RUN (no search/sort/paging exists) |
+| Performance data / benchmark | `node tests/qa/perfGenerate.mjs --codes N --out <file>`, `node tests/qa/perfBench.mjs …` | see Scalability below |
+
+## Roles and verified permission boundaries
+
+126 live requests (7 roles × 18 APIs, sign-in ON) all matched `PERMISSIONS`. Summary:
+
+| Role | Can (server-verified) | Cannot |
+|---|---|---|
+| Velza Admin | partners, sign-ins, devices, reference data, pools, settings (create/edit/delete with history rules) | HQ dashboard, trace, stock, dispatch |
+| Velza HQ | dashboard, alerts, scan audit, batches, trace any code, recall | any admin API, any partner action |
+| Operator | print orders, reprint, void, devices, dispatch to any SS, stock, damaged; its own plant's batches | admin, HQ, verify, receive |
+| QC | verify, stock; its plant's batches | everything else |
+| Super Stockist | receive, dispatch to its assigned DBs/direct retailers, stock, damaged, my partners | other SS's partners, admin, HQ, trace |
+| Distributor | receive, dispatch to its 2 assigned retailers, stock, damaged, my retailers | other DBs' retailers, admin, HQ, trace |
+| Retailer | receive, open lot, stock, damaged | dispatch, partner lists, trace, admin |
+
+Bootstrap data is scoped (non-staff get only their own partner). Pages of another portal load their shell but show
+"not part of your portal"; the API refuses their data (the API is the security boundary).
+
+## QA dataset: 18 Maharashtra partners
+
+Defined in `tests/qa/maharashtraDataset.ts`, created through `POST /api/admin/partners` into `data/qa-mh-2026.json`
+(git-ignored), verified by API and file read. Full table: [docs/qa/maharashtra-test-data.md](docs/qa/maharashtra-test-data.md).
+
+```
+MF0001  QA-MH-2026-MFG-001 Sahyadri Beverages Plant (Chakan, Pune)      — supplies any SS
+SS0001  QA-MH-2026-SS-001 Deccan Super Stockist (Pune)
+ ├─ DB0001 DST-001 Shivajinagar (Pune)      → RT0001 Kothrud, RT0002 Baner
+ ├─ DB0002 DST-002 Nashik Valley (Nashik)   → RT0003 Gangapur Road, RT0004 Nashik Road
+ └─ DB0003 DST-003 Andheri (Mumbai)         → RT0005 Powai, RT0006 Dadar
+SS0002  QA-MH-2026-SS-002 Konkan Coast Super Stockist (Panaji, Goa)
+ ├─ DB0004 DST-004 Kolhapur                 → RT0007 Rajarampuri, RT0008 Ichalkaranji
+ └─ DB0005 DST-005 Solapur                  → RT0009 Hotgi Road, RT0010 Pandharpur
+```
+
+- Expected = actual: 1 MF, 2 SS, 5 DB, 10 RT = 18; no duplicates; no broken parents; every sign-in present.
+- **Deviation:** SS-002 is in Goa because the app allows one Super Stockist per state (a second Maharashtra SS is
+  refused — tested). The other 17 are in Maharashtra.
+- **Rerun:** `qaRun.ts` finds records by their QA code (start of the name) and creates only what is missing; the scan
+  chain is created once. **Cleanup** (only on request): delete `data/qa-mh-2026.json` and the credentials file.
+- **Credentials:** `data/qa-mh-2026-credentials.json` (git-ignored, random). Never put passwords in docs or tickets.
+
+## Defects and observations
+
+| ID | Severity | Summary | Status |
+|---|---|---|---|
+| DEF-002 | P1 | Lookups, dashboard, alerts, my-partners and stock read whole tables; too slow at 100k records | **Partly fixed 28 Oct** (uncommitted) — dashboard still over target at 100k; see [DEF-002 remediation](#def-002-remediation-28-oct-2026) |
+| DEF-005 | P2 | PostgreSQL only: concurrent HQ lookups of a code aborted each other (serialization failures, 30–53 % at 10 concurrent) | **Fixed 28 Oct** (uncommitted), same change |
+| DEF-001 | P3 | `GET /api/admin/settings` answers without sign-in (config only; writes are protected) | Open — needs approval (authorization change) |
+| DEF-003 | P3 | With sign-in ON every page logs a console 404 (`/api/auth/dev-users` probe) | Open |
+| DEF-004 | P3 | Partner table: no search, sort or pagination | Open |
+| INFO-1 | — | PIN code not checked against the state | Decision needed |
+| INFO-3 | — | Partner names are not unique (phone and e-mail are) | Noted |
+| INFO-4 | — | Embedded-PostgreSQL unit tests time out at start-up on low-memory PCs | Cause established 28 Oct (parallel PGlite start-up > 10 s hook timeout; pass one file at a time); config change needs approval |
+
+Security results that passed: 401 without a session; 403 for every out-of-role API; refused writes leave data unchanged;
+deactivation ends open sessions; logout invalidates the cookie; cross-site writes, non-JSON bodies, malformed JSON and
+bodies > 256 KB refused; public QR page shows no business data; injection-style codes handled safely; audit history has
+no edit/delete API.
+
+## Scalability (measured)
+
+JSON store, production build, same-machine client, sequential p50 / p95:
+
+| Code records | Exact lookup | Dashboard | Partner list | Write (dispatch scan) | Server memory |
+|---:|---:|---:|---:|---:|---:|
+| 1,000 | 64 / 97 ms | 45 / 55 ms | 9 / 12 ms | 42 / 65 ms | 165 MB |
+| 10,000 | 246 / 392 ms | 233 / 271 ms | 7 / 14 ms | 172 / 234 ms | 469 MB |
+| 100,000 | **4,288 / 5,630 ms** | **9,215 / 10,589 ms** | 51 / 65 ms | 2,219 / 2,616 ms | peak 1,176 MB |
+
+**Verdict: FAIL — MEASURED** for 100k on the JSON store (targets: lookup p95 ≤ 200 ms, dashboard ≤ 1 s). PostgreSQL:
+**not load-tested** (no server available); the slow paths are whole-table reads in the services (e.g.
+`src/lib/services/trace.ts:47` loads the entire movement ledger for one lookup), so PostgreSQL alone is not expected to
+fix them. The existing SQL indexes fit the needed filtered queries. See the Scalability report for the fixes and what
+must be measured before any capacity claim.
+
+## DEF-002 remediation (28 Oct 2026)
+
+Later the same day the whole-table reads were fixed where the cause was confirmed in the source, and everything was
+re-measured — on the JSON store and, for the first time, on a real **PostgreSQL 17.3 server** (a private local
+cluster). Uncommitted, on `develop/aditya`. Detail: [docs/SCALABILITY_REPORT.md](docs/SCALABILITY_REPORT.md) Part A,
+[docs/QA_REPORT.md](docs/QA_REPORT.md) §14, raw results [docs/qa/def-002/](docs/qa/def-002/).
+
+**How the code now reads data.** The store filter accepts a list ("any of": `{ locationId: [ids] }` → SQL
+`location_id = ANY(...)`, same behaviour on the JSON store), so a screen can ask for exactly the rows it needs in one
+query instead of loading a table or querying once per partner:
+
+| Screen / API | Reads now |
+|---|---|
+| HQ trace (`lookup`) | the code's own history (lot + pack) and batch-wide events by code, its reprints, its packs, names only for the partners/users/devices shown. Reads outside a transaction; the `LOOKUP` audit scan is then written on its own (fixes DEF-005) |
+| HQ alerts | units in transit, failed scans only, damage reports, and the lots they belong to |
+| HQ dashboard | still every synced case, tray and pack (needed for per-partner stock), but grouped by location once instead of once per partner; alerts from the same data instead of a second full read |
+| My partners (SS/DB) | stock at its partners and what it sent them, by location |
+| My stock | what is at this partner or on its way to it |
+| Damaged, batch list/report, recall report, print-order codes, new print order, partner delete | only the rows involved (by status, batch, lot codes or partner) |
+
+Response shapes, permissions, partner scoping, sync visibility, audit events and business rules are unchanged.
+
+**Measured at 100,000 code records** (p95, one client → 10 clients, same PC):
+
+| | Lookup | Dashboard | Alerts | My partners | My stock | Writes |
+|---|---:|---:|---:|---:|---:|---:|
+| PostgreSQL before | 677 ms → 23.7 s, 40 % errors | 11.8 s → all timed out | 1,148 ms | 1,385 ms | 887 ms | 20–167 ms |
+| **PostgreSQL after** | **38 ms → 281 ms, 0 errors** | **1,641 ms** → 11.0 s | **111 ms** | **147 ms** | **74 ms** | 17–202 ms |
+| JSON before | 4,168 ms | 10.0 s → all timed out | 908 ms | 1,489 ms | 1,273 ms | 2.7–2.9 s |
+| JSON after | 2,751 ms | 1,350 ms → 11.8 s | 194 ms | 157 ms | 79 ms | 3.1 s |
+
+**Verdict:** 100,000-record support is **not proven**. On PostgreSQL the lookup, filtered lists, partner hierarchy and
+writes meet the sequential targets; the **dashboard does not** (needs counts in the database), and most 10-client
+targets miss on this 8 GB PC (client, app and database share it). The JSON store cannot meet the lookup and write
+targets at this size by design (it rewrites the whole file on every write, including every lookup's audit scan).
+
+**Tests added:** `tests/unit/scalability.test.ts` (20 tests on the JSON store and on PostgreSQL: each changed screen is
+compared field by field with the old whole-table computation, and every read is recorded to prove no whole table is
+loaded; access rules, unsynced codes, empty network, concurrent lookups) and one store-contract test for the list
+filter. All unit tests, lint, typecheck, build and the 12-step browser demo pass.
+
+**Open (proposals, not done):** dashboard and batch-list counts in the database; `LIMIT`/pages for the scan audit,
+alerts and partner list (DEF-004); a partial index for in-transit units; make `perfGenerate.mjs` data valid on
+PostgreSQL; run the PostgreSQL unit-test files one at a time (INFO-4); re-measure at 1M on separate machines.
+
+## Deployment caveats
+
+- Sign-in must be ON (`SIGN_IN=on`, the default for `npm start`) on any shared host; with it off anyone can act as anyone.
+- Use PostgreSQL in production; the JSON store rewrites one file per write and holds everything in memory.
+- Set `HTTPS_ONLY=1` behind HTTPS; phones need HTTPS for the camera.
+- Rate limits are per server process (in memory); several processes need a shared limiter.
+- Finish DEF-002 (dashboard counts in the database) and re-measure at 100k–1M+ on PostgreSQL, with a separate client
+  machine, before a volume pilot.
+
+## Next steps (ordered)
+
+1. DEF-002 remainder: dashboard and batch-list counts in the database (Scalability report Part A, P1/P4), then
+   benchmark on PostgreSQL at 1M. Review and commit the 28 Oct remediation first.
+2. DEF-001 and DEF-003 (small; DEF-001 changes authorization, so approve first).
+3. Decide INFO-1 (PIN/state validation) and the test-timeout change for PostgreSQL unit tests.
+4. Load, soak and failure drills from the Testing plan on a dedicated machine.
+
+---
+
 # Change log
 
 Add one entry per change, newest first: date, who, what changed, files, and how it was verified. Update the affected
@@ -765,6 +957,11 @@ section above in the same change.
 
 | Date | Who | Change | Verified |
 |---|---|---|---|
+| 28 Oct 2026 | Claude Code on `develop/aditya` | **Partner registration end-to-end test through the real Partners UI** (no code or data change in the repo). On a fresh disposable data file in an isolated copy (sign-in ON) — not `data/db.json`, which the app on :3000 uses — all 18 Maharashtra sample partners (`tests/qa/maharashtraDataset.ts`) were registered through the form in hierarchy order: MF0001 (+ -OP, -QC), SS0001, SS0002 (Goa: one SS per state), DB0001–3 under SS0001, DB0004–5 under SS0002, RT0001–RT0010 two per distributor. Each new sign-in signed in with its QA password and was checked for portal, menu and refused pages/APIs. Findings: no defects. Notes: there is no stored Manufacturer → Super Stockist link (the plant may dispatch to any SS, verified); the success notice shows the new password in plain text for the Admin to share (by design); the Partners table's inline-edit inputs reuse the form's labels ("Contact person" …), so a page has two controls with the same accessible name. | 48/48 checks: 18 registrations (IDs, parents, fields, sign-ins, 1 POST each incl. a double click, listed after reload); duplicate phone refused with no partner or sign-in created; Maharashtra and Goa greyed out for a third SS; 19 sign-ins: portal, menu, 2 forbidden pages and admin/dashboard APIs (403), sign-out; 7 parents see exactly their children in My partners and Dispatch; plant dispatches to exactly SS0001, SS0002. Evidence (passwords masked, 0 password hits in logs): scratchpad `reg-evidence/` |
+| 28 Oct 2026 | Claude Code on `develop/aditya` | **Review of the UI smoothness pass.** One defect fixed: on phones the HQ dashboard skeleton lacked the Refresh row and the 2-line subtitle, so content jumped 76 px when data arrived; `LoadingPage` now takes the page's `actions` and wraps its subtitle placeholder like the real one (`ui.tsx`, `hq/page.tsx`). Everything else verified as reported; no other change. Pre-existing, not changed: a failed dashboard refresh replaces the page with the error notice; console 404 `/api/auth/dev-users` (DEF-003) and 401 `/api/auth/me` before sign-in. | Lint, typecheck pass; unit 249/249; build + e2e 12/12; browser on a copy of the QA data: layout shift on load 0 px at 1440/1366/768/390/360; refresh keeps data and clears busy after success and failure; failed password change sends 1 request on double-click and double-Enter, busy clears; page fade on path change only, shell not remounted, no hydration warnings; reduced motion: drawer, skeleton and fade static, focus trap holds |
+| 28 Oct 2026 | Claude Code on `develop/aditya` | **UI smoothness and feedback** (uncommitted; Part 3 "Shared components" and "Motion and accessibility" updated). Motion tokens and loading utilities (`globals.css`); `Skeleton`, `LoadingPage`, delayed `Loading`, error fade (`ui.tsx`); `useAction` double-submit guard (new `useAction.ts`) on settings, account, void, reprint, recall, pools, new sign-in, AdminCrud, plus spinners on dispatch, partner registration and QC confirm; `refreshing` in `useApi.ts`; HQ dashboard skeleton and busy Refresh (`hq/page.tsx`); route fade `PageFade.tsx` in `(screens)/layout.tsx`; mobile drawer focus trap (`Sidebar.tsx`). No API, permission, business-rule, data or dependency change. | Lint, typecheck pass; unit 249/249 (JSON project); build + e2e 12/12; browser on a copy of the QA data, before vs after: drawer Tab escapes 17 → 0, double-click Save sends 2 → 1 request, dashboard loads with skeleton instead of a blank page; 7 roles: same menus and titles, no horizontal overflow at 1440/1366/768/390/360 px, no new console errors; dark theme and reduced motion checked |
+| 28 Oct 2026 | Claude Code on `develop/aditya` | **DEF-002 scalability remediation** (uncommitted). Store filters accept "any of" lists (`Store.ts`, `jsonStore.ts`, `sql/sqlStore.ts`); HQ trace, alerts, dashboard, My stock, batch list/report, recall report (`trace.ts`), My partners (`movement.ts`), Damaged (`damage.ts`), print orders (`printOrders.ts`) and partner delete (`admin.ts`) read only the rows they need; dashboard and My partners group by location once; HQ lookup reads outside its audit transaction (fixes DEF-005, PostgreSQL serialization failures). No response, permission, audit or business-rule change; no schema change. Tests: `tests/unit/scalability.test.ts` (new), `store.contract.test.ts` (+1). Docs: Part 4 here, `docs/SCALABILITY_REPORT.md` Part A, `docs/QA_REPORT.md` §14, `docs/qa/def-002/`. | Lint, typecheck pass; unit 249/249 (JSON project) and 76/76 (PostgreSQL project, files one at a time); build + e2e 12/12; old-vs-new differential 104/105 identical (1 age label); benchmarks 1k/10k/100k on JSON and PostgreSQL 17.3 before and after. Dashboard at 100k still over target |
+| 28 Oct 2026 | Claude Code on `develop/aditya` | **End-to-end QA, test data and scalability audit (Part 4).** 18-partner Maharashtra dataset (`data/qa-mh-2026.json`, git-ignored); QA harness `tests/qa/` (live API, browser, perf generator and benchmark, QA server launcher); unit test `tests/unit/maharashtraDataset.test.ts`; reports `docs/QA_REPORT.md`, `docs/SCALABILITY_REPORT.md`, `docs/MANUAL_QA_GUIDE.md`, evidence `docs/qa/`. No application code changed. Found DEF-001 to DEF-004. | Lint, typecheck pass; e2e 12/12 and build (baseline, same app code); unit: JSON all pass, PostgreSQL files time out (environmental); live QA 87 PASS / 1 FAIL (DEF-001); browser QA 64 PASS; benchmarks 1k/10k/100k |
 | 28 Oct 2026 | Claude Code on `develop/aditya` | **Transparent favicon.** Added `velza-favicon.svg`: the V only, no background, black on light browser chrome and white on dark. `favicon.ico` (V on white) kept as fallback. Files: `src/components/brand-assets/velza-favicon.svg` (new), `src/app/layout.tsx`. | Typecheck, lint; page head lists both icons; SVG served `200 image/svg+xml` without a session |
 | 28 Oct 2026 | Claude Code on `develop/aditya` | **Left sidebar shell.** Navigation moved from the top bar to a collapsible left sidebar (drawer below 1024 px); compact header with *portal › page* context; Operator device status on a header sub-row. Files: `Sidebar.tsx` (new), `AppHeader.tsx`, `ActAs.tsx`, `DeviceBar.tsx`, `ScanInput.tsx`, `themeScript.ts`, `icons.tsx`, `globals.css`, `(screens)/layout.tsx`, `(screens)/page.tsx`. | Lint, typecheck, build, e2e 12/12; all 7 roles and 8 widths in a browser |
 | 28 Oct 2026 | Claude Code on `develop/aditya` | **Polish pass.** Wider content (up to 1600 px), larger type and icons, roomier cards and tables, consistent select chevrons, header regrouped; fixed the theme fade ignoring reduced motion. | Lint, typecheck, build, e2e 12/12 |

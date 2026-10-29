@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useSession } from "@/components/session";
 import { Button, Card, Field, Input, Notice, PageTitle } from "@/components/ui";
+import { useAction } from "@/components/useAction";
 import { api, errorText } from "@/lib/client";
 import { ROLE_LABELS } from "@/lib/core/types";
 
@@ -12,6 +13,7 @@ export default function AccountPage() {
   const [next, setNext] = useState("");
   const [repeat, setRepeat] = useState("");
   const [msg, setMsg] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+  const [saving, runSubmit] = useAction(submit);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -45,7 +47,7 @@ export default function AccountPage() {
           <p className="mt-3 text-xs text-muted-foreground">Your password is the only thing you can change here; everything else is managed by Velza Admin.</p>
         </Card>
         <Card title="Change password">
-          <form onSubmit={submit} className="space-y-3">
+          <form onSubmit={(e) => (e.preventDefault(), void runSubmit(e))} className="space-y-3">
             {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
             <Field label="Current password">
               <Input type="password" autoComplete="current-password" required value={current} onChange={(e) => setCurrent(e.target.value)} />
@@ -56,7 +58,7 @@ export default function AccountPage() {
             <Field label="Repeat new password">
               <Input type="password" autoComplete="new-password" required value={repeat} onChange={(e) => setRepeat(e.target.value)} />
             </Field>
-            <Button type="submit" disabled={!current || !next || !repeat}>
+            <Button type="submit" disabled={!current || !next || !repeat} loading={saving}>
               Change password
             </Button>
           </form>

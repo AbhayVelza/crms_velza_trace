@@ -1,0 +1,211 @@
+{
+  "generatedAt": "2026-10-28T05:47:32.007Z",
+  "dataFile": "data\\qa-mh-2026.json",
+  "prefix": "QA-MH-2026",
+  "expectedCounts": {
+    "MANUFACTURER": 1,
+    "SS": 2,
+    "DB": 5,
+    "RETAILER": 10
+  },
+  "partners": [
+    {
+      "code": "QA-MH-2026-MFG-001",
+      "id": "MF0001",
+      "type": "MANUFACTURER",
+      "parentCode": null,
+      "parentId": null,
+      "city": "Pune",
+      "state": "Maharashtra",
+      "created": "already present (rerun)",
+      "verified": "verified (API + data file): type, parent, city, state, PIN, active"
+    },
+    {
+      "code": "QA-MH-2026-SS-001",
+      "id": "SS0001",
+      "type": "SS",
+      "parentCode": null,
+      "parentId": null,
+      "city": "Pune",
+      "state": "Maharashtra",
+      "created": "already present (rerun)",
+      "verified": "verified (API + data file): type, parent, city, state, PIN, active"
+    },
+    {
+      "code": "QA-MH-2026-SS-002",
+      "id": "SS0002",
+      "type": "SS",
+      "parentCode": null,
+      "parentId": null,
+      "city": "Panaji",
+      "state": "Goa",
+      "created": "already present (rerun)",
+      "verified": "verified (API + data file): type, parent, city, state, PIN, active"
+    },
+    {
+      "code": "QA-MH-2026-DST-001",
+      "id": "DB0001",
+      "type": "DB",
+      "parentCode": "QA-MH-2026-SS-001",
+      "parentId": "SS0001",
+      "city": "Pune",
+      "state": "Maharashtra",
+      "created": "already present (rerun)",
+      "verified": "verified (API + data file): type, parent, city, state, PIN, active"
+    },
+    {
+      "code": "QA-MH-2026-DST-002",
+      "id": "DB0002",
+      "type": "DB",
+      "parentCode": "QA-MH-2026-SS-001",
+      "parentId": "SS0001",
+      "city": "Nashik",
+      "state": "Maharashtra",
+      "created": "already present (rerun)",
+      "verified": "verified (API + data file): type, parent, city, state, PIN, active"
+    },
+    {
+      "code": "QA-MH-2026-DST-003",
+      "id": "DB0003",
+      "type": "DB",
+      "parentCode": "QA-MH-2026-SS-001",
+      "parentId": "SS0001",
+      "city": "Mumbai",
+      "state": "Maharashtra",
+      "created": "already present (rerun)",
+      "verified": "verified (API + data file): type, parent, city, state, PIN, active"
+    },
+    {
+      "code": "QA-MH-2026-DST-004",
+      "id": "DB0004",
+      "type": "DB",
+      "parentCode": "QA-MH-2026-SS-002",
+      "parentId": "SS0002",
+      "city": "Kolhapur",
+      "state": "Maharashtra",
+      "created": "already present (rerun)",
+      "verified": "verified (API + data file): type, parent, city, state, PIN, active"
+    },
+    {
+      "code": "QA-MH-2026-DST-005",
+      "id": "DB0005",
+      "type": "DB",
+      "parentCode": "QA-MH-2026-SS-002",
+      "parentId": "SS0002",
+      "city": "Solapur",
+      "state": "Maharashtra",
+      "created": "already present (rerun)",
+      "verified": "verified (API + data file): type, parent, city, state, PIN, active"
+    },
+    {
+      "code": "QA-MH-2026-RTL-001",
+      "id": "RT0001",
+      "type": "RETAILER",
+      "parentCode": "QA-MH-2026-DST-001",
+      "parentId": "DB0001",
+      "city": "Pune",
+      "state": "Maharashtra",
+      "created": "already present (rerun)",
+      "verified": "verified (API + data file): type, parent, city, state, PIN, active"
+    },
+    {
+      "code": "QA-MH-2026-RTL-002",
+      "id": "RT0002",
+      "type": "RETAILER",
+      "parentCode": "QA-MH-2026-DST-001",
+      "parentId": "DB0001",
+      "city": "Pune",
+      "state": "Maharashtra",
+      "created": "already present (rerun)",
+      "verified": "verified (API + data file): type, parent, city, state, PIN, active"
+    },
+    {
+      "code": "QA-MH-2026-RTL-003",
+      "id": "RT0003",
+      "type": "RETAILER",
+      "parentCode": "QA-MH-2026-DST-002",
+      "parentId": "DB0002",
+      "city": "Nashik",
+      "state": "Maharashtra",
+      "created": "already present (rerun)",
+      "verified": "verified (API + data file): type, parent, city, state, PIN, active"
+    },
+    {
+      "code": "QA-MH-2026-RTL-004",
+      "id": "RT0004",
+      "type": "RETAILER",
+      "parentCode": "QA-MH-2026-DST-002",
+      "parentId": "DB0002",
+      "city": "Nashik",
+      "state": "Maharashtra",
+      "created": "already present (rerun)",
+      "verified": "verified (API + data file): type, parent, city, state, PIN, active"
+    },
+    {
+      "code": "QA-MH-2026-RTL-005",
+      "id": "RT0005",
+      "type": "RETAILER",
+      "parentCode": "QA-MH-2026-DST-003",
+      "parentId": "DB0003",
+      "city": "Mumbai",
+      "state": "Maharashtra",
+      "created": "already present (rerun)",
+      "verified": "verified (API + data file): type, parent, city, state, PIN, active"
+    },
+    {
+      "code": "QA-MH-2026-RTL-006",
+      "id": "RT0006",
+      "type": "RETAILER",
+      "parentCode": "QA-MH-2026-DST-003",
+      "parentId": "DB0003",
+      "city": "Mumbai",
+      "state": "Maharashtra",
+      "created": "already present (rerun)",
+      "verified": "verified (API + data file): type, parent, city, state, PIN, active"
+    },
+    {
+      "code": "QA-MH-2026-RTL-007",
+      "id": "RT0007",
+      "type": "RETAILER",
+      "parentCode": "QA-MH-2026-DST-004",
+      "parentId": "DB0004",
+      "city": "Kolhapur",
+      "state": "Maharashtra",
+      "created": "already present (rerun)",
+      "verified": "verified (API + data file): type, parent, city, state, PIN, active"
+    },
+    {
+      "code": "QA-MH-2026-RTL-008",
+      "id": "RT0008",
+      "type": "RETAILER",
+      "parentCode": "QA-MH-2026-DST-004",
+      "parentId": "DB0004",
+      "city": "Kolhapur",
+      "state": "Maharashtra",
+      "created": "already present (rerun)",
+      "verified": "verified (API + data file): type, parent, city, state, PIN, active"
+    },
+    {
+      "code": "QA-MH-2026-RTL-009",
+      "id": "RT0009",
+      "type": "RETAILER",
+      "parentCode": "QA-MH-2026-DST-005",
+      "parentId": "DB0005",
+      "city": "Solapur",
+      "state": "Maharashtra",
+      "created": "already present (rerun)",
+      "verified": "verified (API + data file): type, parent, city, state, PIN, active"
+    },
+    {
+      "code": "QA-MH-2026-RTL-010",
+      "id": "RT0010",
+      "type": "RETAILER",
+      "parentCode": "QA-MH-2026-DST-005",
+      "parentId": "DB0005",
+      "city": "Solapur",
+      "state": "Maharashtra",
+      "created": "already present (rerun)",
+      "verified": "verified (API + data file): type, parent, city, state, PIN, active"
+    }
+  ]
+}

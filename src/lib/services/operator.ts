@@ -4,7 +4,7 @@ import { z } from "zod";
 import { formatLotNumber } from "@/lib/core/codes";
 import { canReprint, canVoid, lotStatusAfterReprint } from "@/lib/core/rules";
 import { getStore, type StoreTx } from "@/lib/store";
-import { badRequest, findItem, loadActor, manufacturerDevice, notFound, nowIso, requireAction, requirePartner, setLotState } from "./common";
+import { badRequest, findItem, loadActor, manufacturerDevice, notFound, nowIso, requireAction, requirePartner, setLotState, unknownCodeMessage } from "./common";
 import { autoRefill, reservedCodes } from "./pool";
 
 export const reprintSchema = z.object({ code: z.string(), reason: z.string() });
@@ -19,7 +19,7 @@ export async function reprint(userId: string | null, body: unknown) {
     requireAction(actor, "reprint");
     const manufacturer = requirePartner(actor);
     const found = await findItem(tx, code, manufacturer.id);
-    if (!found.ok || found.item.lot.manufacturerId !== manufacturer.id) throw badRequest("UNKNOWN_CODE", found.ok ? `${code} belongs to another manufacturer` : found.message);
+    if (!found.ok || found.item.lot.manufacturerId !== manufacturer.id) throw badRequest("UNKNOWN_CODE", found.ok ? unknownCodeMessage(code) : found.message);
     const check = canReprint(found.item.movable, reason);
     if (!check.ok) throw badRequest(check.code, check.message);
     const device = await manufacturerDevice(tx, manufacturer.id);

@@ -87,6 +87,14 @@ export async function devLogin(body: unknown) {
   return startSession(userId);
 }
 
+/** While sign-in is off: who a request without a valid session acts as — the first active Velza Admin, so the
+ * app opens straight on the Admin portal. No session is created and nothing is written. null when sign-in is on. */
+export async function devDefaultUserId(): Promise<string | null> {
+  if (signInRequired()) return null;
+  const admins = await getStore().users.list({ role: "ADMIN", active: true });
+  return admins.map((u) => u.id).sort()[0] ?? null;
+}
+
 /** Resolve a session cookie to a user id (null if missing, unknown or expired). */
 export async function sessionUserId(token: string | null | undefined): Promise<string | null> {
   if (!token) return null;

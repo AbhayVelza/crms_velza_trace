@@ -4,7 +4,7 @@
 
 import { useState } from "react";
 import { IconChevronRight, IconTriangleAlert } from "@/components/icons";
-import { Button, Card, Code, cx, Empty, Field, fmtTime, Input, Loading, Notice, PageTitle, Stat, StatusBadge, Table, Td } from "@/components/ui";
+import { Button, Card, Code, cx, Empty, Field, fmtTime, Input, Loading, Notice, PageTitle, Pill, Stat, StatusBadge, Table, Td } from "@/components/ui";
 import { useAction } from "@/components/useAction";
 import { useApi } from "@/components/useApi";
 import { api, errorText } from "@/lib/client";
@@ -17,6 +17,8 @@ interface BatchRow {
   expiryDate: string;
   manufacturer: string;
   status: string;
+  displayStatus: string;
+  counter: { remaining: number; lastLotHex: string | null };
   lots: number;
   statusCounts: Record<string, number>;
   reprints: number;
@@ -48,12 +50,28 @@ export default function BatchesPage() {
             <tr key={b.code} className={cx(selected === b.code && "bg-muted shadow-[inset_2px_0_0_var(--foreground)]")} aria-selected={selected === b.code}>
               <Td>
                 <Code>{b.code}</Code> {b.status === "RECALLED" && <StatusBadge status="RECALLED" />}
+                {b.displayStatus === "EXHAUSTED" && (
+                  <Pill tone="warn" dot className="uppercase">
+                    Exhausted
+                  </Pill>
+                )}
+                {b.displayStatus === "COUNTER_INVALID" && (
+                  <Pill tone="danger" dot className="uppercase">
+                    Counter invalid
+                  </Pill>
+                )}
               </Td>
               <Td>{b.flavourName}</Td>
               <Td className="whitespace-nowrap text-xs">
                 {b.mfgDate} / {b.expiryDate}
               </Td>
-              <Td>{b.lots}</Td>
+              <Td>
+                {b.lots}
+                <div className="text-xs text-muted-foreground">
+                  {b.counter.lastLotHex ? <>to <Code>{b.counter.lastLotHex}</Code> · </> : null}
+                  {b.counter.remaining.toLocaleString("en-IN")} left
+                </div>
+              </Td>
               <Td>
                 <div className="flex flex-wrap gap-1">
                   {Object.entries(b.statusCounts).map(([s, n]) => (

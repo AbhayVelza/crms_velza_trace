@@ -5,7 +5,7 @@ import { buildPackCodes } from "@/lib/core/codes";
 import { canStartVerification, checkVerifyPackScan, evaluateVerification } from "@/lib/core/rules";
 import type { Lot } from "@/lib/core/types";
 import { getStore, type StoreTx } from "@/lib/store";
-import { badRequest, findItem, loadActor, logScan, manufacturerDevice, nowIso, requireAction, requirePartner, setLotState, type Actor } from "./common";
+import { badRequest, findItem, loadActor, logScan, manufacturerDevice, nowIso, requireAction, requirePartner, setLotState, unknownCodeMessage, type Actor } from "./common";
 
 export const verifySchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("scanLot"), code: z.string() }),
@@ -35,7 +35,8 @@ async function loadLotForQc(tx: StoreTx, actor: Actor, lotCode: string) {
     return { ok: false as const, code: "INVALID_CODE" as const, message: `${lotCode} is a pack code — scan the lot sticker first` };
   }
   if (found.item.lot.manufacturerId !== actor.partner?.id) {
-    return { ok: false as const, code: "NOT_AT_LOCATION" as const, message: `Lot ${lotCode} belongs to another manufacturer` };
+    // The scan log keeps the real reason (audit, alerts); the person sees the same answer as for an unknown code.
+    return { ok: false as const, code: "NOT_AT_LOCATION" as const, message: `Lot ${lotCode} belongs to another manufacturer`, shown: { code: "UNKNOWN_CODE" as const, message: unknownCodeMessage(lotCode) } };
   }
   return { ok: true as const, lot: found.item.lot };
 }
@@ -54,7 +55,8 @@ export async function verify(userId: string | null, body: unknown) {
       const r = await loadLotForQc(tx, actor, req.code);
       if (!r.ok) {
         await scan(req.code, false, r.code, r.message);
-        return { ok: false, code: r.code, message: r.message };
+        const shown = "shown" in r ? r.shown : r;
+        return { ok: false, code: shown.code, message: shown.message };
       }
       const start = canStartVerification(r.lot);
       if (!start.ok) {
@@ -66,7 +68,10 @@ export async function verify(userId: string | null, body: unknown) {
     }
 
     const r = await loadLotForQc(tx, actor, req.lotCode);
-    if (!r.ok) throw badRequest(r.code, r.message);
+    if (!r.ok) {
+      const shown = "shown" in r ? r.shown : r;
+      throw badRequest(shown.code, shown.message);
+    }
     const lot = r.lot;
 
     if (req.action === "scanPack") {

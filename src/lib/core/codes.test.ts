@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   allocateLots,
   BATCH_CODE_CHARS,
+  batchCounter,
   buildLotCode,
   buildPackCodes,
   extractScannedCode,
@@ -229,5 +230,56 @@ describe("allocateLots", () => {
 
   it("returns nothing for 0 + 0", () => {
     expect(allocateLots(batch, 0, 0)).toEqual({ lots: [], nextLot: 1 });
+  });
+});
+
+describe("decimal ↔ hex lot numbers (continuation table)", () => {
+  it.each([
+    [1, "00001"],
+    [100, "00064"],
+    [1_000, "003E8"],
+    [10_000, "02710"],
+    [10_001, "02711"],
+    [20_000, "04E20"],
+    [30_000, "07530"],
+    [99_999, "1869F"],
+  ])("%i → %s and back", (n, hex) => {
+    expect(formatLotNumber(n)).toBe(hex);
+    expect(parseLotNumber(hex)).toBe(n);
+  });
+
+  it.each(["00000", "186A0", "0G001", "1869f", "0001", "000001"])("rejects %s", (hex) => {
+    expect(() => parseLotNumber(hex)).toThrow(RangeError);
+  });
+
+  it("after 10,000 lots the next is 02711, not 10001", () => {
+    const { lots, nextLot } = allocateLots({ code: "ABC123", country: "91", flavour: "OR", nextLot: 1 }, 10_000, 0);
+    expect([lots[0].lotHex, lots[9_999].lotHex, formatLotNumber(nextLot)]).toEqual(["00001", "02710", "02711"]);
+  });
+});
+
+describe("batchCounter", () => {
+  it("new batch (nextLot 1)", () => {
+    expect(batchCounter({ nextLot: 1 })).toEqual({ state: "AVAILABLE", lotsAllocated: 0, lastLotHex: null, nextLotHex: "00001", remaining: 99_999 });
+  });
+
+  it("active batch after 10,000 lots", () => {
+    expect(batchCounter({ nextLot: 10_001 })).toEqual({ state: "AVAILABLE", lotsAllocated: 10_000, lastLotHex: "02710", nextLotHex: "02711", remaining: 89_999 });
+  });
+
+  it("one lot left: 1869F is the last valid allocation", () => {
+    expect(batchCounter({ nextLot: 0x1869f })).toEqual({ state: "AVAILABLE", lotsAllocated: 99_998, lastLotHex: "1869E", nextLotHex: "1869F", remaining: 1 });
+  });
+
+  it("exhausted at nextLot 0x186A0: no next lot, nothing remaining", () => {
+    expect(batchCounter({ nextLot: 0x186a0 })).toEqual({ state: "EXHAUSTED", lotsAllocated: 99_999, lastLotHex: "1869F", nextLotHex: null, remaining: 0 });
+  });
+
+  it.each([0, -1, 1.5, NaN, Infinity, 0x186a1, 1_000_000, "5", null, undefined])("invalid stored value %s → INVALID, remaining 0", (nextLot) => {
+    expect(batchCounter({ nextLot })).toEqual({ state: "INVALID", lotsAllocated: null, lastLotHex: null, nextLotHex: null, remaining: 0 });
+  });
+
+  it("remaining is never negative", () => {
+    for (const nextLot of [1, 2, 50_000, 0x1869f, 0x186a0, 0x186a1, -5]) expect(batchCounter({ nextLot }).remaining).toBeGreaterThanOrEqual(0);
   });
 });

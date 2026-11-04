@@ -29,7 +29,7 @@ npm run dev             # http://localhost:3000 → pick a role and a person (si
 | Command | What it does |
 |---|---|
 | `npm run dev` | Start the app (dev mode, with the demo helper) |
-| `npm run seed` | Reset the data to a clean start: country 91, the 4 flavours, default settings, and two sign-ins — Velza Admin `AD0001` and Velza HQ `HQ0001` — with the passwords from `VELZA_ADMIN_PASSWORD` / `VELZA_HQ_PASSWORD` or new random ones, printed once. No partners or devices |
+| `npm run seed` | Clean start for an **empty** store: country 91, the 4 flavours, default settings, and two sign-ins — Velza Admin `AD0001` and Velza HQ `HQ0001` — with the passwords from `VELZA_ADMIN_PASSWORD` / `VELZA_HQ_PASSWORD` or new random ones, printed once. No partners or devices. It prints the target and **refuses a store that already holds partners, batches, lots or history**; `npm run seed -- --force` replaces it after writing a timestamped backup (`db.backup-<time>-before-seed.json`, never overwritten), and never in production |
 | `npm run clear-activity` | Delete all activity (batches, lots, packs, movements, scans, reprints) but keep partners, sign-ins, devices, used batch codes, ID sequences and settings |
 | `npm test` | Unit + service tests (vitest), twice for the business logic: on the JSON file and on PostgreSQL (embedded) |
 | `npm run test:e2e` | The demo script below in a real browser (Playwright, builds and serves on port 3100 with its own data and the test sample network) |
@@ -68,8 +68,8 @@ printed once in the server log.
 | Setting | Sign-in |
 |---|---|
 | `npm run dev` (default) | **Off**: pick who to act as; switch any time in the header. Every active person can be picked, including people entered before sign-in existed |
-| `npm run build` + `npm start` (default) | **On**: sign-in ID and password |
-| `SIGN_IN=on` / `SIGN_IN=off` in `.env.local` | Forces it either way |
+| `npm run build` + `npm start` | **Always on**: sign-in ID and password. `SIGN_IN=off` is ignored here (a warning is logged) |
+| `SIGN_IN=on` / `SIGN_IN=off` in `.env.local` | Forces it either way under `npm run dev` only |
 
 Sign-in being off changes only *who you are*; every portal and permission rule still applies (a Retailer still
 can't open Admin pages). Turn it on (`SIGN_IN=on`) before anyone outside the development team uses the app.

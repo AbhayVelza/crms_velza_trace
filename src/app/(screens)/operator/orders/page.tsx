@@ -40,12 +40,12 @@ export default function PrintOrdersPage() {
               </Td>
               <Td>{o.synced ? "yes" : <Pill tone="warn">no</Pill>}</Td>
               <Td className="whitespace-nowrap">
-                <Link className="inline-flex items-center gap-1 font-semibold text-foreground underline-offset-4 hover:underline" href={`/print/${o.id}`}>
+                <Link className="inline-flex min-h-11 items-center gap-1 rounded px-1 font-semibold text-foreground underline-offset-4 hover:underline" href={`/print/${o.id}`}>
                   <IconPrinter size={16} />
                   Print view
                 </Link>
                 <span className="text-line-strong"> · </span>
-                <Link className="inline-flex items-center gap-1 font-semibold text-foreground underline-offset-4 hover:underline" href={`/operator/orders/${o.id}`}>
+                <Link className="inline-flex min-h-11 items-center gap-1 rounded px-1 font-semibold text-foreground underline-offset-4 hover:underline" href={`/operator/orders/${o.id}`}>
                   <IconListChecks size={16} />
                   Codes
                 </Link>

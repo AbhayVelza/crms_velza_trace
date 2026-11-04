@@ -6,6 +6,7 @@ import { useState, type ReactNode } from "react";
 import { api, errorText } from "@/lib/client";
 import { useSession } from "./session";
 import { useApi } from "./useApi";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { IconTrash } from "./icons";
 import { Button, Card, Empty, Input, Notice, Select, Table, Td } from "./ui";
 import { useAction } from "./useAction";
@@ -32,6 +33,8 @@ export interface Column {
   render?: (row: Row) => ReactNode;
   placeholder?: string;
   defaultValue?: unknown;
+  /** Minimum width of the inline-edit field in the table (default min-w-[9rem], so values stay readable). */
+  minWidth?: string;
 }
 
 export type Row = Record<string, unknown> & { id: string };
@@ -101,7 +104,7 @@ export function AdminCrud({
   const [draft, setDraft] = useState<Record<string, unknown>>(() => emptyDraft(columns));
   const [msg, setMsg] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
   const [creating, runCreate] = useAction(create);
-  const [, runRemove] = useAction(remove);
+  const [deleting, setDeleting] = useState<Row | null>(null);
 
   const load = async () => list.reload();
   const shows = (c: Column, row: Record<string, unknown>) => !c.visible || c.visible(row);
@@ -120,17 +123,19 @@ export function AdminCrud({
     }
   }
 
+  const rowName = (row: Row) => String(row.name ?? row.code ?? row.id);
+
+  /** Called from the confirmation dialog; a failure is shown there (the record stays). */
   async function remove(row: Row) {
-    const name = String(row.name ?? row.code ?? row.id);
-    if (!window.confirm(`Delete ${name}? This cannot be undone.`)) return;
     setMsg(null);
+    let r: { message: string };
     try {
-      const r = await api<{ message: string }>(`/api/admin/${entity}/${row.id}`, { method: "DELETE" });
-      setMsg({ tone: "ok", text: r.message });
-      await Promise.all([load(), refresh()]);
+      r = await api<{ message: string }>(`/api/admin/${entity}/${row.id}`, { method: "DELETE" });
     } catch (e) {
-      setMsg({ tone: "error", text: errorText(e) });
+      throw new Error(errorText(e));
     }
+    setMsg({ tone: "ok", text: r.message });
+    await Promise.all([load(), refresh()]);
   }
 
   async function create() {
@@ -157,7 +162,7 @@ export function AdminCrud({
       return <span className={c.key === "code" ? "font-mono" : ""}>{label ?? String(value ?? "—")}</span>;
     }
     if (c.type === "bool") {
-      return <input type="checkbox" aria-label={c.label} checked={!!value} onChange={(e) => save(row.id, { [c.key]: e.target.checked })} className="h-5 w-5 accent-foreground" />;
+      return <input type="checkbox" aria-label={c.label} checked={!!value} onChange={(e) => save(row.id, { [c.key]: e.target.checked })} className="h-6 w-6 accent-foreground" />;
     }
     if (c.type === "select") {
       return (
@@ -174,8 +179,14 @@ export function AdminCrud({
     return (
       <Input
         aria-label={c.label}
+        className={c.minWidth ?? "min-w-[9rem]"}
         defaultValue={String(value ?? "")}
-        onBlur={(e) => e.target.value !== String(value ?? "") && save(row.id, { [c.key]: e.target.value })}
+        onBlur={async (e) => {
+          const field = e.currentTarget;
+          const saved = String(value ?? "");
+          // Refused (e.g. not an email): show the stored value again; the error says why.
+          if (field.value !== saved && !(await save(row.id, { [c.key]: field.value }))) field.value = saved;
+        }}
       />
     );
   };
@@ -202,7 +213,7 @@ export function AdminCrud({
                   <div className="flex flex-wrap justify-end gap-1">
                     {rowActions?.(row, { reload: load, setMsg })}
                     {allowDelete && (
-                      <Button variant="ghost" className="min-h-8 px-3 py-1 text-xs text-danger hover:bg-danger-soft" onClick={() => runRemove(row)}>
+                      <Button variant="ghost" className="min-h-8 px-3 py-1 text-xs text-danger hover:bg-danger-soft" onClick={() => setDeleting(row)}>
                         <IconTrash size={15} />
                         Delete
                       </Button>
@@ -223,7 +234,7 @@ export function AdminCrud({
                 <label key={c.key} className="block text-sm">
                   <span className="mb-1.5 block text-[0.8125rem] font-semibold text-foreground-2">{c.label}</span>
                   {c.type === "bool" ? (
-                    <input type="checkbox" checked={!!draft[c.key]} onChange={(e) => setDraft({ ...draft, [c.key]: e.target.checked })} className="h-5 w-5 accent-foreground" />
+                    <input type="checkbox" checked={!!draft[c.key]} onChange={(e) => setDraft({ ...draft, [c.key]: e.target.checked })} className="h-6 w-6 accent-foreground" />
                   ) : c.type === "select" ? (
                     <Select value={String(draft[c.key] ?? "")} onChange={(e) => setDraft({ ...draft, [c.key]: e.target.value })}>
                       <option value="">—</option>
@@ -250,6 +261,15 @@ export function AdminCrud({
           </Button>
         </Card>
       )}
+      <ConfirmDialog
+        open={!!deleting}
+        title={deleting ? `Delete ${rowName(deleting)}?` : ""}
+        confirmLabel="Delete"
+        onConfirm={() => remove(deleting!)}
+        onClose={() => setDeleting(null)}
+      >
+        This cannot be undone.
+      </ConfirmDialog>
     </div>
   );
 }

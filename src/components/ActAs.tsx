@@ -22,10 +22,13 @@ export function useDevUsers(): DevUser[] | null {
   const [users, setUsers] = useState<DevUser[] | null>(null);
   useEffect(() => {
     let cancelled = false;
-    api<DevUser[]>("/api/auth/dev-users").then(
-      (u) => !cancelled && setUsers(u),
-      () => undefined, // 404: sign-in is on
-    );
+    // Only while sign-in is off: with sign-in on the list does not exist (asking would just log a 404).
+    api<{ signInRequired: boolean }>("/api/auth/mode")
+      .then((m) => (m.signInRequired ? null : api<DevUser[]>("/api/auth/dev-users")))
+      .then(
+        (u) => !cancelled && u && setUsers(u),
+        () => undefined,
+      );
     return () => {
       cancelled = true;
     };

@@ -2,12 +2,13 @@
 
 import { z } from "zod";
 import { computeAlerts, formatAge, ageMs, notReceivedThresholdMs, type ComputeAlertsInput, type InTransitUnit } from "@/lib/core/alerts";
-import { extractScannedCode } from "@/lib/core/codes";
+import { batchCounter, extractScannedCode } from "@/lib/core/codes";
 import { publicStatus, recallPatch } from "@/lib/core/rules";
 import { ITEM_STATUSES, PARTNER_TYPE_LABELS, type ItemStatus, type Lot, type Movement, type Pack, type Partner } from "@/lib/core/types";
 import { getStore, type StoreTx } from "@/lib/store";
 import { damagedCounts, damagedUnits } from "./damage";
 import { badRequest, findItem, isVisible, loadActor, logScan, notFound, nowIso, partnerName, requireAction, requirePartner } from "./common";
+import { batchDisplayStatus } from "./printOrders";
 
 export const recallSchema = z.object({ batchCode: z.string(), reason: z.string() });
 
@@ -345,6 +346,8 @@ export async function listBatches(userId: string | null) {
         ...b,
         flavourName: n.flavour(b.flavour),
         manufacturer: n.partner(b.manufacturerId),
+        counter: batchCounter(b),
+        displayStatus: batchDisplayStatus(b),
         lots: bl.length,
         statusCounts: bl.reduce<Record<string, number>>((acc, l) => ((acc[l.status] = (acc[l.status] ?? 0) + 1), acc), {}),
         reprints: reprintsOf.get(b.code)?.length ?? 0,
@@ -365,7 +368,7 @@ export async function batchReport(userId: string | null, batchCode: string) {
   const ever = (type: Movement["type"]) => new Set(movements.filter((m) => m.type === type).map((m) => m.itemCode)).size;
   const reprints = (await store.reprints.list()).filter((r) => lotCodes.has(r.code.slice(0, 15)));
   return {
-    batch: { ...batch, flavourName: n.flavour(batch.flavour), manufacturer: n.partner(batch.manufacturerId) },
+    batch: { ...batch, flavourName: n.flavour(batch.flavour), manufacturer: n.partner(batch.manufacturerId), counter: batchCounter(batch), displayStatus: batchDisplayStatus(batch) },
     summary: {
       lots: lots.length,
       cases: lots.filter((l) => l.lotType === "CASE").length,

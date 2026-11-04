@@ -1,6 +1,6 @@
 # Velza Traceability — Working Model
 
-Oct 27, 2026 · Abhay Velza · living document, updated 28 Oct 2026 (see [Change log](#change-log))
+Oct 27, 2026 · Abhay Velza · living document, updated 30 Oct 2026 (see [Change log](#change-log))
 
 > **How to keep this document current.** This is the single reference for how the CRM works and what has changed.
 > Every change to the app (process, data, screens, UI, infrastructure) gets an entry in the
@@ -18,6 +18,7 @@ Oct 27, 2026 · Abhay Velza · living document, updated 28 Oct 2026 (see [Change
 - **Part 2 — Plans and decisions** · [Python backend plan](#python-backend-plan-proposal-no-code-yet) · [Key notes to discuss](#key-notes-to-discuss)
 - **Part 3 — UI redesign (27–28 Oct 2026)** · [Velza Global brand redesign](#part-3--ui-redesign-velza-global-brand-2728-oct-2026)
 - **Part 4 — QA, test data and scalability (28 Oct 2026)** · [QA and scalability](#part-4--qa-test-data-and-scalability-28-oct-2026)
+- **Part 5 — Sign-in activation (29 Oct 2026)** · [Sign-in activation](#part-5--sign-in-activation-29-oct-2026)
 - **[Change log](#change-log)**
 
 ---
@@ -35,7 +36,9 @@ Velza Global India runs the system through two central roles: **Velza Admin** se
 watches it (status, location, history, alerts, recalls). Each of the 7 roles works in its own portal and sees only its
 own part of the chain. Consumers can scan the QR code on a case to check it is genuine and not recalled.
 
-The current build is a working prototype. Sign-in is built but switched off while the app is developed, PostgreSQL
+The current build is a working prototype. Sign-in is built and was switched on on 29 Oct 2026; since 30 Oct 2026 it is
+**temporarily off** on the development PC for testing (`SIGN_IN=off` in `.env.local`): the app opens straight on the
+Velza Admin portal (see [Sign-in activation](#part-5--sign-in-activation-29-oct-2026), "Sign-in temporarily off"). PostgreSQL
 support is built and waits for the database, and data lives in a file until then. The code is on GitHub (see
 [Development and release](#development-and-release)). It is not yet ready for 2 crore stickers or for zero downtime at
 the plant (see [Scale and readiness](#scale-and-readiness-2-crore-stickers)).
@@ -76,6 +79,128 @@ distributors.
   lot is voided.
 - Lot stickers (100 × 50 mm) carry a barcode and a QR code; pack stickers (75 × 25 mm) carry a barcode.
 - Nobody types or edits a code; the system generates them all.
+- A batch can be printed over several days: see [Continuing a batch](#continuing-a-batch).
+
+### Continuing a batch
+
+Added 30 Oct 2026. New print order → **Continue an existing batch** adds lots to a batch that already exists, carrying
+on from where the last print order stopped. Day 1 prints lots `00001`–`02710` (10,000 lots); Day 2, on any online PC of
+the same plant and by any operator, carries on at `02711`. The sequence never restarts because of a new day, a
+sign-out, another operator, a refresh, a restart or another device.
+
+**Counter scope (confirmed 30 Oct 2026).** One counter per batch. A batch is one flavour and one production run, so the
+counter is also per batch + flavour; it is never shared between batches or flavours. Cases and trays share the batch's
+counter (cases first, then trays, in each order).
+
+**Lot numbers.** Five uppercase hex characters, fixed width, built only by `formatLotNumber` in `src/lib/core/codes.ts`.
+
+| Decimal | Hex | | Decimal | Hex |
+|---:|---|---|---:|---|
+| 1 | `00001` | | 10,001 | `02711` |
+| 100 | `00064` | | 20,000 | `04E20` |
+| 1,000 | `003E8` | | 30,000 | `07530` |
+| 10,000 | `02710` | | 99,999 | `1869F` (maximum) |
+
+`00000` is reserved and never issued. After decimal 10,000 the next lot is `02711`, not `10001`. The batch's stored
+counter is `nextLot` (the next unused number, in decimal; `next_lot` in PostgreSQL).
+
+**Counter status (worked out from `nextLot`, never stored).**
+
+| `nextLot` | Status | Last lot | Next lot | Remaining |
+|---|---|---|---|---:|
+| 1 (new batch) | Active | — | `00001` | 99,999 |
+| 10,001 | Active | `02710` | `02711` | 89,999 |
+| 99,999 | Active | `1869E` | `1869F` | 1 |
+| 100,000 (`0x186A0`) | **Exhausted** | `1869F` | — | 0 |
+| anything else (0, negative, fraction, above 100,000) | **Counter invalid** | — | — | 0 |
+
+An exhausted batch never wraps round to `00001` and never gets a new batch code automatically. A new batch is made with
+New batches, as before. A counter-invalid batch is shown and refused, never repaired automatically (on 30 Oct 2026
+every batch in every data file was consistent: `nextLot` = highest lot number + 1, no gaps).
+
+**What continuing keeps and what it records.**
+
+- The batch keeps its code, country, flavour, **manufacture and expiry dates**, device, first print order, creator and
+  creation time. Only its counter moves. Continued lots carry the batch's dates; for different dates, start a new batch.
+- The new print order, its lots and their `GENERATED` movements record the PC and operator that continued the batch.
+  The movement note says "continues batch ABC123 from 02711".
+- Lot and pack codes, pack suffixes (`61`–`64`, `41`–`46`), stickers, QC, reprint, void, dispatch and public lookup
+  work exactly as for any other lot.
+
+**Who can continue, and when (all checked on the server).**
+
+| Check | Refused with |
+|---|---|
+| Plant Operator sign-in only | 401 / 403 |
+| The PC belongs to the operator's plant | 400 `NO_DEVICE` |
+| The PC is **online**: continuing needs the central counter, so offline PCs can't allocate their own numbers | 409 `DEVICE_OFFLINE` |
+| The batch belongs to the operator's plant (another plant's batch looks like no batch) | 404 |
+| The batch is synced (a batch made offline must be synced first) | 409 `BATCH_NOT_SYNCED` |
+| Not recalled | 409 `BATCH_RECALLED` |
+| Counter valid / not exhausted | 409 `BATCH_COUNTER_INVALID` / `BATCH_EXHAUSTED` |
+| 1 to 10,000 lots per order (**1,000 on the JSON file store**) | 400 `INVALID_QUANTITY` / `TOO_MANY_LOTS` |
+| No more than the lots left in the batch | 409 `INSUFFICIENT_CAPACITY` |
+
+Offline working for new batches, printing and verification is unchanged.
+
+**How the number is allocated.** One store transaction does everything:
+
+1. Check the request.
+2. Reserve the range with the existing `nextLotNumber`, a single conditional
+   `UPDATE batches SET next_lot = next_lot + n WHERE next_lot + n − 1 ≤ 0x1869F` in PostgreSQL (`SERIALIZABLE`), or the
+   file lock in the JSON store.
+3. Build the codes with the existing `allocateLots`.
+4. Write the lots, packs, print order and movements.
+
+If anything fails, the whole transaction rolls back, counter included, so a failed or interrupted request never uses
+up numbers. Two operators at once get adjacent ranges that never overlap: PostgreSQL makes the second wait for the
+batch row (or retries it), and the JSON store runs one transaction at a time. Lot codes are primary keys, which is a
+last guard against duplicates.
+
+**Retried requests (idempotency).** The wizard sends a request key (a UUID) with Create & print. The server uses it as
+the new print order's ID, so the key is stored in the same transaction as the lots and survives restarts.
+
+- Sending the same key again with the same plant, batch, cases, trays and PC returns the stored order ("replayed")
+  without allocating anything. This also works after the batch has filled up.
+- The same key with a different batch, quantity or PC, or a key belonging to another plant, gets 409
+  `IDEMPOTENCY_KEY_CONFLICT`, which reveals nothing about the stored order.
+- If two same-key requests race on PostgreSQL, the loser either retries (serialization failure) and replays, or hits
+  the order's primary key (unique violation), re-reads the order and replays.
+- If PostgreSQL serialization retries run out, the request gets 409 `ALLOCATION_BUSY`; nothing was saved, so pressing
+  Create again (same key) is safe.
+- The wizard makes a new key whenever the batch, cases or trays change.
+- New-batch orders are not idempotent (unchanged).
+
+**Preview versus result.** The Summary step is read-only and never touches the counter. It shows the *expected* range.
+The Print step shows the range the server actually allocated. If another order took numbers in between, the Print step
+says so, for example "your lots start at 0271A instead of the expected 02711".
+
+**JSON file store limit.** The JSON store rewrites the whole `db.json` on every transaction (about 2.75 KB per lot
+including packs and movements: 5,000 lots ≈ 13.7 MB). It is for development and small tests only. Continuation orders
+are capped at 1,000 lots there, and **it is not suitable for allocating up to 99,999 lots per batch: production must
+use PostgreSQL** (10,000 lots per continuation order). The existing New batches flow still allows up to 99,999 lots per
+batch on either store (unchanged).
+
+**API.**
+
+| Request | Answer |
+|---|---|
+| `GET /api/print-orders/continue` | `{ maxLotsPerOrder, batches: [{ batchCode, country, flavour, flavourName, mfgDate, expiryDate, createdAt, status, counter, continuable, blockedReason }] }` for the operator's plant |
+| `POST /api/print-orders/continue` `{ batchCode, cases, trays, deviceId?, preview: true }` | `{ ok, problem, batch, device, totalLots, stickerCount, expectedFirstLotHex, expectedLastLotHex, remainingAfter, maxLotsPerOrder }`, read-only |
+| `POST /api/print-orders/continue` `{ batchCode, cases, trays, deviceId?, idempotencyKey }` | `{ replayed, printOrder, batchCode, firstLotHex, lastLotHex, totalLots, stickerCount, counter }` |
+
+`GET /api/batches` and the batch report also return `counter` and `displayStatus` (Active, Exhausted, Counter invalid,
+Recalled); the Batches page shows the Exhausted badge and lots left.
+
+**Known limitations.**
+
+- A 10,000-lot order took about 14 s to create on embedded PostgreSQL (PGlite) in tests: 50,000–70,000 rows plus one
+  movement per lot. Marking it printed loops over every lot, and the print view renders 50,000–70,000 stickers in the
+  browser. All of this is existing behaviour, not changed here, and has not been measured on a hosted PostgreSQL server.
+- The tests run PostgreSQL embedded (one connection), so real multi-connection contention is covered by injecting the
+  PostgreSQL errors (unique violation, serialization failure) rather than by a live server.
+- The operator screens use the plant's first registered PC (as before); the API accepts another of the plant's PCs as
+  `deviceId`, but there is no PC picker.
 
 ### Statuses
 
@@ -186,9 +311,12 @@ only the assigned receiver can scan it IN. Anyone else who scans it gets a WRONG
 - Scanners act as a keyboard: they type the code and press Enter into the scan box, so no driver or setup is needed.
   Every scan screen also has **Use camera** and accepts typed codes.
 - Network: the app runs in a browser. Phone cameras need an HTTPS address, which the production server will provide.
-- Sign-in is switched off for development: anyone who opens the app can pick who to act as, so the app must stay on a
-  private network, VPN or access gate; only the public QR page may be open to everyone. Switch sign-in on
-  (`SIGN_IN=on`) before anyone outside the team uses it.
+- Sign-in: a production build (`npm start`) always requires sign-in. Under `npm run dev`, `SIGN_IN=on` (in
+  `.env.local`, git-ignored) asks everyone for their ID and password; with `SIGN_IN=off` (or unset) there is no sign-in: the app opens on the Velza
+  Admin portal and the header's Role/User selects switch to anyone. This is the setting on the development PC since
+  30 Oct 2026, for testing only. Anyone who can reach the app is then Velza Admin, so it must stay on this PC or a
+  private network. `next dev` listens on every network interface by default; use `npx next dev -H 127.0.0.1` to keep it
+  on this PC only.
 
 ### Working offline at the plant
 
@@ -542,7 +670,7 @@ Items 1–3 and 11–12 decide when the system can go live: sign-in, a real data
 
 | # | Topic | Where we are | To decide | Status |
 |---|---|---|---|---|
-| 1 | Sign-in | Built, but switched off while the app is being developed: people pick who they are instead of signing in (portal rules still apply). When on, everyone signs in with their partner ID and the password Velza Admin shared, and can change only their own password. | When to switch sign-in on (one setting, `SIGN_IN=on`); it must be on before anyone outside the development team uses the app. Optional extras: force a password change at first sign-in; two-factor sign-in for Velza Admin and HQ. | Open |
+| 1 | Sign-in | Switched on 29 Oct 2026 and verified for all 21 sign-ins and 7 roles (Part 5); **temporarily off since 30 Oct 2026** on the development PC for testing (`SIGN_IN=off`: opens on the Admin portal). Set `SIGN_IN=on` to require passwords again. Everyone signs in with their partner ID and the password Velza Admin shared, and can change only their own password. | Approve the fix for sessions started while sign-in was off staying valid after it is switched on (AUTH-1, Part 5). Optional extras: force a password change at first sign-in; two-factor sign-in for Velza Admin and HQ. | Decided (on) |
 | 2 | Database and hosting | PostgreSQL connection built and tested with the full demo; it switches on when the connection string is set. Until then data is in a file on one PC. Recommended: AWS Mumbai — Lightsail server + managed PostgreSQL for the pilot (about ₹2,800/month with GST), more capacity with a standby database for the full rollout (about ₹6,300–8,900/month). Approximate figures, not yet checked on AWS's calculator. | Confirm provider and budget; backup schedule and retention. | Open |
 | 3 | Network access until sign-in | Anyone who can open the app can act as any user. Security headers, rate limits and cross-site protection are in place. | Office network, VPN or an access gate (e.g. Cloudflare Access); who may reach it. | Open |
 | 4 | Country code per plant | Every code starts with the country code; the default is 91 (India), also used by vietnam_plant today. | Country of manufacture or market of sale? A non-India plant may need its own code (e.g. 84). | Open |
@@ -792,7 +920,7 @@ the code) unless marked otherwise.
 | Repo / branch | `C:\Users\ADMIN\Desktop\crms_velza\crms_velza_trace`, `develop/aditya`; remote `AbhayVelza/crms_velza_trace`. The only long-standing local change is `package-lock.json` (unrelated, never committed or modified by QA) |
 | Stack | Next.js 16.4.3 (App Router, Turbopack), React 19.3, TypeScript, Tailwind CSS 4.3, zod 4; route handlers in `src/app/api` → services in `src/lib/services` → rules in `src/lib/core` → `Store` (`src/lib/store`) |
 | Store | JSON file by default (`data/db.json`, or `VELZA_DB_PATH`); PostgreSQL when `DATABASE_URL` is set; embedded PostgreSQL (`STORE=pglite`) for tests. No ORM: hand-written SQL in `src/lib/store/sql`, schema version check instead of migrations (`npm run db:migrate`, `db/schema.sql`) |
-| Auth | Session cookie `velza_session` (HttpOnly, SameSite=Lax, 12 h), scrypt password hashes, lock for 5 min after 5 wrong passwords; `SIGN_IN=on/off` (off by default under `npm run dev`) |
+| Auth | Session cookie `velza_session` (HttpOnly, SameSite=Lax, 12 h), scrypt password hashes, lock for 5 min after 5 wrong passwords; `SIGN_IN=on/off` (off by default under `npm run dev`; while off, no session = the default Velza Admin) |
 | Authorization | `PERMISSIONS` in `src/lib/core/permissions.ts`, enforced by `requireAction` in every service; data scope by partner in the services; `src/lib/menu.ts` drives the menu and the client-side "not part of your portal" message |
 | Environment variables (names only) | `DATABASE_URL`, `PG_POOL_MAX`, `VELZA_ADMIN_PASSWORD`, `VELZA_HQ_PASSWORD` (`.env.example`); also `STORE`, `VELZA_DB_PATH`, `PGLITE_DIR`, `SIGN_IN`, `HTTPS_ONLY`, `RATE_LIMIT_PER_MIN`, `RATE_LIMIT_WRITES_PER_MIN`, `RATE_LIMIT_PUBLIC_PER_MIN`, `RATE_LIMIT_GLOBAL_PER_MIN`, `NEXT_PUBLIC_DEMO_HELPER`. No `.env.local` on the QA PC |
 | Side effects | None: no e-mail, SMS, webhooks or outbound calls |
@@ -933,7 +1061,9 @@ PostgreSQL; run the PostgreSQL unit-test files one at a time (INFO-4); re-measur
 
 ## Deployment caveats
 
-- Sign-in must be ON (`SIGN_IN=on`, the default for `npm start`) on any shared host; with it off anyone can act as anyone.
+- Sign-in must be ON (`SIGN_IN=on`, the default for `npm start`) on any shared host; with it off anyone who opens the
+  app is Velza Admin and can act as anyone. `npm start` also reads `.env.local`, so never copy a `.env.local` with
+  `SIGN_IN=off` to a server; set `SIGN_IN=on` explicitly in the server's environment.
 - Use PostgreSQL in production; the JSON store rewrites one file per write and holds everything in memory.
 - Set `HTTPS_ONLY=1` behind HTTPS; phones need HTTPS for the camera.
 - Rate limits are per server process (in memory); several processes need a shared limiter.
@@ -950,6 +1080,146 @@ PostgreSQL; run the PostgreSQL unit-test files one at a time (INFO-4); re-measur
 
 ---
 
+# Part 5 — Sign-in activation (29 Oct 2026)
+
+Sign-in with passwords is switched on for the development PC. **No application code changed**: the sign-in code was
+complete and active; it was off only because `SIGN_IN` was unset, which means off under `npm run dev`
+(`src/lib/signInMode.ts`). No sign-in code was commented out. Manual test steps: [docs/MANUAL_SIGN_IN_TEST_GUIDE.md](docs/MANUAL_SIGN_IN_TEST_GUIDE.md).
+
+## Configuration (development PC)
+
+| Item | Value |
+|---|---|
+| Switch | `.env.local` (new, git-ignored) contains only `SIGN_IN=on`. A running `next dev` picks it up without a restart |
+| Back to picking a person | Set `SIGN_IN=off` in `.env.local` (or delete the line) |
+| Data | `data/db.json` (JSON store); no `DATABASE_URL` |
+| Cookie | `velza_session`: HttpOnly, SameSite=Lax, Path=/, Max-Age 12 h; `Secure` only when the request is HTTPS (or `x-forwarded-proto: https`) |
+| Network | `next dev` listens on all interfaces by default; `npx next dev -H 127.0.0.1` keeps it on this PC |
+
+## Data change
+
+`data/db.json` had only AD0001 and HQ0001 (no partners). The 18 QA partners and their 19 sign-ins were merged in from
+`data/qa-mh-2026.json` after a verified backup (`data/db.backup-2026-10-29-before-auth.json`, git-ignored): only
+missing records were added, the source was validated (parents, sign-in → partner links, hash format, no phone/e-mail or
+one-SS-per-state conflicts), AD0001/HQ0001 kept byte-identical (their passwords are the ones from `npm run seed`),
+ID sequences raised to the highest merged ID (MF 1, SS 2, DB 5, RT 10). Countries, flavours, settings and the 6 earlier
+scan records unchanged; no devices, batches or stock were copied. The 8 sessions started while sign-in was off were
+removed (see AUTH-1). Result: 18 partners, 21 sign-ins (Admin 1, HQ 1, Operator 1, QC 1, SS 2, DB 5, Retailer 10).
+
+### Partners (0) after a re-seed — restored 29 Oct 2026
+
+**Symptom.** Admin and HQ could sign in, but Admin → Partners showed `Partners (0)` · "Nothing yet".
+
+**Cause.** `data/db.json` had been reset to a clean start at 12:02:42 IST (06:32:42 UTC), after the merge above. The
+file matched `npm run seed` output exactly: 0 partners, only AD0001/HQ0001 with new password hashes and
+`createdAt` = that time, a new country record ID, sequences only AD/HQ, no scans. The only code that writes this is
+`npm run seed` (`scripts/seed.ts`) or the first-run seed for a *missing* file (`firstRunSeed`); the app replaces the
+file by atomic rename, so it never leaves it missing — so the store was re-seeded, most likely by running
+`npm run seed` to get new Admin/HQ passwords. The page, API and permissions were correct: `/api/admin/partners`
+(used by `AdminCrud`) returned what the store held. No second server, other folder or other data source was
+involved: one `next dev` on :3000 (this folder), JSON store, no `DATABASE_URL`, `.env.local` = `SIGN_IN=on` only.
+
+**Fix (data only, no code change).** Backed up the re-seeded file (`data/db.backup-2026-10-29-after-reseed.json`),
+then added the 18 partners and 19 partner sign-ins again from `data/qa-mh-2026.json` with the same validated,
+duplicate-safe merge. The **new** AD0001/HQ0001 records (the passwords from the re-seed), the open session,
+countries, flavours and settings were kept unchanged. Partners 0 → 18, sign-ins 2 → 21. The 6–7 earlier scan records
+were wiped by the re-seed and not restored (they were test lookups).
+
+**Verified on the real app (:3000):** the 19 partner sign-ins — sign-in, identity, the 18-API permission matrix,
+hierarchy scope, logout — 579/580 (the miss is DEF-001); test sessions signed out afterwards, no scan written.
+Admin/HQ through the same services on a copy of the live data: Admin lists 18 partners and 21 sign-ins (no hashes),
+HQ gets the dashboard and is refused the Admin lists, Admin is refused the HQ dashboard. Admin/HQ **sign-in in the
+browser not verified by Claude** (their new passwords are only known to whoever ran the seed).
+
+**Don't re-seed to recover a password** — `npm run seed` wipes all partners, sign-ins and history. Use the recovery
+in `docs/MANUAL_SIGN_IN_TEST_GUIDE.md` §0 instead. Backups: `data/db.backup-2026-10-29-before-auth.json` (before
+the first merge) and `data/db.backup-2026-10-29-after-reseed.json` (the re-seeded state); both git-ignored, contain
+password hashes — don't share them.
+
+## Sign-in temporarily off (30 Oct 2026)
+
+> **Warning:** `SIGN_IN=off` is for local development and testing only. Never use it on a server or any deployment
+> other people can reach: everyone who opens the app is Velza Admin.
+
+**Why.** For local development and testing, the app should open straight on the Velza Admin portal without the
+sign-in page. The sign-in code (passwords, sessions, lockout, login/logout routes, roles, permission checks) is
+unchanged and comes back with one setting.
+
+**Configuration.** `.env.local` (git-ignored) contains `SIGN_IN=off`. A running `next dev` picks it up without a
+restart. Open http://localhost:3000: the Velza Admin portal Overview appears.
+
+**Behaviour while off** (3 small code changes, all inactive while sign-in is on):
+
+| What | Where |
+|---|---|
+| Every page opens without a session cookie; `/login` redirects (307) to `/`, the existing Admin Overview | `src/proxy.ts` |
+| An API request without a valid session acts as the **default Velza Admin**: the first active `ADMIN` sign-in (AD0001). No session is created and nothing is written to the data | `devDefaultUserId()` in `src/lib/services/auth.ts`, used by `handler()` in `src/lib/api.ts` |
+| The header's existing Role/User selects (the visible sign that sign-in is off) still switch to any person; that starts a normal 12 h session as that person | unchanged (`ActAs.tsx`) |
+
+**Development identity: limits.** It is the real AD0001 record, not a separate account, so anything changed through
+the Admin pages while sign-in is off is recorded as AD0001. Role checks stay on: the Admin is refused HQ and partner
+pages and APIs (403, "not part of the … portal"). "Sign out" returns to the Admin Overview. Anyone who can reach the
+server is Velza Admin, so keep it on this PC (`npx next dev -H 127.0.0.1`). Sessions started from the Role/User selects
+stay valid after switching back on (AUTH-1).
+
+**Re-enable sign-in.** Set `SIGN_IN=on` in `.env.local` (a running `next dev` switches over; reload). Then sign out once
+in each browser that used the Role/User selects (AUTH-1).
+
+**Production stays protected.** Since 30 Oct 2026 (F-01) a production build (`npm start`) **always requires sign-in**:
+`SIGN_IN=off` is ignored there and the server logs "SIGN_IN=off is ignored in a production build". `SIGN_IN=off`
+works only under `npm run dev`. Verified on a production build of the fixed code with `SIGN_IN=off`: pages go to
+`/login`, APIs answer 401, dev-login and the act-as list answer 404 (`src/lib/signInMode.ts`, tests in
+`src/lib/signInMode.test.ts`). **A server that was already running before this change keeps its old behaviour until
+it is rebuilt and restarted** (the `npm start` on :3000 since 30 Oct 11:00 still has sign-in off).
+
+**Data.** `data/db.json` was re-seeded again on 30 Oct 2026 at 10:38:29 IST, with the same signature as on 29 Oct:
+0 partners, only AD0001/HQ0001 with new passwords, and AD0001 signed in at 10:38:43. The live Partners page therefore
+shows **Partners (0)** and Sign-ins (2). This change did not restore it. The same duplicate-safe restore as on 29 Oct
+brings back the 18 partners and 21 sign-ins.
+
+**Verified (30 Oct 2026):**
+
+| Check | Result |
+|---|---|
+| Live :3000, sign-in off, fresh browser (Edge 1440×900 and 390×844): `/` opens the Admin Overview (6 cards), no sign-in form, no cookie set; `/login` → Overview; all 6 Admin menu pages open; reload stays; `/hq` refused; no console errors | 24/24 PASS (Partners 0, Sign-ins 2: the live data) |
+| Same on a production build (`127.0.0.1:3200`, `SIGN_IN=off`) with a copy of the live data plus the 18 partners restored into the copy | 24/24 PASS (Partners 18, Sign-ins 21) |
+| Live :3000, sign-in off: dashboard, alerts, stock, my-partners APIs as the default Admin | 403 (role checks kept) |
+| Production build, `SIGN_IN` = on / empty / `yes` / off | on, on, on, off; when on: `/` → `/login`, APIs 401 |
+| Sign-in on (production build, copies of data): 19 partner sign-ins; all 21 incl. AD0001/HQ0001 (QA data): sign-in, wrong password, lockout, identity, 18-API permission matrix, hierarchy scope, logout | 583/584 and 639/640 PASS (miss = DEF-001) |
+| Sign-in on, browser: 7 roles × 5 sizes + sign-in page light/dark | 309/309 PASS |
+| Lint, typecheck, build, e2e 12/12; unit JSON 250/250 (+1 test for the default Admin); PostgreSQL `registration` 19/19, `access` 10/10 one file at a time | PASS (all PostgreSQL files at once time out starting the embedded database: INFO-4) |
+| `data/db.json` before vs after testing | Unchanged (counts, hashes, file time) |
+
+## Verification
+
+Automated runs used a production build on `127.0.0.1:3200` with copies of the data, never `data/db.json`.
+
+| Check | Result |
+|---|---|
+| 19 partner sign-ins on a copy of the merged data: sign-in, cookie flags, identity and partner context, 18-API permission matrix (same as QA report §5), bootstrap scope, My partners and dispatch destinations = exactly the assigned partners, logout + old cookie refused | 583 / 584 PASS (1 = DEF-001) |
+| AD0001 and HQ0001 on a copy of the QA data (QA passwords) | 89 / 90 PASS (1 = DEF-001) |
+| Live AD0001/HQ0001 refuse the QA passwords (seeded passwords preserved) | PASS |
+| Not signed in: 17 APIs → 401, 6 portal pages → redirect to `/login`, `/login` and public `/t/<code>` load; `dev-users` and `dev-login` → 404; forged cookie → 401 | PASS |
+| Wrong password and unknown ID → 401 `BAD_CREDENTIALS` (same message); 5 failures → `LOCKED` (429) for 5 min, also for the right password; no cookie on failure | PASS |
+| Switching account: the new sign-in gets only the new account's role, partner and permissions | PASS |
+| Browser (Edge), 7 roles × 1440×900, 1366×768, 768×1024, 390×844, 360×800, plus the sign-in page in light and dark: role menu, one `<nav>`, Account + Sign out, no act-as selects, no horizontal overflow, ID in header, no new console errors, other portal's page refused, Back after sign-out stays on `/login` | 309 / 309 PASS |
+| Lint, typecheck, unit (JSON project 249/249; `access` 10/10 and `registration` 18/18 on PostgreSQL, one file at a time), build, 12-step browser demo | PASS (first JSON run had one file fail at start-up, two reruns 249/249) |
+
+Not verified: the 12-hour expiry by waiting (checked through Max-Age and the code), the `Secure` flag over real HTTPS,
+deactivating a sign-in (covered by the 28 Oct QA), a retailer assigned directly to an SS (none in the QA data; covered
+by browser demo steps 5 and 11), physical phones.
+
+## Open items
+
+| ID | Severity | Summary | Status |
+|---|---|---|---|
+| AUTH-1 | P2 | Sessions started with "pick a person" while sign-in was off stay valid for up to 12 h after `SIGN_IN=on`, so a browser that acted as someone stays signed in without a password. Cleared on this PC by removing the 8 stored sessions. Proposed fix: mark sessions started by `devLogin` and refuse them while sign-in is on (`src/lib/services/auth.ts`) | Open — needs approval (authentication change) |
+| DEF-001 | P3 | `GET /api/admin/settings` answers without sign-in | Open (unchanged) |
+| DEF-003 | P3 | Signed in with sign-in on, every page logs a console 404 for `/api/auth/dev-users` | Open (unchanged) |
+| — | Info | The sign-in page logs a 401 for `/api/auth/me` before anyone signs in (its "already signed in?" check) | Expected |
+
+---
+
 # Change log
 
 Add one entry per change, newest first: date, who, what changed, files, and how it was verified. Update the affected
@@ -957,6 +1227,11 @@ section above in the same change.
 
 | Date | Who | Change | Verified |
 |---|---|---|---|
+| 30 Oct 2026 | Claude Code on `develop/aditya` | **Security and reliability fixes from the Phase 1–3 audit** (uncommitted). **F-01** a production build always requires sign-in; `SIGN_IN=off` is honoured only under `npm run dev` (`src/lib/signInMode.ts`). **F-02** `npm run seed` prints its target, refuses a store holding partners, batches, lots or history, and with `--force` first writes `db.backup-<time>-before-seed.json` (never overwrites one, read back before the reset); never replaces data in production; refused runs exit 1 (`src/lib/store/seedGuard.ts`, `scripts/seed.ts`). This follows the 15:44 IST `npm run seed` that wiped `data/db.json` (MF0001 "vietnam_mnf", batch X1SYQ7, 5,000 unprinted lots; no usable backup). Device names unique per plant (trimmed, spaces collapsed, any case; older look-alikes stay editable). **F-09** another manufacturer's code answers exactly like a never-generated code (reprint, QC scan; the QC scan log keeps the real reason, so no new counterfeit alerts); opening a lot checks location before status (`common.ts` `unknownCodeMessage`, `operator.ts`, `verify.ts`, `rules.ts` `canOpenLot`; recall is still reported wherever scanned). Readable validation messages with field-level details and no internal schema/table names (`src/lib/validationMessages.ts`, `api.ts` `errorResponse`, `admin.ts` not-found labels). UI: in-app delete confirmation dialog instead of the browser box (`ConfirmDialog.tsx`, `AdminCrud.tsx`); rejected inline edits show the stored value again; no `/api/auth/dev-users` request when sign-in is on (`ActAs.tsx`); larger targets on Print orders and Active checkboxes; readable partner-table fields at 1366 px; "1 retailer", "Lot 00006" / "Lots 00004–00006" (`src/lib/format.ts`). Audit corrections: device delete already returned RESERVED pool codes as RETURNED in the same transaction (finding withdrawn, now covered by tests); `ItemKind` vs movement kinds was already typed correctly (no change). New tests: `src/lib/signInMode.test.ts`, `src/lib/validationMessages.test.ts`, `tests/unit/seedSafety.test.ts`, `tests/unit/adminDevices.test.ts`, `tests/unit/disclosure.test.ts`. | In an isolated copy of the repo with its own data (never `data/db.json`, never :3000): lint, typecheck pass; unit JSON 343 passed + 1 skipped (24 files); PostgreSQL (PGlite) 126 passed + 3 skipped (11 files); production build + e2e 12/12; production build with `SIGN_IN=off` still requires sign-in; real `scripts/seed.ts` on scratch copies (refuse, --force + backup, bad path, production); browser checks 22/22 plus a clean console re-check; responsive 92 page/viewport checks: no overflow, sidebar drawer on tablet/phone, console errors 92 rows → only the expected sign-in-page 401 |
+| 30 Oct 2026 | Claude Code on `develop/aditya` | **Batch continuation (Part 1, "Continuing a batch").** New print order → *Continue an existing batch*: lots carry on from the batch's persisted hex counter (one per batch) across days, operators, PCs and restarts. Reuses `nextLotNumber`, `allocateLots` and `formatLotNumber` (no second counter, no schema change). Online PCs of the same plant only; synced, not recalled, not exhausted, ≤ lots left, ≤ 10,000 lots per order (1,000 on JSON). Read-only preview; the created range is authoritative. Request key = print order ID (durable idempotency; replay must match plant, batch, cases, trays and PC). Exhausted is derived (`nextLot > 0x1869F`) and shown on Batches. Fixed two places that assumed one print order per batch (`listPrintOrders`, `codesForOrder`; output unchanged for existing orders; codes view "generated by" now the order's creator). Files: `src/lib/core/codes.ts`, `src/lib/services/printOrders.ts`, `src/lib/services/trace.ts`, `src/app/api/print-orders/continue/route.ts` (new), `src/app/(screens)/operator/new/page.tsx`, `src/app/(screens)/hq/batches/page.tsx`, `src/lib/core/codes.test.ts`, `tests/unit/continuation.test.ts` (new). | Lint, typecheck, build pass; unit JSON 306/306 (+1 skipped) in 19 files; PostgreSQL (PGlite, `--no-file-parallelism`) 103/103 (+1 skipped) in 8 files; continuation tests 26 per store, incl. two 10,000-lot orders on PGlite (28.7 s); e2e 12/12; HTTP smoke on a throwaway data copy (list, preview, create, replay, conflict 409, JSON cap 400, codes view, 401, 403). Continue screen not yet clicked through in a browser |
+| 30 Oct 2026 | Claude Code on `develop/aditya` | **Sign-in temporarily off for testing (Part 5, "Sign-in temporarily off").** `.env.local`: `SIGN_IN=off`. While off, pages open without a cookie, `/login` → `/`, and API requests without a session act as the first active Velza Admin (no session, no write): `src/proxy.ts`, `src/lib/api.ts`, `src/lib/services/auth.ts` (`devDefaultUserId`), test in `tests/unit/registration.test.ts`. Sign-in code unchanged and these paths are inactive while on. Found: `data/db.json` re-seeded again at 10:38 IST (Partners 0), not restored; `npm start` reads `.env.local`. Docs: Part 1, key note 1, deployment caveats, Part 5, `docs/CRMS_STATUS.md`, `docs/MANUAL_SIGN_IN_TEST_GUIDE.md`. | Live :3000 off 24/24; production build off with restored copy 24/24 (18 partners, 21 sign-ins); on: API 583/584 + 639/640 (DEF-001), browser 309/309; `SIGN_IN` unset/empty/typo = on; lint, typecheck, build, e2e 12/12, unit JSON 250/250, PostgreSQL auth files 19/19 + 10/10; live data unchanged |
+| 29 Oct 2026 | Claude Code on `develop/aditya` | **Partners (0) fixed (Part 5, "Partners (0) after a re-seed").** `data/db.json` had been re-seeded at 12:02 IST (0 partners, new Admin/HQ passwords). Backed up, then the 18 partners and 19 partner sign-ins restored from `data/qa-mh-2026.json`; new AD0001/HQ0001, session and settings kept. No code change. Docs: Part 5, `docs/CRMS_STATUS.md`, `docs/MANUAL_SIGN_IN_TEST_GUIDE.md`. | Live :3000: 19 partner sign-ins 579/580 (DEF-001); Admin/HQ service checks on a copy of live data; lint, typecheck; unit 249 (store contract's embedded-PostgreSQL hook times out with the dev server running — INFO-4 — passes 33/33 alone). Admin/HQ browser sign-in left to the user (new passwords) |
+| 29 Oct 2026 | Claude Code on `develop/aditya` | **Sign-in switched on (Part 5).** No code change: `.env.local` (new, git-ignored) with `SIGN_IN=on`. `data/db.json` backed up, then the 18 QA partners and 19 sign-ins merged in (AD0001/HQ0001 untouched), 8 sessions from sign-in-off removed. Docs: Part 1 overview and connection notes, key note 1, Part 5, `docs/MANUAL_SIGN_IN_TEST_GUIDE.md` (new). Found AUTH-1 (sessions from sign-in-off survive switching on). | Lint, typecheck; unit 249/249 JSON, auth files on PostgreSQL; build + e2e 12/12; API checks 583/584 (partners, merged copy) and 89/90 (staff, QA copy), the misses being DEF-001; browser 309/309 (7 roles × 5 sizes) |
 | 28 Oct 2026 | Claude Code on `develop/aditya` | **Partner registration end-to-end test through the real Partners UI** (no code or data change in the repo). On a fresh disposable data file in an isolated copy (sign-in ON) — not `data/db.json`, which the app on :3000 uses — all 18 Maharashtra sample partners (`tests/qa/maharashtraDataset.ts`) were registered through the form in hierarchy order: MF0001 (+ -OP, -QC), SS0001, SS0002 (Goa: one SS per state), DB0001–3 under SS0001, DB0004–5 under SS0002, RT0001–RT0010 two per distributor. Each new sign-in signed in with its QA password and was checked for portal, menu and refused pages/APIs. Findings: no defects. Notes: there is no stored Manufacturer → Super Stockist link (the plant may dispatch to any SS, verified); the success notice shows the new password in plain text for the Admin to share (by design); the Partners table's inline-edit inputs reuse the form's labels ("Contact person" …), so a page has two controls with the same accessible name. | 48/48 checks: 18 registrations (IDs, parents, fields, sign-ins, 1 POST each incl. a double click, listed after reload); duplicate phone refused with no partner or sign-in created; Maharashtra and Goa greyed out for a third SS; 19 sign-ins: portal, menu, 2 forbidden pages and admin/dashboard APIs (403), sign-out; 7 parents see exactly their children in My partners and Dispatch; plant dispatches to exactly SS0001, SS0002. Evidence (passwords masked, 0 password hits in logs): scratchpad `reg-evidence/` |
 | 28 Oct 2026 | Claude Code on `develop/aditya` | **Review of the UI smoothness pass.** One defect fixed: on phones the HQ dashboard skeleton lacked the Refresh row and the 2-line subtitle, so content jumped 76 px when data arrived; `LoadingPage` now takes the page's `actions` and wraps its subtitle placeholder like the real one (`ui.tsx`, `hq/page.tsx`). Everything else verified as reported; no other change. Pre-existing, not changed: a failed dashboard refresh replaces the page with the error notice; console 404 `/api/auth/dev-users` (DEF-003) and 401 `/api/auth/me` before sign-in. | Lint, typecheck pass; unit 249/249; build + e2e 12/12; browser on a copy of the QA data: layout shift on load 0 px at 1440/1366/768/390/360; refresh keeps data and clears busy after success and failure; failed password change sends 1 request on double-click and double-Enter, busy clears; page fade on path change only, shell not remounted, no hydration warnings; reduced motion: drawer, skeleton and fade static, focus trap holds |
 | 28 Oct 2026 | Claude Code on `develop/aditya` | **UI smoothness and feedback** (uncommitted; Part 3 "Shared components" and "Motion and accessibility" updated). Motion tokens and loading utilities (`globals.css`); `Skeleton`, `LoadingPage`, delayed `Loading`, error fade (`ui.tsx`); `useAction` double-submit guard (new `useAction.ts`) on settings, account, void, reprint, recall, pools, new sign-in, AdminCrud, plus spinners on dispatch, partner registration and QC confirm; `refreshing` in `useApi.ts`; HQ dashboard skeleton and busy Refresh (`hq/page.tsx`); route fade `PageFade.tsx` in `(screens)/layout.tsx`; mobile drawer focus trap (`Sidebar.tsx`). No API, permission, business-rule, data or dependency change. | Lint, typecheck pass; unit 249/249 (JSON project); build + e2e 12/12; browser on a copy of the QA data, before vs after: drawer Tab escapes 17 → 0, double-click Save sends 2 → 1 request, dashboard loads with skeleton instead of a blank page; 7 roles: same menus and titles, no horizontal overflow at 1440/1366/768/390/360 px, no new console errors; dark theme and reduced motion checked |

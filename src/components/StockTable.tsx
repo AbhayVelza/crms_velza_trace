@@ -1,6 +1,6 @@
 "use client";
 
-import { Code, Empty, fmtTime, StatusBadge, Table, Td } from "./ui";
+import { Code, Empty, fmtTime, Pill, StatusBadge, Table, Td } from "./ui";
 
 export interface StockItem {
   code: string;
@@ -34,9 +34,13 @@ export function StockTable({ items, show = "status", empty = "Nothing here" }: {
           </Td>
           <Td>
             {show === "from" ? i.from : show === "to" ? i.to : <StatusBadge status={i.status} />}
-            {!i.synced && <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-900">unsynced</span>}
+            {!i.synced && (
+              <Pill tone="warn" className="ml-2">
+                unsynced
+              </Pill>
+            )}
           </Td>
-          {show !== "status" && <Td className="whitespace-nowrap text-xs text-slate-500">{fmtTime(i.dispatchedAt)}</Td>}
+          {show !== "status" && <Td className="whitespace-nowrap text-xs text-muted-foreground">{fmtTime(i.dispatchedAt)}</Td>}
         </tr>
       ))}
     </Table>

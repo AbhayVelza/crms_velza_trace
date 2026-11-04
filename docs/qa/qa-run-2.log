@@ -1,0 +1,91 @@
+PASS    Environment · Server is up and sign-in is ON
+PASS    Environment · QA run uses its own data file, not data/db.json
+PASS    Dataset · All 18 partners present after create-or-find
+PASS    Dataset · Count of MANUFACTURER
+PASS    Dataset · Count of SS
+PASS    Dataset · Count of DB
+PASS    Dataset · Count of RETAILER
+PASS    Dataset · Total QA partners (API and data file)
+PASS    Dataset · No duplicate partner IDs
+PASS    Dataset · Every record's type, parent, city, state and PIN verified in API and data file
+PASS    Dataset · No broken parent references
+PASS    Dataset · All records in Maharashtra except SS-002 (one SS per state)
+PASS    Dataset · Every QA partner has its sign-in(s)
+PASS    Business rules · Second Super Stockist in Maharashtra refused
+PASS    Auth · API without a session is refused
+PASS    Auth · Page without a session redirects to /login
+PASS    Auth · Wrong password refused without saying which part was wrong
+PASS    Auth · Sign-in locked after 5 wrong passwords (non-existent ID, so no real account is locked)
+PASS    Auth · Sign-in returns the right user and partner
+PASS    Auth · Session cookie is HttpOnly and SameSite=Lax
+PASS    Auth · Sign-out ends the session (old cookie refused)
+PASS    Roles · 7 roles × 18 APIs match the permission map (126 requests)
+PASS    Roles · SS batch list is empty (it made no batches)
+PASS    Roles · DB batch list is empty (it made no batches)
+PASS    Roles · RETAILER batch list is empty (it made no batches)
+PASS    Roles · ADMIN bootstrap returns all partners
+PASS    Roles · TRACE_OWNER bootstrap returns all partners
+PASS    Roles · OPERATOR bootstrap returns only its own partner
+PASS    Roles · QC bootstrap returns only its own partner
+PASS    Roles · SS bootstrap returns only its own partner
+PASS    Roles · DB bootstrap returns only its own partner
+PASS    Roles · RETAILER bootstrap returns only its own partner
+PASS    Security · TRACE_OWNER cannot create, edit or delete partners (server-side)
+PASS    Security · OPERATOR cannot create, edit or delete partners (server-side)
+PASS    Security · SS cannot create, edit or delete partners (server-side)
+PASS    Security · DB cannot create, edit or delete partners (server-side)
+PASS    Security · RETAILER cannot create, edit or delete partners (server-side)
+PASS    Security · Refused writes left the record unchanged
+PASS    Security · No record was created by refused requests
+FAIL    Security · Admin settings are not readable without signing in — expected 401/403; actual 200; fields: notReceivedThresholdDays, demoMode, demoThresholdMinutes, lotSticker, packSticker, publicBaseUrl, poolIssueSize, poolRefillBelow, defaultCountry, id
+PASS    Security · Non-admin cannot change settings (PUT)
+PASS    Security · Cross-site write refused
+PASS    Security · Non-JSON body refused (blocks plain HTML form posts)
+PASS    Security · Malformed JSON refused
+PASS    Security · Body over 256 KB refused
+PASS    Hierarchy · SS-001 sees exactly DST-001..003 (not SS-002's distributors or any retailer)
+PASS    Hierarchy · SS-002 sees exactly DST-004..005
+PASS    Hierarchy · Each distributor sees and can dispatch to exactly its 2 retailers
+PASS    Hierarchy · The plant can dispatch to both Super Stockists (no plant → SS assignment exists)
+PASS    Hierarchy · A retailer has no partner list
+PASS    Security · Retailer cannot trace codes (HQ only)
+PASS    Business rules · Partner tier cannot be changed
+PASS    Business rules · Distributor cannot be assigned to a retailer
+PASS    Business rules · Parent that does not exist refused
+PASS    Business rules · SS cannot move into a state that already has one
+PASS    Validation · Unsupported status value refused
+PASS    Validation · Unexpected fields (id, createdBy) are ignored
+PASS    Validation · Registration refuses empty name
+PASS    Validation · Registration refuses missing phone
+PASS    Validation · Registration refuses bad email
+PASS    Validation · Registration refuses bad phone
+PASS    Validation · Registration refuses 5-digit PIN
+PASS    Validation · Registration refuses no state
+PASS    Validation · Registration refuses state not in India
+PASS    Validation · Registration refuses name over 100 characters
+PASS    Validation · Registration refuses unknown tier
+PASS    Validation · Registration refuses weak password
+PASS    Validation · Registration refuses duplicate phone
+NEEDS INVESTIGATION Validation · PIN code from another state (Delhi 110001 for Maharashtra) — expected refused, if PIN/state consistency is required; actual 200 — accepted: only the 6-digit format is checked
+PASS    Concurrency · Two identical registrations at once: exactly one is created
+PASS    Lifecycle · Edit persists (re-read)
+PASS    Lifecycle · Deactivating a partner stops its open session and its sign-in
+PASS    Lifecycle · Partner with assigned partners cannot be deleted
+PASS    Lifecycle · Disposable partner without history is deleted with its sign-in
+PASS    Traceability · Scan chain already created by an earlier run (not repeated); re-verifying
+PASS    Traceability · HQ trace of the case shows every step in order
+PASS    Traceability · Trace shows location, status and batch
+PASS    Audit · Every movement in the trace names the person
+PASS    Traceability · Pack trace shows its parent case
+PASS    Security · Public QR check shows no business data
+PASS    Roles · Operator batch list holds only its own plant's batches
+PASS    Traceability · Unknown code → UNKNOWN_CODE (safe message)
+PASS    Security · Malformed code handled safely (no 500, no echo as HTML)
+PASS    Security · Injection-style code on the public check handled safely
+PASS    Audit · Scan audit records failures too (wrong receiver, unknown code, blocked)
+PASS    Audit · No API can delete or edit the scan audit
+PASS    Reporting · Dashboard lot total equals the lots in the data file
+PASS    Integrity · No orphan partners, sign-ins, packs or locations; every parent is an allowed tier
+PASS    Integrity · No pre-existing sign-in was removed by this run
+
+{"PASS":87,"FAIL":1,"BLOCKED":0,"NOT RUN":0,"NEEDS INVESTIGATION":1}

@@ -37,7 +37,7 @@ export default function SearchPage() {
   return (
     <>
       <PageTitle title="Search code" subtitle="Lot or pack code (or a scanned QR URL)." />
-      <Card className="mb-4">
+      <Card className="mb-4 lg:mb-5">
         <ScanInput label="Code" onScan={search} demoScreen="search" />
       </Card>
       {error && <Notice tone="error">{error}</Notice>}
@@ -53,8 +53,8 @@ export default function SearchPage() {
 
 function Details({ r, onOpen }: { r: Found; onOpen: (code: string) => void }) {
   return (
-    <div className="space-y-4" data-testid="search-result">
-      <div className="grid gap-4 lg:grid-cols-3">
+    <div className="animate-rise-in space-y-4 lg:space-y-5" data-testid="search-result">
+      <div className="grid gap-4 lg:grid-cols-3 lg:gap-5">
         <Card title={r.kind === "LOT" ? `${r.lot.lotType} lot` : "Pack"}>
           <div className="space-y-2 text-sm">
             <div>
@@ -64,43 +64,43 @@ function Details({ r, onOpen }: { r: Found; onOpen: (code: string) => void }) {
               Status: <StatusBadge status={r.status} />
             </div>
             <div data-testid="search-location">Location: {r.location}</div>
-            {r.quarantineReason && <div className="text-orange-800">Quarantine reason: {r.quarantineReason}</div>}
+            {r.quarantineReason && <div className="text-warning">Quarantine reason: {r.quarantineReason}</div>}
           </div>
         </Card>
         {r.batch && (
           <Card title="Batch">
             <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
-              <dt className="text-slate-500">Code</dt>
+              <dt className="text-muted-foreground">Code</dt>
               <dd>
                 <Code>{r.batch.code}</Code> {r.batch.status === "RECALLED" && <StatusBadge status="RECALLED" />}
               </dd>
-              <dt className="text-slate-500">Flavour</dt>
+              <dt className="text-muted-foreground">Flavour</dt>
               <dd>{r.batch.flavour}</dd>
-              <dt className="text-slate-500">Mfg / Exp</dt>
+              <dt className="text-muted-foreground">Mfg / Exp</dt>
               <dd>
                 {r.batch.mfgDate} / {r.batch.expiryDate}
               </dd>
-              <dt className="text-slate-500">Maker</dt>
+              <dt className="text-muted-foreground">Maker</dt>
               <dd>{r.batch.manufacturer}</dd>
             </dl>
           </Card>
         )}
         <Card title={r.parent ? "Parent lot" : `Packs (${r.children.length})`}>
           {r.parent ? (
-            <button type="button" className="space-y-1 text-left text-sm" onClick={() => onOpen(r.parent!.code)}>
+            <button type="button" className="-m-2 w-[calc(100%+1rem)] space-y-1 rounded-control p-2 text-left text-sm transition-colors duration-150 hover:bg-muted" onClick={() => onOpen(r.parent!.code)}>
               <div>
                 <Code>{r.parent.code}</Code> <StatusBadge status={r.parent.status} />
               </div>
-              <div className="text-slate-600">{r.parent.location}</div>
+              <div className="text-muted-foreground">{r.parent.location}</div>
             </button>
           ) : (
-            <ul className="space-y-1 text-sm">
+            <ul className="space-y-1.5 text-sm">
               {r.children.map((c) => (
                 <li key={c.code}>
-                  <button type="button" className="text-left hover:underline" onClick={() => onOpen(c.code)}>
+                  <button type="button" className="text-left underline-offset-4 hover:underline" onClick={() => onOpen(c.code)}>
                     <Code>{c.code}</Code>
                   </button>{" "}
-                  <StatusBadge status={c.status} /> <span className="text-xs text-slate-500">{c.location}</span>
+                  <StatusBadge status={c.status} /> <span className="text-xs text-muted-foreground">{c.location}</span>
                 </li>
               ))}
             </ul>
@@ -111,8 +111,8 @@ function Details({ r, onOpen }: { r: Found; onOpen: (code: string) => void }) {
         <Table head={["Time", "Event", "Item", "From → To", "Status", "User", "Device", "Invoice", "Note"]} empty={r.timeline.length ? null : <Empty>No events</Empty>}>
           {r.timeline.map((t, i) => (
             <tr key={i} data-testid="timeline-row">
-              <Td className="whitespace-nowrap">{fmtTime(t.at)}</Td>
-              <Td className="font-semibold">{t.event}</Td>
+              <Td className="whitespace-nowrap text-muted-foreground">{fmtTime(t.at)}</Td>
+              <Td className="whitespace-nowrap text-xs font-bold tracking-wide">{t.event}</Td>
               <Td>
                 <Code>{t.itemCode}</Code>
               </Td>

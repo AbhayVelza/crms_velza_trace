@@ -30,7 +30,7 @@ export default function OpenLotPage() {
   return (
     <>
       <PageTitle title="Open lot" subtitle="Opening a case or tray makes its packs individually movable. The lot itself stays here as OPENED." />
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-2 lg:gap-5">
         <Card>
           <ScanInput label="Lot code" onScan={onScan} demoScreen="open" />
           <div className="mt-4">

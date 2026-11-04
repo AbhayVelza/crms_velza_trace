@@ -29,7 +29,7 @@ npm run dev             # http://localhost:3000 → pick a role and a person (si
 | Command | What it does |
 |---|---|
 | `npm run dev` | Start the app (dev mode, with the demo helper) |
-| `npm run seed` | Reset the data to a clean start: country 91, the 4 flavours, default settings, and two sign-ins — Velza Admin `AD0001` and Velza HQ `HQ0001` — with the passwords from `VELZA_ADMIN_PASSWORD` / `VELZA_HQ_PASSWORD` or new random ones, printed once. No partners or devices |
+| `npm run seed` | Clean start for an **empty** store: country 91, the 4 flavours, default settings, and two sign-ins — Velza Admin `AD0001` and Velza HQ `HQ0001` — with the passwords from `VELZA_ADMIN_PASSWORD` / `VELZA_HQ_PASSWORD` or new random ones, printed once. No partners or devices. It prints the target and **refuses a store that already holds partners, batches, lots or history**; `npm run seed -- --force` replaces it after writing a timestamped backup (`db.backup-<time>-before-seed.json`, never overwritten), and never in production |
 | `npm run clear-activity` | Delete all activity (batches, lots, packs, movements, scans, reprints) but keep partners, sign-ins, devices, used batch codes, ID sequences and settings |
 | `npm test` | Unit + service tests (vitest), twice for the business logic: on the JSON file and on PostgreSQL (embedded) |
 | `npm run test:e2e` | The demo script below in a real browser (Playwright, builds and serves on port 3100 with its own data and the test sample network) |
@@ -68,8 +68,8 @@ printed once in the server log.
 | Setting | Sign-in |
 |---|---|
 | `npm run dev` (default) | **Off**: pick who to act as; switch any time in the header. Every active person can be picked, including people entered before sign-in existed |
-| `npm run build` + `npm start` (default) | **On**: sign-in ID and password |
-| `SIGN_IN=on` / `SIGN_IN=off` in `.env.local` | Forces it either way |
+| `npm run build` + `npm start` | **Always on**: sign-in ID and password. `SIGN_IN=off` is ignored here (a warning is logged) |
+| `SIGN_IN=on` / `SIGN_IN=off` in `.env.local` | Forces it either way under `npm run dev` only |
 
 Sign-in being off changes only *who you are*; every portal and permission rule still applies (a Retailer still
 can't open Admin pages). Turn it on (`SIGN_IN=on`) before anyone outside the development team uses the app.
@@ -135,7 +135,8 @@ Sign in as the person named in each step.
    keep the dates → cases: 2 and 0 → trays: 1 and 1. The **Summary** shows batch codes from the pool,
    lots `00001–00003` (cases `00001–00002`, tray `00003`) and `00001`, and `17 + 7 = 24` stickers.
    **Create & print** lists the 24 generated codes with all their fields; **Open print view**: lot sticker first,
-   then its packs. Choose *Label roll* or *A4 sheet* and **Print** — the lots become `PRINTED`.
+   then its packs. Choose *Label roll* or *A4 sheet* and **Print** (this only opens the browser print dialog).
+   Once the stickers have printed correctly, press **Mark as printed** — only then do the lots become `PRINTED`.
 2. **`MF0001-QC` → Verify.** Scan a lot, then its packs (ticks appear). Scan *pack of another lot*
    from the demo helper → red "does not belong". **Confirm → PACKED**. Repeat for all 4 lots.
 3. **`MF0001-OP` → Dispatch.** Destination *SS-1*, invoice `INV-001`, scan the two Original

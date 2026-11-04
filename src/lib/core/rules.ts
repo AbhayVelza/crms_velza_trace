@@ -195,7 +195,12 @@ export interface VerifiableLot {
 
 export function canStartVerification(lot: VerifiableLot): RuleResult {
   if (isBlocked(lot.status)) return reject("BLOCKED_CODE", `Lot ${lot.lotCode} is ${lot.status}`);
-  if (lot.status === "GENERATED") return reject("NOT_PRINTED", `Lot ${lot.lotCode} has not been printed yet`);
+  if (lot.status === "GENERATED") {
+    return reject(
+      "NOT_PRINTED",
+      `Lot ${lot.lotCode} has been generated but not marked as printed yet. The manufacturer operator must finish printing its stickers from Print orders, or use "Mark as printed" there once they are printed.`,
+    );
+  }
   if (lot.status !== "PRINTED") return reject("WRONG_STATUS", `Lot ${lot.lotCode} is ${lot.status}, already verified`);
   return OK;
 }
@@ -233,12 +238,13 @@ export function canOpenLot(lot: MovableItem, actor: Partner): RuleResult {
   if (actor.type !== "RETAILER") {
     return reject("NOT_ALLOWED", "Only a Retailer can open a lot");
   }
+  // Blocked first: a recalled/void code raises an alert wherever it is scanned (and recall is public anyway).
   const blocked = blockedResult(lot);
   if (blocked) return blocked;
+  // Location before status, so a retailer cannot learn the state of a lot held by someone else.
+  if (lot.locationId !== actor.id) return reject("NOT_AT_LOCATION", `Lot ${lot.code} is not in stock at ${actor.name}`);
   if (lot.status === "OPENED") return reject("WRONG_STATUS", `Lot ${lot.code} is already opened`);
-  if (lot.locationId !== actor.id || lot.status !== AT_STATUS[actor.type]) {
-    return reject("NOT_AT_LOCATION", `Lot ${lot.code} is not in stock at ${actor.name}`);
-  }
+  if (lot.status !== AT_STATUS[actor.type]) return reject("NOT_AT_LOCATION", `Lot ${lot.code} is not in stock at ${actor.name}`);
   return OK;
 }
 

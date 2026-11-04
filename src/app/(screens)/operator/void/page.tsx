@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { ScanInput } from "@/components/ScanInput";
+import { useAction } from "@/components/useAction";
 import { Button, Card, Code, Field, Input, Notice, PageTitle } from "@/components/ui";
 import { api, errorText } from "@/lib/client";
 import { notifyDataChanged } from "@/lib/events";
@@ -10,6 +11,7 @@ export default function VoidPage() {
   const [lotCode, setLotCode] = useState("");
   const [reason, setReason] = useState("");
   const [msg, setMsg] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+  const [voiding, runSubmit] = useAction(submit);
 
   async function submit() {
     setMsg(null);
@@ -37,7 +39,7 @@ export default function VoidPage() {
             <Field label="Reason (optional)">
               <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Misprint, smudged" />
             </Field>
-            <Button variant="danger" onClick={submit}>
+            <Button variant="danger" onClick={runSubmit} loading={voiding}>
               Void lot
             </Button>
           </div>

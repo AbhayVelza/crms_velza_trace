@@ -1,0 +1,69 @@
+### OLD lookup: whole movement ledger
+Index Scan using code_history_pkey on code_history (actual time=0.237..68.893 rows=104127 loops=1)
+  Filter: (record_type = 'MOVEMENT'::text)
+  Rows Removed by Filter: 20115
+Planning Time: 13.462 ms
+Execution Time: 73.620 ms
+### NEW lookup: this item's history (code = ANY)
+Sort (actual time=0.731..0.732 rows=7 loops=1)
+  Sort Key: history_id
+  Sort Method: quicksort  Memory: 25kB
+  ->  Bitmap Heap Scan on code_history (actual time=0.415..0.426 rows=7 loops=1)
+        Filter: (record_type = 'MOVEMENT'::text)
+        Rows Removed by Filter: 52
+        ->  Bitmap Index Scan on code_history_code (actual time=0.229..0.229 rows=59 loops=1)
+Planning Time: 13.558 ms
+### NEW lookup: batch-wide events
+Sort (actual time=0.421..0.422 rows=0 loops=1)
+  Sort Key: history_id
+  Sort Method: quicksort  Memory: 25kB
+  ->  Bitmap Heap Scan on code_history (actual time=0.379..0.379 rows=0 loops=1)
+        Filter: ((record_type = 'MOVEMENT'::text) AND (item_kind = 'BATCH'::text))
+        ->  Bitmap Index Scan on code_history_code (actual time=0.357..0.357 rows=0 loops=1)
+Planning Time: 9.414 ms
+Execution Time: 0.495 ms
+### NEW alerts: in-transit synced lots
+Sort (actual time=84.269..84.309 rows=1023 loops=1)
+  Sort Key: row_no
+  Sort Method: quicksort  Memory: 64kB
+  ->  Bitmap Heap Scan on codes (actual time=1.766..83.932 rows=1023 loops=1)
+        Filter: (synced AND (code_type = 'LOT'::text))
+        Rows Removed by Filter: 4092
+        ->  Bitmap Index Scan on codes_location (actual time=1.167..1.167 rows=5115 loops=1)
+Planning Time: 11.778 ms
+### NEW alerts/dashboard: failed scans
+Sort (actual time=6.203..6.205 rows=18 loops=1)
+  Sort Key: history_id
+  Sort Method: quicksort  Memory: 26kB
+  ->  Bitmap Heap Scan on code_history (actual time=0.841..6.137 rows=18 loops=1)
+        Filter: (NOT ok)
+        Rows Removed by Filter: 20097
+        ->  Bitmap Index Scan on code_history_type_event (actual time=0.572..0.573 rows=20115 loops=1)
+Planning Time: 9.921 ms
+### NEW my partners: stock at the SS's partners (location_id = ANY)
+Sort (actual time=59.376..59.436 rows=2074 loops=1)
+  Sort Key: codes.row_no
+  Sort Method: quicksort  Memory: 178kB
+    ->  Bitmap Heap Scan on partners (actual time=0.302..1.738 rows=105 loops=1)
+          ->  Bitmap Index Scan on partners_parent (actual time=0.041..0.041 rows=105 loops=1)
+  ->  Bitmap Heap Scan on codes (actual time=2.980..59.025 rows=2074 loops=1)
+        Filter: (code_type = 'LOT'::text)
+        Rows Removed by Filter: 8296
+### NEW my stock: lots here
+Sort (actual time=7.224..7.232 rows=201 loops=1)
+  Sort Key: row_no
+  Sort Method: quicksort  Memory: 32kB
+  ->  Bitmap Heap Scan on codes (actual time=0.206..7.158 rows=201 loops=1)
+        Filter: (code_type = 'LOT'::text)
+        Rows Removed by Filter: 804
+        ->  Bitmap Index Scan on codes_location (actual time=0.109..0.109 rows=1005 loops=1)
+Planning Time: 7.006 ms
+### Dashboard (unchanged read): every lot
+Sort (actual time=44.736..45.445 rows=20002 loops=1)
+  Sort Key: row_no
+  Sort Method: quicksort  Memory: 1550kB
+  ->  Seq Scan on codes (actual time=0.027..42.140 rows=20002 loops=1)
+        Filter: (code_type = 'LOT'::text)
+        Rows Removed by Filter: 80010
+Planning Time: 6.082 ms
+Execution Time: 46.690 ms

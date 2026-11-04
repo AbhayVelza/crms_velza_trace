@@ -82,6 +82,8 @@ export const registrationSchema = z.object({
 });
 
 export type AdminEntity = keyof typeof ENTITY_SCHEMAS;
+/** What each table is called in messages (never the internal table name). */
+const ENTITY_LABELS: Record<AdminEntity, string> = { partners: "Partner", users: "Sign-in", devices: "Device", countries: "Country", flavours: "Flavour" };
 export const ADMIN_ENTITIES = Object.keys(ENTITY_SCHEMAS) as AdminEntity[];
 
 export function isAdminEntity(s: string): s is AdminEntity {
@@ -124,6 +126,9 @@ async function validatePartner(tx: StoreTx, data: Partial<Partner> & { type: Par
   }
 }
 
+/** Device names are compared trimmed, with runs of spaces as one, ignoring case. */
+export const deviceNameKey = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCase();
+
 async function validateEntity(tx: StoreTx, entity: AdminEntity, data: Record<string, unknown>, selfId?: string) {
   if (entity === "users") {
     const role = data.role as Role;
@@ -140,6 +145,14 @@ async function validateEntity(tx: StoreTx, entity: AdminEntity, data: Record<str
   if (entity === "devices") {
     const m = await tx.partners.get(String(data.manufacturerId));
     if (!m || m.type !== "MANUFACTURER") throw badRequest("BAD_PARTNER", "Devices belong to a manufacturer");
+    // Each PC of a plant needs a name its operators can tell apart (spaces and case don't count).
+    // Checked when a name is set or changed, so older look-alike names don't block other edits (e.g. Offline).
+    const key = deviceNameKey(String(data.name ?? ""));
+    const self = selfId ? await tx.devices.get(selfId) : null;
+    if (!self || deviceNameKey(self.name) !== key || self.manufacturerId !== m.id) {
+      const same = (await tx.devices.list({ manufacturerId: m.id })).find((d) => d.id !== selfId && deviceNameKey(d.name) === key);
+      if (same) throw badRequest("DUPLICATE", `${m.name} already has a device named "${same.name}"`);
+    }
   }
   if (entity === "countries" || entity === "flavours") {
     const rows = await tx[entity].list({ code: data.code as string });
@@ -246,7 +259,7 @@ export async function updateEntity(userId: string | null, entity: AdminEntity, i
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const repo = tx[entity] as any;
     const current = await repo.get(id);
-    if (!current) throw notFound(`${entity} ${id}`);
+    if (!current) throw notFound(`${ENTITY_LABELS[entity]} ${id} not found`);
     if ((entity === "countries" || entity === "flavours") && patch.code && patch.code !== current.code) {
       throw badRequest("CODE_LOCKED", "Codes are used inside printed stickers and cannot be changed; add a new entry instead");
     }
@@ -284,19 +297,22 @@ async function referencesTo(tx: StoreTx, entity: AdminEntity, row: { id: string;
   const found: string[] = [];
   const add = (n: number, what: string) => n && found.push(`${n} ${what}`);
   if (entity === "partners") {
+    // Each reference read by its own filter (indexed where it matters), never whole tables; a row
+    // matching on two fields is counted once.
     const [devices, children, lots, packs, moves, scans] = await Promise.all([
       tx.devices.list({ manufacturerId: id }),
       tx.partners.list({ parentId: id }),
-      tx.lots.list(),
-      tx.packs.list(),
-      tx.movements.list(),
+      Promise.all([tx.lots.list({ manufacturerId: id }), tx.lots.list({ locationId: id }), tx.lots.list({ inTransitToId: id })]),
+      Promise.all([tx.packs.list({ locationId: id }), tx.packs.list({ inTransitToId: id })]),
+      Promise.all([tx.movements.list({ fromId: id }), tx.movements.list({ toId: id })]),
       tx.scans.list({ partnerId: id }),
     ]);
+    const distinct = (lists: { id: string }[][]) => new Set(lists.flat().map((r) => r.id)).size;
     add(devices.length, "device(s)");
     add(children.length, "assigned partner(s)");
-    add(lots.filter((l) => l.manufacturerId === id || l.locationId === id || l.inTransitToId === id).length, "lot(s)");
-    add(packs.filter((p) => p.locationId === id || p.inTransitToId === id).length, "pack(s)");
-    add(moves.filter((m) => m.fromId === id || m.toId === id).length, "movement(s)");
+    add(distinct(lots), "lot(s)");
+    add(distinct(packs), "pack(s)");
+    add(distinct(moves), "movement(s)");
     add(scans.length, "scan(s)");
   }
   if (entity === "users") {
@@ -336,7 +352,7 @@ export async function deleteEntity(userId: string | null, entity: AdminEntity, i
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const repo = tx[entity] as any;
     const current = await repo.get(id);
-    if (!current) throw notFound(`${entity} ${id}`);
+    if (!current) throw notFound(`${ENTITY_LABELS[entity]} ${id} not found`);
     if (entity === "users") await guardAdmins(tx, actor, current, null);
     const refs = await referencesTo(tx, entity, current);
     // A partner's own sign-ins go with it, unless one of them already has history.
@@ -416,8 +432,11 @@ export const settingsSchema = z
   })
   .partial();
 
-export async function getSettings() {
-  return getStore().getSettings();
+/** Settings are Admin configuration: readable by Velza Admin only (DEF-001: was readable without signing in). */
+export async function getSettings(userId: string | null) {
+  const store = getStore();
+  requireAction(await loadActor(store, userId), "admin");
+  return store.getSettings();
 }
 
 export async function updateSettings(userId: string | null, body: unknown): Promise<Settings> {

@@ -7,7 +7,7 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getStore } from "@/lib/store";
 import { bootstrap, createEntity, deleteEntity, listEntity, updateEntity } from "@/lib/services/admin";
-import { changePassword, devLogin, devUsers, login, me, sessionUserId } from "@/lib/services/auth";
+import { changePassword, devDefaultUserId, devLogin, devUsers, login, me, sessionUserId } from "@/lib/services/auth";
 import { buildSampleSeed, SAMPLE_PASSWORD } from "../fixtures/sampleNetwork";
 
 let dir: string;
@@ -206,9 +206,18 @@ describe("while sign-in is off (development)", () => {
     await expect(devLogin({ userId: "RT0004" })).rejects.toMatchObject({ status: 401 });
   });
 
+  it("without a session the app acts as the Velza Admin, and writes nothing", async () => {
+    process.env.SIGN_IN = "off";
+    const sessions = (await store().sessions.list()).length;
+    expect(await devDefaultUserId()).toBe("AD0001");
+    expect((await me("AD0001")).user.role).toBe("ADMIN");
+    expect((await store().sessions.list()).length).toBe(sessions);
+  });
+
   it("is refused as soon as sign-in is on", async () => {
     process.env.SIGN_IN = "on";
     await expect(devUsers()).rejects.toMatchObject({ status: 404 });
     await expect(devLogin({ userId: "AD0001" })).rejects.toMatchObject({ status: 404 });
+    expect(await devDefaultUserId()).toBeNull();
   });
 });

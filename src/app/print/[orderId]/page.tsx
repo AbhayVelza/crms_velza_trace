@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { PrintView } from "@/components/PrintView";
+import { Loading } from "@/components/ui";
 
 async function OrderPrint({ params }: { params: PageProps<"/print/[orderId]">["params"] }) {
   const { orderId } = await params;
@@ -8,7 +9,7 @@ async function OrderPrint({ params }: { params: PageProps<"/print/[orderId]">["p
 
 export default function Page({ params }: PageProps<"/print/[orderId]">) {
   return (
-    <Suspense fallback={<p className="text-sm text-slate-500">Loading…</p>}>
+    <Suspense fallback={<Loading />}>
       <OrderPrint params={params} />
     </Suspense>
   );

@@ -272,3 +272,40 @@ export function allocateLots(batch: BatchForAllocation, cases: number, trays: nu
   for (let i = 0; i < trays; i++) push("TRAY");
   return { lots, nextLot: n };
 }
+
+// ---------------------------------------------------------------- batch counter
+
+/** Lots one continuation print order may add to an existing batch (PostgreSQL). */
+export const CONTINUE_MAX_LOTS = 10_000;
+/** Lower cap on the JSON file store, which rewrites the whole file on every transaction. */
+export const JSON_CONTINUE_MAX_LOTS = 1_000;
+
+export type BatchCounterState = "AVAILABLE" | "EXHAUSTED" | "INVALID";
+
+export interface BatchCounter {
+  state: BatchCounterState;
+  lotsAllocated: number | null;
+  lastLotHex: string | null;
+  nextLotHex: string | null;
+  /** Lots still free in the batch; never negative. */
+  remaining: number;
+}
+
+/**
+ * A batch's lot counter read from its stored `nextLot` (the next unallocated number). Exhausted once
+ * `1869F` is used (nextLot = 0x186A0). Anything that `nextLotNumber` can't produce is INVALID and is
+ * reported, never repaired.
+ */
+export function batchCounter({ nextLot }: { nextLot: unknown }): BatchCounter {
+  if (typeof nextLot !== "number" || !Number.isInteger(nextLot) || nextLot < LOT_NUMBER_MIN || nextLot > LOT_NUMBER_MAX + 1) {
+    return { state: "INVALID", lotsAllocated: null, lastLotHex: null, nextLotHex: null, remaining: 0 };
+  }
+  const exhausted = nextLot > LOT_NUMBER_MAX;
+  return {
+    state: exhausted ? "EXHAUSTED" : "AVAILABLE",
+    lotsAllocated: nextLot - 1,
+    lastLotHex: nextLot > LOT_NUMBER_MIN ? formatLotNumber(nextLot - 1) : null,
+    nextLotHex: exhausted ? null : formatLotNumber(nextLot),
+    remaining: Math.max(0, LOT_NUMBER_MAX - nextLot + 1),
+  };
+}

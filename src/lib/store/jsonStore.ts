@@ -34,9 +34,16 @@ class Mutex {
 
 const clone = <T>(v: T): T => structuredClone(v);
 
-function matches<T extends object>(row: T, where?: Where<T>): boolean {
-  if (!where) return true;
-  return Object.entries(where).every(([k, v]) => v === undefined || (row as Record<string, unknown>)[k] === v);
+/** A row test for `where`, built once per call (an "any of" array becomes a Set, not a scan per row). */
+function matcher<T extends object>(where?: Where<T>): (row: T) => boolean {
+  const tests = Object.entries(where ?? {})
+    .filter(([, v]) => v !== undefined)
+    .map(([k, v]): ((row: Record<string, unknown>) => boolean) => {
+      if (!Array.isArray(v)) return (row) => row[k] === v;
+      const any = new Set<unknown>(v);
+      return (row) => any.has(row[k]);
+    });
+  return (row) => tests.every((t) => t(row as Record<string, unknown>));
 }
 
 function emptyDb(): DbSnapshot {
@@ -75,12 +82,12 @@ function makeTx(db: DbSnapshot): StoreTx {
         return r ? clone(r) : null;
       },
       async findOne(where) {
-        const r = rows().find((x) => matches(x, where));
+        const r = rows().find(matcher(where));
         return r ? clone(r) : null;
       },
       async list(where) {
         return rows()
-          .filter((x) => matches(x, where))
+          .filter(matcher(where))
           .map(clone);
       },
       async create(row) {

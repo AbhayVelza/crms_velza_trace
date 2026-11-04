@@ -172,11 +172,30 @@ test.describe.serial("Velza demo script (9.1)", () => {
     await expect(page.getByTestId("summary-stickers-1")).toHaveText("17");
     await expect(page.getByTestId("summary-stickers-2")).toHaveText("7");
 
+    // Nothing but the explicit "Mark as printed" may confirm printing: watch every confirmation request.
+    const confirmations: string[] = [];
+    page.on("request", (r) => {
+      if (r.method() === "POST" && /\/api\/print-orders\/[^/]+\/printed$/.test(r.url())) confirmations.push(r.url());
+    });
     await page.getByRole("button", { name: "Create & print" }).click();
     // Every generated code is listed with all its fields, with the sticker total and sync status.
     await expect(page.getByTestId("code-row")).toHaveCount(24);
     await expect(page.getByTestId("code-totals")).toContainText("Synced24 / 24");
+    // Downloading the codes CSV records nothing.
+    const download = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Download CSV" }).click();
+    expect((await download).suggestedFilename()).toMatch(/^codes-.*\.csv$/);
     await page.getByRole("button", { name: "Open print view" }).click();
+    await expect(page.getByText("PRINTING PENDING", { exact: true })).toBeVisible();
+    const orderId = page.url().split("/print/")[1];
+    const orderStatus = async () => (await (await page.request.get(`/api/print-orders/${orderId}`)).json()).printOrder;
+    // Leaving the print view and coming back records nothing.
+    await page.goto("/operator/orders");
+    const finish = page.locator(`a[href="/print/${orderId}"]`);
+    await expect(finish).toHaveText("Finish printing");
+    await expect(page.getByText("PRINTING PENDING", { exact: true })).toBeVisible();
+    await finish.click();
+    await expect(page.getByText("PRINTING PENDING", { exact: true })).toBeVisible();
     const stickers = page.locator(".sticker");
     await expect(stickers).toHaveCount(24);
     lots = await page.locator('.sticker[data-kind="LOT"]').evaluateAll((els) => els.map((e) => e.getAttribute("data-code")!));
@@ -209,8 +228,27 @@ test.describe.serial("Velza demo script (9.1)", () => {
         expect(await decodeShot(qr, BarcodeFormat.QR_CODE, `QR ${code}`, "device")).toMatch(new RegExp(`/t/${code}$`));
       }
     }
+    // Print only opens the browser dialog; printing, cancelling or closing it records nothing.
+    await page.evaluate(() => {
+      const w = window as unknown as { print: () => void; printCalls: number };
+      w.printCalls = 0;
+      w.print = () => void w.printCalls++; // stands in for the dialog being opened and cancelled
+    });
     await page.getByRole("button", { name: /^Print 24 stickers/ }).click();
-    await expect(page.getByText("4 lot(s) marked PRINTED")).toBeVisible();
+    expect(await page.evaluate(() => (window as unknown as { printCalls: number }).printCalls)).toBe(1);
+    await expect(page.getByText(/Nothing has been recorded yet/)).toBeVisible();
+    await expect(page.getByText("PRINTING PENDING", { exact: true })).toBeVisible();
+    expect(await orderStatus()).toMatchObject({ status: "CREATED", printedAt: null });
+    expect(confirmations).toEqual([]);
+
+    // The explicit confirmation, double-clicked: one request, one transaction, status and time shown.
+    await page.getByRole("button", { name: "Mark as printed" }).dblclick();
+    await expect(page.getByText(/^4 lot\(s\) marked PRINTED at .+ — ready for QC verification$/)).toBeVisible();
+    await expect(page.getByText("PRINTED", { exact: true })).toBeVisible();
+    await expect(page.getByText(/^Printed \S/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Mark as printed" })).toHaveCount(0);
+    expect(confirmations).toHaveLength(1);
+    expect(await orderStatus()).toMatchObject({ status: "PRINTED", printedAt: expect.any(String) });
   });
 
   test("2. supervisor verifies every lot; a pack from another lot is rejected", async ({ page }) => {
@@ -314,7 +352,9 @@ test.describe.serial("Velza demo script (9.1)", () => {
     await page.getByRole("button", { name: "Open print view" }).click();
     const lot = (offlineLot = (await page.locator(".sticker").first().getAttribute("data-code"))!);
     await page.getByRole("button", { name: /^Print 5 stickers/ }).click();
-    await expect(page.getByText("1 lot(s) marked PRINTED")).toBeVisible();
+    await expect(page.getByText("PRINTING PENDING", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Mark as printed" }).click();
+    await expect(page.getByText(/^1 lot\(s\) marked PRINTED at /)).toBeVisible();
     await verifyLot(page, lot, packsOf(lot, "CASE"));
 
     await as(page, "OPERATOR", null, "/dispatch");

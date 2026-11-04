@@ -10,7 +10,10 @@ import type { PrintOrder } from "@/lib/core/types";
 import { notifyDataChanged } from "@/lib/events";
 import type { Box } from "@/lib/stickerLayout";
 import { PrintStyles, StickerSheetView, stickerWarnings, type PrintMode } from "./Stickers";
-import { Button, Notice } from "./ui";
+import { useAction } from "./useAction";
+import { IconArrowLeft, IconPrinter } from "./icons";
+import { PRINT_CONFIRMATION_NOTE, PrintOrderStatus } from "./PrintOrderStatus";
+import { Button, fmtTime, Loading, Notice } from "./ui";
 import { useApi } from "./useApi";
 
 interface Sheet {
@@ -24,28 +27,31 @@ interface Sheet {
 export function PrintView({ path, backHref, backLabel }: { path: string; backHref: string; backLabel: string }) {
   const { data: sheet, error, reload } = useApi<Sheet>(path);
   const [mode, setMode] = useState<PrintMode>("roll");
-  const [msg, setMsg] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
-
-  if (error) return <Notice tone="error">{error}</Notice>;
-  if (!sheet) return <p className="text-sm text-slate-500">Loading stickers…</p>;
-
-  const order = sheet.printOrder;
-
-  async function markPrinted() {
-    if (!order) return;
+  const [msg, setMsg] = useState<{ tone: "ok" | "error" | "info"; text: string } | null>(null);
+  // The only way an order becomes PRINTED: the operator's explicit confirmation. One request at a time.
+  const [confirming, confirmPrinted] = useAction(async (orderId: string) => {
     try {
-      const r = await api<{ lotsPrinted: number }>(`/api/print-orders/${order.id}/printed`, { body: {} });
-      setMsg({ tone: "ok", text: r.lotsPrinted ? `${r.lotsPrinted} lot(s) marked PRINTED — ready for verification` : "Already marked PRINTED" });
+      const r = await api<{ lotsPrinted: number; printOrder: PrintOrder }>(`/api/print-orders/${orderId}/printed`, { body: {} });
+      const when = fmtTime(r.printOrder.printedAt);
+      setMsg({ tone: "ok", text: r.lotsPrinted ? `${r.lotsPrinted} lot(s) marked PRINTED at ${when} — ready for QC verification` : `Already marked PRINTED at ${when}` });
       reload();
       notifyDataChanged();
     } catch (e) {
-      setMsg({ tone: "error", text: errorText(e) });
+      setMsg({ tone: "error", text: `Not marked as printed: ${errorText(e)}` });
     }
-  }
+  });
 
+  if (error) return <Notice tone="error">{error}</Notice>;
+  if (!sheet) return <Loading>Loading stickers…</Loading>;
+
+  const order = sheet.printOrder;
+
+  /** Opens the browser print dialog only. Printing, cancelling or closing it records nothing. */
   function print() {
-    window.print(); // blocks until the dialog closes
-    void markPrinted();
+    window.print();
+    if (order && order.status !== "PRINTED") {
+      setMsg({ tone: "info", text: "Nothing has been recorded yet. When every sticker has printed correctly, press Mark as printed." });
+    }
   }
 
   const warnings = stickerWarnings(sheet.stickers, sheet.lotSize, sheet.packSize);
@@ -54,20 +60,18 @@ export function PrintView({ path, backHref, backLabel }: { path: string; backHre
   return (
     <div>
       <PrintStyles mode={mode} lotSize={sheet.lotSize} packSize={sheet.packSize} />
-      <div className="mb-4 space-y-3 print:hidden">
+      <div className="mb-6 space-y-3 border-b border-line pb-5 print:hidden">
         <div className="flex flex-wrap items-center gap-3">
-          <Link href={backHref} className="text-sm text-teal-800 hover:underline">
-            ← {backLabel}
+          <Link href={backHref} className="inline-flex items-center gap-1.5 rounded-full py-1 pr-2 text-sm font-medium text-muted-foreground transition-colors duration-150 hover:text-foreground">
+            <IconArrowLeft size={17} />
+            {backLabel}
           </Link>
-          <h1 className="text-lg font-semibold">{sheet.title}</h1>
-          {order && (
-            <span className={order.status === "PRINTED" ? "rounded bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-800" : "rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700"}>
-              {order.status === "PRINTED" ? "PRINTED" : "NOT PRINTED YET"}
-            </span>
-          )}
+          <h1 className="text-lg font-bold tracking-tight">{sheet.title}</h1>
+          {order && <PrintOrderStatus order={order} detail={false} />}
+          {order?.printedAt && <span className="text-xs text-muted-foreground">Printed {fmtTime(order.printedAt)}</span>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex overflow-hidden rounded-md border border-slate-300" role="radiogroup" aria-label="Print mode">
+          <div className="inline-flex gap-0.5 rounded-full border border-line-strong bg-surface-2 p-0.5" role="radiogroup" aria-label="Print mode">
             {(["roll", "a4"] as const).map((m) => (
               <button
                 key={m}
@@ -75,22 +79,25 @@ export function PrintView({ path, backHref, backLabel }: { path: string; backHre
                 role="radio"
                 aria-checked={mode === m}
                 onClick={() => setMode(m)}
-                className={mode === m ? "bg-teal-700 px-3 py-2 text-sm font-medium text-white" : "bg-white px-3 py-2 text-sm text-slate-700"}
+                className={mode === m ? "rounded-full bg-primary px-4 py-1.5 text-sm font-semibold text-primary-foreground transition-colors duration-150" : "rounded-full px-4 py-1.5 text-sm text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground"}
               >
                 {m === "roll" ? "Label roll (1 per page)" : "A4 sheet"}
               </button>
             ))}
           </div>
-          <Button onClick={print}>Print {sheet.stickers.length} sticker{sheet.stickers.length === 1 ? "" : "s"}</Button>
+          <Button onClick={print}>
+            <IconPrinter size={17} />
+            Print {sheet.stickers.length} sticker{sheet.stickers.length === 1 ? "" : "s"}</Button>
           {order && order.status !== "PRINTED" && (
-            <Button variant="secondary" onClick={markPrinted}>
+            <Button variant="secondary" loading={confirming} onClick={() => void confirmPrinted(order.id)}>
               Mark as printed
             </Button>
           )}
         </div>
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-muted-foreground">
           {lots} lot sticker(s) {sheet.lotSize.widthMm}×{sheet.lotSize.heightMm} mm, {sheet.stickers.length - lots} pack sticker(s) {sheet.packSize.widthMm}×{sheet.packSize.heightMm} mm. Order: lot sticker first, then its packs. Set the browser print scale to 100% (no &quot;fit to page&quot;).
         </p>
+        {order && order.status !== "PRINTED" && <Notice tone="info">{PRINT_CONFIRMATION_NOTE}</Notice>}
         {warnings.map((w) => (
           <Notice key={w} tone="warn">
             {w} — change sticker sizes in Admin → Settings.

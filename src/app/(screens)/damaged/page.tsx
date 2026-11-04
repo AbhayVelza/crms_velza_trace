@@ -54,7 +54,7 @@ export default function DamagedPage() {
         title="Damaged"
         subtitle="Report a damaged case, tray or pack held here. It leaves your stock, can no longer move, and Velza HQ is alerted."
       />
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-2 lg:gap-5">
         <Card title="Report damage">
           <Field label="1. What is wrong?" hint="Kept for every code you scan until you change it">
             <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Crushed in transit" maxLength={300} />
@@ -70,7 +70,7 @@ export default function DamagedPage() {
             {!reason.trim() && <Notice tone="info" className="mb-2">Say what is wrong first, then scan.</Notice>}
             <ScanInput label="2. Scan the damaged case, tray or pack" onScan={onScan} demoScreen="damage" disabled={!reason.trim()} />
           </div>
-          <p className="mt-2 text-xs text-slate-500">
+          <p className="mt-2 text-xs text-muted-foreground">
             Scan the lot code to report a whole case or tray, sealed or opened (an opened one takes the packs of it still here).
             Single packs can be reported once the lot is opened.
           </p>
@@ -88,9 +88,9 @@ export default function DamagedPage() {
                 ["Single packs", counts.packs],
               ] as const
             ).map(([label, n]) => (
-              <div key={label} className="rounded-md border border-slate-200 px-2 py-2">
-                <div className={n ? "text-xl font-semibold text-red-800" : "text-xl font-semibold text-slate-400"}>{n}</div>
-                <div className="text-xs text-slate-500">{label}</div>
+              <div key={label} className="rounded-control border border-line bg-surface-2 px-2 py-2">
+                <div className={n ? "text-xl font-semibold text-danger" : "text-xl font-semibold text-subtle-foreground"}>{n}</div>
+                <div className="text-xs text-muted-foreground">{label}</div>
               </div>
             ))}
           </div>
@@ -102,11 +102,11 @@ export default function DamagedPage() {
                 </Td>
                 <Td className="text-xs">
                   {d.kind === "LOT" ? (d.lotType === "CASE" ? "Case" : "Tray") : "Pack"} · {d.flavour}
-                  {d.kind === "LOT" && <div className="text-slate-500">{d.opened ? `Opened · ${d.packs} packs` : "Sealed"}</div>}
-                  <div className="text-slate-500">Batch {d.batchCode}</div>
+                  {d.kind === "LOT" && <div className="text-muted-foreground">{d.opened ? `Opened · ${d.packs} packs` : "Sealed"}</div>}
+                  <div className="text-muted-foreground">Batch {d.batchCode}</div>
                 </Td>
                 <Td>{d.reason ?? "—"}</Td>
-                <Td className="whitespace-nowrap text-xs text-slate-600">
+                <Td className="whitespace-nowrap text-xs text-muted-foreground">
                   {fmtTime(d.reportedAt)}
                   {d.reportedBy && <div>{d.reportedBy}</div>}
                 </Td>

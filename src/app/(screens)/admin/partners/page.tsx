@@ -10,6 +10,7 @@ import { INDIAN_STATES, PARTNER_ID_PREFIX } from "@/lib/core/ids";
 import { ASSIGNED_TO, assignedPluralOf, assignedTypesOf } from "@/lib/core/rules";
 import { PARTNER_TYPE_LABELS, PARTNER_TYPES, type Partner, type PartnerType } from "@/lib/core/types";
 import { notifyDataChanged } from "@/lib/events";
+import { countLabel } from "@/lib/format";
 
 const order = (t: unknown) => PARTNER_TYPES.indexOf(t as PartnerType);
 /** Tiers that have partners assigned to them: SS → distributors and retailers, DB → retailers. */
@@ -65,7 +66,7 @@ function RegisterForm({ partners }: { partners: Partner[] }) {
 
   return (
     <Card title="Register a partner">
-      <p className="mb-3 text-sm text-slate-600">
+      <p className="mb-3 text-sm text-muted-foreground">
         The partner gets the next ID of its tier — {PARTNER_TYPES.map((t) => `${PARTNER_ID_PREFIX[t]}0001`).join(", ")} … — and a sign-in with that ID
         (the plant gets two: -OP for the Operator and -QC for QC). Share the password with the person; they can change it after signing in.
       </p>
@@ -158,7 +159,7 @@ function RegisterForm({ partners }: { partners: Partner[] }) {
           </Field>
         )}
       </div>
-      <Button className="mt-4" onClick={submit} disabled={busy || !type}>
+      <Button className="mt-4" onClick={submit} disabled={!type} loading={busy}>
         {busy ? "Registering…" : "Register"}
       </Button>
       {msg && (
@@ -186,6 +187,11 @@ export default function PartnersPage() {
   const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name);
   const assignedTo = (id: string) => partners.filter((p) => p.parentId === id).length;
   const childPlural = (type: unknown) => assignedPluralOf(type as PartnerType);
+  // "1 distributor, 3 retailers": each assigned tier counted on its own, singular or plural.
+  const assignedLabel = (row: { id: string; type?: unknown }) =>
+    assignedTypesOf(row.type as PartnerType)
+      .map((t) => countLabel(partners.filter((p) => p.parentId === row.id && p.type === t).length, PARTNER_TYPE_LABELS[t].toLowerCase()))
+      .join(", ");
   const [view, setView] = useState("");
 
   return (
@@ -205,7 +211,7 @@ export default function PartnersPage() {
             </Notice>
           }
           toolbar={
-            <Select aria-label="Show" value={view} onChange={(e) => setView(e.target.value)} className="w-auto min-w-[16rem]">
+            <Select aria-label="Show" value={view} onChange={(e) => setView(e.target.value)} className="w-auto min-w-[16rem] max-w-full" wrapperClassName="inline-flex max-w-full">
               <option value="">All partners</option>
               {PARTNER_TYPES.map((t) => (
                 <option key={t} value={t}>
@@ -240,7 +246,7 @@ export default function PartnersPage() {
             { key: "address", label: "Address", type: "text" },
             { key: "city", label: "City", type: "text" },
             { key: "state", label: "State", type: "select", visible: (row) => row.type !== "MANUFACTURER", options: stateOptions },
-            { key: "pincode", label: "PIN", type: "text" },
+            { key: "pincode", label: "PIN", type: "text", minWidth: "min-w-[6rem]" },
             {
               key: "parentId",
               label: "Assigned to",
@@ -264,8 +270,8 @@ export default function PartnersPage() {
               type: "display",
               visible: (row) => PARENT_TYPES.includes(row.type as PartnerType),
               render: (row) => (
-                <button type="button" className="whitespace-nowrap text-teal-800 underline" onClick={() => setView(`of:${row.id}`)}>
-                  {assignedTo(row.id)} {childPlural(row.type)}
+                <button type="button" className="min-h-8 whitespace-nowrap rounded px-1 font-semibold text-foreground underline underline-offset-4 hover:no-underline" onClick={() => setView(`of:${row.id}`)}>
+                  {assignedLabel(row)}
                 </button>
               ),
             },

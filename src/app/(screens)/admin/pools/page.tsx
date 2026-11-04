@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useAction } from "@/components/useAction";
 import { useApi } from "@/components/useApi";
 import { Button, Card, Code, Empty, fmtTime, Input, Notice, PageTitle, StatusBadge, Table, Td } from "@/components/ui";
 import { api, errorText } from "@/lib/client";
@@ -15,6 +16,16 @@ export default function PoolsPage() {
   const { data: view, error, reload } = useApi<PoolView>("/api/admin/pools");
   const [counts, setCounts] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+  // One issue at a time; only the clicked device's button shows the spinner.
+  const [issuingId, setIssuingId] = useState<string | null>(null);
+  const [issuing, runIssue] = useAction(async (deviceId: string) => {
+    setIssuingId(deviceId);
+    try {
+      await issue(deviceId);
+    } finally {
+      setIssuingId(null);
+    }
+  });
 
   async function issue(deviceId: string) {
     setMsg(null);
@@ -46,8 +57,8 @@ export default function PoolsPage() {
             key={device.id}
             title={
               <span>
-                {device.name} <span className="font-normal text-slate-500">· {manufacturer}</span>{" "}
-                <span className={device.offline ? "text-slate-700" : "text-green-700"}>{device.offline ? "● Offline" : "● Online"}</span>
+                {device.name} <span className="font-normal text-muted-foreground">· {manufacturer}</span>{" "}
+                <span className={device.offline ? "text-foreground-2" : "text-success"}>{device.offline ? "● Offline" : "● Online"}</span>
               </span>
             }
             actions={
@@ -61,13 +72,13 @@ export default function PoolsPage() {
                   value={counts[device.id] ?? String(view.settings.poolIssueSize)}
                   onChange={(e) => setCounts({ ...counts, [device.id]: e.target.value })}
                 />
-                <Button onClick={() => issue(device.id)} disabled={device.offline} title={device.offline ? "Device is offline — refill blocked" : undefined}>
+                <Button onClick={() => runIssue(device.id)} disabled={device.offline || issuing} loading={issuingId === device.id} title={device.offline ? "Device is offline — refill blocked" : undefined}>
                   Issue codes
                 </Button>
               </div>
             }
           >
-            <p className="mb-2 text-sm text-slate-600">
+            <p className="mb-2 text-sm text-muted-foreground">
               <b>{reserved}</b> reserved · {used} used
             </p>
             <Table head={["Code", "Status", "Issued", "Used"]} empty={codes.length ? null : <Empty>No codes issued</Empty>}>

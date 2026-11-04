@@ -6,9 +6,10 @@ import { connection } from "next/server";
 import { ZodError } from "zod";
 import { NotFoundError } from "@/lib/store";
 import { clientIp, isCrossSiteWrite, LIMITS, logSecurityEvent, MAX_JSON_BYTES, RateLimiter } from "@/lib/security";
-import { sessionUserId } from "@/lib/services/auth";
+import { devDefaultUserId, sessionUserId } from "@/lib/services/auth";
 import { badRequest, forbidden, ServiceError } from "@/lib/services/common";
 import { SESSION_COOKIE } from "@/lib/sessionCookie";
+import { friendlyValidation } from "@/lib/validationMessages";
 
 export { SESSION_COOKIE };
 
@@ -102,14 +103,17 @@ export interface ApiError {
 
 export function errorResponse(e: unknown): Response {
   if (e instanceof ZodError) {
-    const message = e.issues.map((i) => `${i.path.join(".") || "body"}: ${i.message}`).join("; ");
-    return Response.json({ error: { code: "VALIDATION", message, details: e.issues } } satisfies ApiError, { status: 400 });
+    // Readable messages and one per field; zod's internal issue objects are not sent.
+    const { message, fields } = friendlyValidation(e);
+    return Response.json({ error: { code: "VALIDATION", message, details: fields } } satisfies ApiError, { status: 400 });
   }
   if (e instanceof ServiceError) {
     return Response.json({ error: { code: e.code, message: e.message, details: e.details } } satisfies ApiError, { status: e.status });
   }
   if (e instanceof NotFoundError) {
-    return Response.json({ error: { code: "NOT_FOUND", message: e.message } } satisfies ApiError, { status: 404 });
+    // Store-level "not found" names internal tables; the person gets a plain message, the log keeps the detail.
+    console.warn(`[velza] not found: ${e.message}`);
+    return Response.json({ error: { code: "NOT_FOUND", message: "The requested record was not found" } } satisfies ApiError, { status: 404 });
   }
   if (e instanceof RangeError) {
     return Response.json({ error: { code: "OUT_OF_RANGE", message: e.message } } satisfies ApiError, { status: 400 });
@@ -128,7 +132,8 @@ export function handler<C = unknown>(fn: (req: Request, ctx: C) => Promise<unkno
     try {
       const blocked = guard(req);
       if (blocked) return blocked;
-      requestUser.set(req, await sessionUserId(sessionTokenOf(req)));
+      // No valid session while sign-in is off (development) → the default Velza Admin, see devDefaultUserId.
+      requestUser.set(req, (await sessionUserId(sessionTokenOf(req))) ?? (await devDefaultUserId()));
       const out = await fn(req, ctx);
       return out instanceof Response ? out : Response.json(out);
     } catch (e) {

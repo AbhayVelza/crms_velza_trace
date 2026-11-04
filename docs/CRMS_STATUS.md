@@ -140,12 +140,20 @@ beyond 100k. Still whole-table: HQ dashboard, batch list, scan audit (loads all 
 
 ---
 
+## 4b. Verified state (4 Nov 2026)
+
+Unit JSON 357 passed + 1 skipped; PostgreSQL (PGlite, serial) 140 passed + 3 skipped; lint, typecheck, build pass;
+e2e 12/12; live API harness 101 PASS / 0 FAIL / 1 decision (INFO-1); management demo environment
+(`C:\Users\ADMIN\velza-demo`, port 3400) built through the API 31/31 and browser-checked 873/873 (7 roles, every page,
+4 widths). Print confirmation is now explicit (Print only opens the dialog; **Mark as printed** records it). Full
+matrix, demo script and limitations: `docs/MANAGEMENT_DEMO.md`.
+
 ## 6. Open defects
 
 | ID | Sev | Summary | Status |
 |---|---|---|---|
 | DEF-002 | P1 | Whole-table reads; dashboard/batch list/scan audit still too slow at 100k | Partly fixed; remainder: counts in DB, LIMIT/paging |
-| DEF-001 | P3 | `GET /api/admin/settings` answers without sign-in (read-only config) | Open — authorization change needs approval |
+| DEF-001 | P3 | `GET /api/admin/settings` answered without sign-in (read-only config) | **Fixed 4 Nov 2026** (uncommitted): Velza Admin only; unit test + live API check |
 | DEF-003 | P3 | With sign-in ON, every page logs a console 404 probing `/api/auth/dev-users` | **Fixed 30 Oct 2026** (uncommitted): no request when sign-in is on |
 | DEF-004 | P3 | Partner table has no search/sort/pagination | Open |
 | INFO-1 | — | PIN code not validated against state | Decision needed |

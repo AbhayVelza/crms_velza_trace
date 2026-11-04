@@ -195,7 +195,12 @@ export interface VerifiableLot {
 
 export function canStartVerification(lot: VerifiableLot): RuleResult {
   if (isBlocked(lot.status)) return reject("BLOCKED_CODE", `Lot ${lot.lotCode} is ${lot.status}`);
-  if (lot.status === "GENERATED") return reject("NOT_PRINTED", `Lot ${lot.lotCode} has not been printed yet`);
+  if (lot.status === "GENERATED") {
+    return reject(
+      "NOT_PRINTED",
+      `Lot ${lot.lotCode} has been generated but not marked as printed yet. The manufacturer operator must finish printing its stickers from Print orders, or use "Mark as printed" there once they are printed.`,
+    );
+  }
   if (lot.status !== "PRINTED") return reject("WRONG_STATUS", `Lot ${lot.lotCode} is ${lot.status}, already verified`);
   return OK;
 }

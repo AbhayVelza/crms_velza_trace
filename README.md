@@ -135,7 +135,8 @@ Sign in as the person named in each step.
    keep the dates → cases: 2 and 0 → trays: 1 and 1. The **Summary** shows batch codes from the pool,
    lots `00001–00003` (cases `00001–00002`, tray `00003`) and `00001`, and `17 + 7 = 24` stickers.
    **Create & print** lists the 24 generated codes with all their fields; **Open print view**: lot sticker first,
-   then its packs. Choose *Label roll* or *A4 sheet* and **Print** — the lots become `PRINTED`.
+   then its packs. Choose *Label roll* or *A4 sheet* and **Print** (this only opens the browser print dialog).
+   Once the stickers have printed correctly, press **Mark as printed** — only then do the lots become `PRINTED`.
 2. **`MF0001-QC` → Verify.** Scan a lot, then its packs (ticks appear). Scan *pack of another lot*
    from the demo helper → red "does not belong". **Confirm → PACKED**. Repeat for all 4 lots.
 3. **`MF0001-OP` → Dispatch.** Destination *SS-1*, invoice `INV-001`, scan the two Original

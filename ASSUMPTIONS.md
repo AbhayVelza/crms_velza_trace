@@ -14,9 +14,11 @@ Choices made where the spec was silent or ambiguous. Simplest reasonable option 
 ## Codes and rules (phase 2)
 
 - Lots start in an extra status **GENERATED** (codes allocated, stickers not printed yet). The print
-  view calls `window.print()` and then marks the order's lots **PRINTED** (spec: "after printing the
-  lot status is PRINTED"). A "Mark as printed" button is also shown in case the print dialog is
-  cancelled but stickers were printed.
+  view's **Print** only opens the browser print dialog; the operator then confirms with **Mark as
+  printed**, which marks the order's lots **PRINTED** (spec: "after printing the lot status is
+  PRINTED"). Printing is never inferred from the dialog opening or closing, Ctrl+P, a CSV download,
+  navigation or a timeout (changed 4 Nov 2026; before, Print marked the order printed even when the
+  dialog was cancelled).
 - `parseCode` validates country and flavour against the configured lists (defaults `91` and
   `OR/GA/NS/MN`); admins can add more. Codes of existing countries/flavours cannot be edited,
   because they are printed inside stickers.

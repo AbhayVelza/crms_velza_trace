@@ -64,6 +64,7 @@ export function GeneratedCodes({ printOrderId }: { printOrderId: string }) {
         </Button>
       }
     >
+      <p className="mb-3 text-xs text-muted-foreground">The CSV is a record of the codes; downloading it does not mark the order printed.</p>
       <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-5" data-testid="code-totals">
         <Stat label="Stickers" value={t.stickers} />
         <Stat label="Cases" value={t.cases} hint="1 lot + 4 packs each" />

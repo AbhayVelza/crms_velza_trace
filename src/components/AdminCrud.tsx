@@ -197,7 +197,7 @@ export function AdminCrud({
   const shown = sort ? [...filtered].sort(sort) : filtered;
 
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 space-y-4">
       {intro}
       {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
       {list.error && <Notice tone="error">{list.error}</Notice>}

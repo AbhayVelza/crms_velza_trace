@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Role } from "@/lib/core/types";
 import { getStore } from "@/lib/store";
 import { buildBaseSeed } from "@/lib/store/seedData";
-import { createEntity, deleteEntity, listEntity, updateEntity } from "@/lib/services/admin";
+import { createEntity, deleteEntity, getSettings, listEntity, updateEntity } from "@/lib/services/admin";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
 import { destinations, dispatch, myPartners } from "@/lib/services/movement";
 import { dashboard, lookup } from "@/lib/services/trace";
@@ -65,6 +65,12 @@ describe("one portal per role", () => {
 
   it("not signed in → 401", async () => {
     await expect(dashboard(null)).rejects.toMatchObject({ status: 401 });
+  });
+
+  it("settings are readable by Velza Admin only, never anonymously (DEF-001)", async () => {
+    await expect(getSettings(ids.admin)).resolves.toMatchObject({ publicBaseUrl: expect.any(String) });
+    await expect(getSettings(null)).rejects.toMatchObject({ status: 401 });
+    for (const who of [ids.hq, ids.ss1, ids.operator, ids.rt1]) await expect(getSettings(who)).rejects.toMatchObject({ status: 403 });
   });
 });
 

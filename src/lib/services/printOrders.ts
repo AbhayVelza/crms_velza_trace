@@ -623,7 +623,11 @@ export async function stickerForReprint(userId: string | null, code: string): Pr
   return { title: `Reprint ${code}`, stickers: [sticker], lotSize: settings.lotSticker, packSize: settings.packSticker, printOrder: null };
 }
 
-/** Called after window.print(): GENERATED lots of the order become PRINTED. */
+/**
+ * The operator's explicit "Mark as printed" confirmation (never inferred from the print dialog, a CSV download or
+ * navigation): GENERATED lots of the order and their packs become PRINTED, one PRINTED movement per lot, and the
+ * order gets its printedAt — all in one transaction. Repeating it changes nothing.
+ */
 export async function markPrinted(userId: string | null, printOrderId: string) {
   return getStore().transaction(async (tx) => {
     const actor = await loadActor(tx, userId);
@@ -631,6 +635,10 @@ export async function markPrinted(userId: string | null, printOrderId: string) {
     const order = await requireOwnOrder(tx, actor, printOrderId);
     const at = nowIso();
     const lots = await tx.lots.list({ printOrderId });
+    if (order.status !== "PRINTED" && !lots.some((l) => l.status === "GENERATED")) {
+      // Every lot was voided (or is otherwise no longer waiting for stickers): nothing to confirm.
+      throw badRequest("NOTHING_TO_PRINT", "No lot of this print order is waiting to be printed (voided lots cannot be marked as printed)");
+    }
     let changed = 0;
     for (const lot of lots.filter((l) => l.status === "GENERATED")) {
       await tx.lots.update(lot.id, { status: "PRINTED", updatedAt: at });

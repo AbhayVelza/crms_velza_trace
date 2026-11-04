@@ -211,7 +211,7 @@ export default function PartnersPage() {
             </Notice>
           }
           toolbar={
-            <Select aria-label="Show" value={view} onChange={(e) => setView(e.target.value)} className="w-auto min-w-[16rem]">
+            <Select aria-label="Show" value={view} onChange={(e) => setView(e.target.value)} className="w-auto min-w-[16rem] max-w-full" wrapperClassName="inline-flex max-w-full">
               <option value="">All partners</option>
               {PARTNER_TYPES.map((t) => (
                 <option key={t} value={t}>

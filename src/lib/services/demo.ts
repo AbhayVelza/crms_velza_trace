@@ -39,7 +39,11 @@ export async function demoCodes(userId: string | null, screen: DemoScreen, lotCo
         const other = packs.find((p) => p.lotCode !== lotCode && lot && lotByCode.get(p.lotCode)?.manufacturerId === lot.manufacturerId);
         return [...own, ...(other ? [{ code: other.packCode, label: "pack of another lot" }] : [])];
       }
-      return lots.filter((l) => l.manufacturerId === me && (l.status === "PRINTED" || l.status === "GENERATED")).map((l) => ({ code: l.lotCode, label: lotLabel(l) }));
+      // Printed lots are the real examples. One unprinted lot is kept, last and labelled, to show the rejection.
+      const mine = lots.filter((l) => l.manufacturerId === me);
+      const printed = mine.filter((l) => l.status === "PRINTED").map((l) => ({ code: l.lotCode, label: lotLabel(l) }));
+      const unprinted = mine.find((l) => l.status === "GENERATED");
+      return [...printed, ...(unprinted ? [{ code: unprinted.lotCode, label: lotLabel(unprinted, " · not printed: expect rejection") }] : [])];
     }
     case "dispatch": {
       const sender = actor.partner;

@@ -432,8 +432,11 @@ export const settingsSchema = z
   })
   .partial();
 
-export async function getSettings() {
-  return getStore().getSettings();
+/** Settings are Admin configuration: readable by Velza Admin only (DEF-001: was readable without signing in). */
+export async function getSettings(userId: string | null) {
+  const store = getStore();
+  requireAction(await loadActor(store, userId), "admin");
+  return store.getSettings();
 }
 
 export async function updateSettings(userId: string | null, body: unknown): Promise<Settings> {

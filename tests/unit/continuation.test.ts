@@ -105,7 +105,7 @@ describe("continuation from the stored counter", () => {
     // A counter-only batch (no lots yet) starting from 00001. Counters never move backwards (schema v3),
     // so it is a new batch row, not an existing batch rewound.
     const src = await newBatch();
-    const b = await store().batches.create({ ...src, id: crypto.randomUUID(), code: `Z${src.code.slice(1)}`, nextLot: 1 });
+    const b = await store().batches.create({ ...src, id: crypto.randomUUID(), code: `${src.code[0] === "Z" ? "Y" : "Z"}${src.code.slice(1)}`, nextLot: 1 });
     expect(formatLotNumber(await store().nextLotNumber(b.code, 10_000))).toBe("00001");
     expect(formatLotNumber((await batchOf(b.code)).nextLot)).toBe("02711");
     expect(formatLotNumber(await store().nextLotNumber(b.code, 10_000))).toBe("02711");
@@ -171,7 +171,7 @@ describe("capacity and exhaustion", () => {
     // Damaged data (e.g. a bad restore) arrives as a row with an invalid counter: no update may move a
     // counter backwards (schema v3), so it is written as a new batch row.
     const src = await newBatch();
-    const b = await store().batches.create({ ...src, id: crypto.randomUUID(), code: `Y${src.code.slice(1)}`, nextLot: 0 });
+    const b = await store().batches.create({ ...src, id: crypto.randomUUID(), code: `${src.code[0] === "Y" ? "X" : "Y"}${src.code.slice(1)}`, nextLot: 0 });
     await expect(store().batches.update(b.id, { nextLot: -5 })).rejects.toMatchObject({ code: "COUNTER_BACKWARDS" });
     await expect(cont(operator, b.code, 1, 0)).rejects.toMatchObject({ status: 409, code: "BATCH_COUNTER_INVALID" });
     expect((await batchOf(b.code)).nextLot).toBe(0);

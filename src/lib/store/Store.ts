@@ -117,13 +117,45 @@ export const COLLECTIONS = [
   "settings",
 ] as const satisfies readonly (keyof DbSnapshot)[];
 
+export interface TransactionOptions {
+  /**
+   * Transactions with the same key run one after another across every app process (PostgreSQL: a
+   * session advisory lock taken before BEGIN, so the transaction's snapshot is fresh). Used for code
+   * allocation so concurrent print orders wait instead of failing. The JSON file and PGlite stores
+   * already run one transaction at a time and ignore it.
+   */
+  lockKey?: string;
+}
+
 export interface Store extends StoreTx {
   /** Run `fn` atomically: all writes commit together or none do. */
-  transaction<R>(fn: (tx: StoreTx) => Promise<R>): Promise<R>;
+  transaction<R>(fn: (tx: StoreTx) => Promise<R>, opts?: TransactionOptions): Promise<R>;
   /** Replace all data (used by the seed script, the JSON → database import and the chain conversion). */
   reset(data: DbSnapshot): Promise<void>;
   /** Every row of every table (backups, clear-activity, the JSON → database import). */
   snapshot(): Promise<DbSnapshot>;
+}
+
+/**
+ * A write the storage layer refuses because it would break code integrity, whatever the caller:
+ * a batch's lot counter moving backwards, or deleting / renaming a code a print order issued.
+ */
+export class IntegrityError extends Error {
+  constructor(
+    public code: "COUNTER_BACKWARDS" | "ISSUED_CODE_PROTECTED",
+    message: string,
+  ) {
+    super(message);
+    this.name = "IntegrityError";
+  }
+}
+
+/** The JSON file changed on disk since this process read it (another process or an editor wrote it). */
+export class ConcurrentWriteError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ConcurrentWriteError";
+  }
 }
 
 export class NotFoundError extends Error {

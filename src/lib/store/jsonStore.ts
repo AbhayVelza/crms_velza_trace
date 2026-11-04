@@ -1,14 +1,22 @@
-// Store implementation over a single JSON file (data/db.json).
-// Writes are serialized by an in-process mutex; each transaction works on a draft copy
-// and is persisted with write-temp-then-rename so the file is never half written.
+// Store implementation over a single JSON file (data/db.json). SINGLE-PROCESS trial storage only:
+// - one process owns the file: `<file>.lock` (pid, host, token) is created exclusively on first use and
+//   removed when the process exits; a second process gets JsonStoreLockedError instead of data;
+// - inside the process, writes are serialized by one mutex per file (shared by every JsonStore instance);
+// - each transaction works on a draft copy and is persisted with write-temp-then-rename, and is refused
+//   (ConcurrentWriteError, nothing written) if the file changed on disk since it was read.
+// Two processes sharing one file used to hand out the same lot codes (audit, 4 Nov 2026); production
+// must use PostgreSQL.
 
-import { promises as fs } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync, promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { LOT_NUMBER_MAX } from "@/lib/core/codes";
-import { DEFAULT_SETTINGS, type Settings } from "@/lib/core/types";
+import { DEFAULT_SETTINGS, type Batch, type Lot, type Pack, type Settings } from "@/lib/core/types";
 import { conversionNeeded } from "./convertChain";
 import {
   COLLECTIONS,
+  ConcurrentWriteError,
+  IntegrityError,
   NotFoundError,
   type AppendOnlyRepo,
   type DbSnapshot,
@@ -33,6 +41,145 @@ class Mutex {
 }
 
 const clone = <T>(v: T): T => structuredClone(v);
+
+// ---------------------------------------------------------------- process ownership of the file
+
+/** Another live process owns this JSON file. */
+export class JsonStoreLockedError extends Error {
+  constructor(
+    public file: string,
+    public holder: { pid?: number; host?: string; startedAt?: string } | null,
+  ) {
+    super(
+      `${file} is in use by another process${holder?.pid ? ` (pid ${holder.pid}${holder.host ? ` on ${holder.host}` : ""}, since ${holder.startedAt ?? "?"})` : ""}. ` +
+        `The JSON file store is single-process: stop the other server or script first (use PostgreSQL to run several app processes). ` +
+        `If no such process exists, delete ${file}.lock.`,
+    );
+    this.name = "JsonStoreLockedError";
+  }
+}
+
+interface LockInfo {
+  pid: number;
+  host: string;
+  startedAt: string;
+  token: string;
+}
+
+interface FileOwner {
+  mutex: Mutex;
+  lockPath: string;
+  token: string;
+}
+
+const g = globalThis as unknown as { __velzaJsonOwners?: Map<string, FileOwner>; __velzaJsonExitHook?: boolean };
+
+function ownerKey(file: string): string {
+  const abs = path.resolve(file);
+  return process.platform === "win32" ? abs.toLowerCase() : abs;
+}
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM"; // exists, owned by someone else
+  }
+}
+
+function readLock(lockPath: string): LockInfo | null {
+  try {
+    const info = JSON.parse(readFileSync(lockPath, "utf8")) as LockInfo;
+    return typeof info?.pid === "number" && typeof info.token === "string" ? info : null;
+  } catch {
+    return null;
+  }
+}
+
+function releaseAll() {
+  for (const owner of g.__velzaJsonOwners?.values() ?? []) {
+    try {
+      if (readLock(owner.lockPath)?.token === owner.token) unlinkSync(owner.lockPath);
+    } catch {
+      // already gone
+    }
+  }
+  g.__velzaJsonOwners?.clear();
+}
+
+/** Release this process's JSON file locks (scripts and tests call it via closeStores; exit does it too). */
+export function releaseJsonStoreLocks(): void {
+  releaseAll();
+}
+
+/**
+ * Take (or reuse) this process's ownership of `file`. A lock left by a process that no longer exists on
+ * this host is taken over; a live holder, or a holder on another host, is refused.
+ */
+function acquireOwner(file: string): FileOwner {
+  g.__velzaJsonOwners ??= new Map();
+  const key = ownerKey(file);
+  const existing = g.__velzaJsonOwners.get(key);
+  if (existing) return existing;
+
+  const lockPath = `${path.resolve(file)}.lock`;
+  mkdirSync(path.dirname(lockPath), { recursive: true });
+  const info: LockInfo = { pid: process.pid, host: os.hostname(), startedAt: new Date().toISOString(), token: crypto.randomUUID() };
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const fd = openSync(lockPath, "wx"); // fails if the file exists: exactly one creator wins
+      try {
+        writeSync(fd, JSON.stringify(info));
+      } finally {
+        closeSync(fd);
+      }
+      const owner: FileOwner = { mutex: new Mutex(), lockPath, token: info.token };
+      g.__velzaJsonOwners.set(key, owner);
+      if (!g.__velzaJsonExitHook) {
+        g.__velzaJsonExitHook = true;
+        process.on("exit", releaseAll);
+      }
+      return owner;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    }
+    const holder = readLock(lockPath);
+    if (!holder) {
+      // Being written right now, or garbage: give a writer a moment, then treat it as stale.
+      if (attempt < 2) {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+        continue;
+      }
+    } else if (holder.host !== info.host || (holder.pid !== process.pid && pidAlive(holder.pid))) {
+      throw new JsonStoreLockedError(file, holder);
+    }
+    // Stale (dead process, or an earlier module instance of this same process): move it aside
+    // atomically, check it is still the lock we judged stale, then try to create ours again.
+    const aside = `${lockPath}.stale-${info.token}`;
+    try {
+      renameSync(lockPath, aside);
+    } catch {
+      continue; // someone else moved it first
+    }
+    const moved = readLock(aside);
+    if (holder && moved?.token !== holder.token) {
+      // We moved a fresh lock another process had just created: put it back and give up.
+      try {
+        renameSync(aside, lockPath);
+      } catch {
+        // its owner will notice on write (ConcurrentWriteError) at worst
+      }
+      throw new JsonStoreLockedError(file, moved);
+    }
+    try {
+      unlinkSync(aside);
+    } catch {
+      // ignore
+    }
+  }
+  throw new JsonStoreLockedError(file, readLock(lockPath));
+}
 
 /** A row test for `where`, built once per call (an "any of" array becomes a Set, not a scan per row). */
 function matcher<T extends object>(where?: Where<T>): (row: T) => boolean {
@@ -123,6 +270,40 @@ function makeTx(db: DbSnapshot): StoreTx {
     return { list: r.list, append: r.create };
   };
 
+  // Integrity guards, the same as the PostgreSQL triggers (schema v3): a batch's lot counter never
+  // moves backwards, and a code issued by a print order is never deleted.
+  const issued = (printOrderId: string) => db.printOrders.some((o) => o.id === printOrderId);
+  const batches = repo<Batch>("batches");
+  const guardedBatches: Repo<Batch> = {
+    ...batches,
+    async update(id, patch) {
+      const current = db.batches.find((b) => b.id === id);
+      if (current && patch.nextLot !== undefined && typeof current.nextLot === "number" && !(Number(patch.nextLot) >= current.nextLot)) {
+        throw new IntegrityError("COUNTER_BACKWARDS", `Batch ${current.code}: the lot counter cannot move backwards (${current.nextLot} → ${patch.nextLot})`);
+      }
+      return batches.update(id, patch);
+    },
+  };
+  const lots = repo<Lot>("lots");
+  const guardedLots: Repo<Lot> = {
+    ...lots,
+    async delete(id) {
+      const lot = db.lots.find((l) => l.id === id);
+      if (lot && issued(lot.printOrderId)) throw new IntegrityError("ISSUED_CODE_PROTECTED", `Code ${lot.lotCode} was issued by print order ${lot.printOrderId} and cannot be deleted`);
+      return lots.delete(id);
+    },
+  };
+  const packs = repo<Pack>("packs");
+  const guardedPacks: Repo<Pack> = {
+    ...packs,
+    async delete(id) {
+      const pack = db.packs.find((p) => p.id === id);
+      const lot = pack && db.lots.find((l) => l.lotCode === pack.lotCode);
+      if (pack && lot && issued(lot.printOrderId)) throw new IntegrityError("ISSUED_CODE_PROTECTED", `Code ${pack.packCode} was issued by print order ${lot.printOrderId} and cannot be deleted`);
+      return packs.delete(id);
+    },
+  };
+
   const tx: StoreTx = {
     countries: repo("countries"),
     flavours: repo("flavours"),
@@ -130,10 +311,10 @@ function makeTx(db: DbSnapshot): StoreTx {
     users: repo("users"),
     devices: repo("devices"),
     batchCodePool: repo("batchCodePool"),
-    batches: repo("batches"),
+    batches: guardedBatches,
     printOrders: repo("printOrders"),
-    lots: repo("lots"),
-    packs: repo("packs"),
+    lots: guardedLots,
+    packs: guardedPacks,
     movements: ledger("movements"),
     scans: ledger("scans"),
     reprints: ledger("reprints"),
@@ -181,7 +362,14 @@ function makeTx(db: DbSnapshot): StoreTx {
 export class JsonStore implements Store {
   private cache: DbSnapshot | null = null;
   private cacheMtime = -1;
-  private readonly mutex = new Mutex();
+  private cacheSize = -1;
+  private owner: FileOwner | null = null;
+
+  /** This process's ownership of the file, taken on first use (JsonStoreLockedError if another process has it). */
+  private get mutex(): Mutex {
+    this.owner ??= acquireOwner(this.filePath);
+    return this.owner.mutex;
+  }
 
   constructor(
     private readonly filePath: string,
@@ -193,9 +381,13 @@ export class JsonStore implements Store {
 
   /** `locked` = caller already holds the mutex. `check` = refuse unconverted data (snapshot() reads it as it is). */
   private async readDb(locked = false, check = true): Promise<DbSnapshot> {
+    void this.mutex; // ownership first: never read a file another process is writing
     let mtime: number;
+    let size: number;
     try {
-      mtime = (await fs.stat(this.filePath)).mtimeMs;
+      const st = await fs.stat(this.filePath);
+      mtime = st.mtimeMs;
+      size = st.size;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
       // First run without `npm run seed`: create the base seed so the app works.
@@ -209,9 +401,10 @@ export class JsonStore implements Store {
       await (locked ? create() : this.mutex.run(create));
       return this.readDb(locked, check);
     }
-    if (!this.cache || mtime !== this.cacheMtime) {
+    if (!this.cache || mtime !== this.cacheMtime || size !== this.cacheSize) {
       this.cache = normalize(JSON.parse(await fs.readFile(this.filePath, "utf8")));
       this.cacheMtime = mtime;
+      this.cacheSize = size;
       this.notConverted = conversionNeeded(this.cache);
     }
     if (check && this.notConverted) {
@@ -226,14 +419,33 @@ export class JsonStore implements Store {
     await fs.writeFile(tmp, JSON.stringify(data, null, 1), "utf8");
     await renameWithRetry(tmp, this.filePath);
     this.cache = data;
-    this.cacheMtime = (await fs.stat(this.filePath)).mtimeMs;
+    const st = await fs.stat(this.filePath);
+    this.cacheMtime = st.mtimeMs;
+    this.cacheSize = st.size;
     this.notConverted = null; // written by the app, a seed, an import or the conversion itself
   }
 
+  /** Refuse to write if the file on disk is no longer the version this transaction read. */
+  private async assertUnchanged(mtime: number, size: number) {
+    let st: { mtimeMs: number; size: number } | null = null;
+    try {
+      st = await fs.stat(this.filePath);
+    } catch {
+      st = null;
+    }
+    if (!st || st.mtimeMs !== mtime || st.size !== size) {
+      this.cache = null; // re-read on the next request
+      throw new ConcurrentWriteError(`${this.filePath} was changed by another process during this request — nothing was saved. Try again.`);
+    }
+  }
+
+  /** `opts.lockKey` is not needed here: one process owns the file and its transactions already run one at a time. */
   transaction<R>(fn: (tx: StoreTx) => Promise<R>): Promise<R> {
     return this.mutex.run(async () => {
       const draft = clone(await this.readDb(true));
+      const [mtime, size] = [this.cacheMtime, this.cacheSize];
       const result = await fn(makeTx(draft));
+      await this.assertUnchanged(mtime, size);
       await this.writeDb(draft);
       return result;
     });

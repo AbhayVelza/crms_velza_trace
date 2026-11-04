@@ -9,7 +9,7 @@ import { getStore } from "@/lib/store";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
 import { dispatch, openLot, receive } from "@/lib/services/movement";
 import { reprint, setDeviceOffline, sync, voidLot } from "@/lib/services/operator";
-import { createPrintOrder, markPrinted, stickerForReprint, stickersForOrder } from "@/lib/services/printOrders";
+import { createPrintOrder, markPrinted, serveReprint, stickersForOrder } from "@/lib/services/printOrders";
 import { alerts, dashboard, lookup, myStock, publicLookup, recall } from "@/lib/services/trace";
 import { verify } from "@/lib/services/verify";
 
@@ -69,13 +69,14 @@ describe("demo script 9.1", () => {
       { flavour: "GA", mfgDate: today, expiryDate: expiry, cases: 0, trays: 1 },
     ];
     const preview = await createPrintOrder(ids.operator, { batches, preview: true });
+    if (!preview.preview) throw new Error("expected a preview");
     expect(preview.plan.ok).toBe(true);
     expect(preview.plan.batches[0].lotRange).toEqual(["00001", "00003"]);
     expect(preview.plan.batches[1].lotRange).toEqual(["00001", "00001"]);
     expect(preview.plan.batches.map((b) => b.stickerCount)).toEqual([17, 7]);
     expect(preview.plan.totalStickers).toBe(24);
 
-    const created = await createPrintOrder(ids.operator, { batches });
+    const created = await createPrintOrder(ids.operator, { idempotencyKey: crypto.randomUUID(), batches });
     if (created.preview) throw new Error("expected created order");
     orderId = created.printOrder.id;
     [orig, ga] = created.printOrder.batchCodes;
@@ -195,7 +196,7 @@ describe("demo script 9.1", () => {
     const device = (await store().devices.list())[0];
     await setDeviceOffline(ids.operator, device.id, { offline: true });
     const poolBefore = (await store().batchCodePool.list({ status: "RESERVED" })).length;
-    const created = await createPrintOrder(ids.operator, { batches: [{ flavour: "NS", mfgDate: today, expiryDate: expiry, cases: 1, trays: 0 }] });
+    const created = await createPrintOrder(ids.operator, { idempotencyKey: crypto.randomUUID(), batches: [{ flavour: "NS", mfgDate: today, expiryDate: expiry, cases: 1, trays: 0 }] });
     if (created.preview) throw new Error("expected order");
     const lot = created.printOrder.lotCodes[0];
     expect(created.printOrder.synced).toBe(false);
@@ -223,15 +224,17 @@ describe("demo script 9.1", () => {
     await expect(reprint(ids.operator, { code, reason: " " })).rejects.toThrow(/reason/);
     const r = await reprint(ids.operator, { code, reason: "Sticker torn while pasting" });
     expect(r.reprint).toMatchObject({ code, reason: "Sticker torn while pasting", itemKind: "PACK" });
-    const sheet = await stickerForReprint(ids.operator, code);
+    const sheet = await serveReprint(ids.operator, r.reprint.id);
     expect(sheet.stickers).toEqual([{ kind: "PACK", code, header: "PACK 3 of 6 | 4 CANS" }]);
+    // the logged reprint prints once
+    await expect(serveReprint(ids.operator, r.reprint.id)).rejects.toMatchObject({ status: 409, code: "REPRINT_ALREADY_USED" });
     expect((await store().movements.list({ type: "REPRINTED" }))[0]).toMatchObject({ itemCode: code, note: "Sticker torn while pasting" });
     // no new codes were created
     expect((await store().lots.list()).length).toBe(5);
   });
 
   it("extra: quarantine on failed verification, void, dashboard", async () => {
-    const created = await createPrintOrder(ids.operator, { batches: [{ flavour: "OR", mfgDate: today, expiryDate: expiry, cases: 2, trays: 0 }] });
+    const created = await createPrintOrder(ids.operator, { idempotencyKey: crypto.randomUUID(), batches: [{ flavour: "OR", mfgDate: today, expiryDate: expiry, cases: 2, trays: 0 }] });
     if (created.preview) throw new Error("expected order");
     await markPrinted(ids.operator, created.printOrder.id);
     const [a, b] = created.printOrder.lotCodes;

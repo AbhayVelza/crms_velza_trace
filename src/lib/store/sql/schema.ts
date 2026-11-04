@@ -6,8 +6,11 @@
 // v2: the chain is Manufacturer → Super Stockist → Distributor → Retailer (a few Retailers are served by
 // their Super Stockist directly). The Supplier tier is gone and Outlet is now Retailer (RT0001). A v1
 // database is upgraded in place by the last section of the SQL.
+//
+// v3 (4 Nov 2026): print order kind + request fingerprint, reprint → original print order, and triggers
+// that refuse a lot counter moving backwards or an issued code being deleted. Added in place; no data change.
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 // Checks whose values changed in v2. Each is named explicitly — with the name PostgreSQL gave it in
 // v1 — so the upgrade can replace it, and is written once here for both CREATE TABLE and the upgrade.
@@ -295,6 +298,49 @@ ALTER TABLE codes
   DROP CONSTRAINT IF EXISTS codes_status_check,
   ADD CONSTRAINT codes_status_check CHECK (
     ${CODE_STATUS_CHECK});
+
+-- ============================================================ v3: code integrity
+-- Every print order records its kind and request fingerprint (idempotent replays must match exactly),
+-- reprints record the order that issued the code, a batch's lot counter can never move backwards, and
+-- a code issued by a print order can never be deleted or renamed (TRUNCATE by a reset still works).
+-- New columns are nullable: orders and reprints made before v3 keep NULL.
+ALTER TABLE print_orders
+  ADD COLUMN IF NOT EXISTS order_kind text,
+  ADD COLUMN IF NOT EXISTS request_fingerprint text;
+ALTER TABLE print_orders
+  DROP CONSTRAINT IF EXISTS print_orders_order_kind_check,
+  ADD CONSTRAINT print_orders_order_kind_check CHECK (order_kind IS NULL OR order_kind IN ('NEW_BATCH', 'CONTINUATION'));
+ALTER TABLE code_history ADD COLUMN IF NOT EXISTS print_order_id text;
+
+CREATE OR REPLACE FUNCTION batches_counter_forward_only() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.next_lot < OLD.next_lot THEN
+    RAISE EXCEPTION 'Batch %: the lot counter cannot move backwards (% → %)', OLD.batch_code, OLD.next_lot, NEW.next_lot
+      USING ERRCODE = 'VZ001';
+  END IF;
+  RETURN NEW;
+END
+$$;
+DROP TRIGGER IF EXISTS batches_counter_forward_only ON batches;
+CREATE TRIGGER batches_counter_forward_only BEFORE UPDATE OF next_lot ON batches
+  FOR EACH ROW EXECUTE FUNCTION batches_counter_forward_only();
+
+CREATE OR REPLACE FUNCTION codes_issued_protected() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF (TG_OP = 'DELETE' OR NEW.code IS DISTINCT FROM OLD.code)
+     AND EXISTS (SELECT 1 FROM print_orders WHERE print_order_id = OLD.print_order_id) THEN
+    RAISE EXCEPTION 'Code % was issued by print order % and cannot be deleted or renamed', OLD.code, OLD.print_order_id
+      USING ERRCODE = 'VZ002';
+  END IF;
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END
+$$;
+DROP TRIGGER IF EXISTS codes_issued_protected ON codes;
+CREATE TRIGGER codes_issued_protected BEFORE UPDATE OF code OR DELETE ON codes
+  FOR EACH ROW EXECUTE FUNCTION codes_issued_protected();
 
 INSERT INTO schema_info (id, version) VALUES (1, ${SCHEMA_VERSION})
   ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version, applied_at = now();

@@ -168,7 +168,11 @@ export interface Batch {
 
 export type PrintOrderStatus = "CREATED" | "PRINTED";
 
+/** NEW_BATCH = creates its batches; CONTINUATION = adds lots to an existing batch. Absent on orders made before 4 Nov 2026. */
+export type PrintOrderKind = "NEW_BATCH" | "CONTINUATION";
+
 export interface PrintOrder {
+  /** The client's idempotency key (a UUID) for orders made since 4 Nov 2026. */
   id: string;
   createdAt: string;
   createdBy: string;
@@ -180,6 +184,9 @@ export interface PrintOrder {
   status: PrintOrderStatus;
   printedAt: string | null;
   synced: boolean;
+  kind?: PrintOrderKind | null;
+  /** SHA-256 of the canonical request; a replay of the same key must match it exactly. */
+  requestFingerprint?: string | null;
 }
 
 export interface Lot {
@@ -233,6 +240,10 @@ export const MOVEMENT_TYPES = [
   "DAMAGED",
   "SYNC",
   "POOL_ISSUED",
+  /** A print-order sticker sheet was handed to a browser for first-time printing (one per request). */
+  "PRINT_SHEET_SERVED",
+  /** A logged reprint authorization was used to serve its sticker (once; the row id makes reuse impossible). */
+  "REPRINT_SERVED",
 ] as const;
 export type MovementType = (typeof MOVEMENT_TYPES)[number];
 
@@ -278,6 +289,8 @@ export interface Reprint {
   reason: string;
   userId: string;
   deviceId: string | null;
+  /** The print order that originally allocated the code (absent on reprints logged before 4 Nov 2026). */
+  printOrderId?: string | null;
 }
 
 export interface StickerSize {

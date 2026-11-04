@@ -12,19 +12,20 @@ import type { Reprint } from "@/lib/core/types";
 import { notifyDataChanged } from "@/lib/events";
 
 export default function ReprintPage() {
-  const log = useApi<(Reprint & { userName: string })[]>("/api/reprint", { refreshOnChange: true });
+  const log = useApi<(Reprint & { userName: string; servedAt: string | null })[]>("/api/reprint", { refreshOnChange: true });
   const [code, setCode] = useState("");
   const [reason, setReason] = useState("");
   const [msg, setMsg] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
-  const [ready, setReady] = useState<string | null>(null);
+  // The logged reprint that may be printed (once): its id and code.
+  const [ready, setReady] = useState<{ id: string; code: string } | null>(null);
   const [reprinting, runSubmit] = useAction(submit);
 
   async function submit() {
     setMsg(null);
     try {
-      const r = await api<{ message: string }>("/api/reprint", { body: { code, reason } });
+      const r = await api<{ message: string; reprint: Reprint }>("/api/reprint", { body: { code, reason } });
       setMsg({ tone: "ok", text: r.message });
-      setReady(code);
+      setReady({ id: r.reprint.id, code });
       setReason("");
       notifyDataChanged();
     } catch (e) {
@@ -69,15 +70,15 @@ export default function ReprintPage() {
             </Notice>
           )}
           {ready && (
-            <Link href={`/print/code/${ready}`} className="mt-3 inline-flex min-h-10 items-center gap-2 rounded-full bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground transition-colors duration-150 hover:bg-primary-hover">
+            <Link href={`/print/reprint/${ready.id}`} className="mt-3 inline-flex min-h-10 items-center gap-2 rounded-full bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground transition-colors duration-150 hover:bg-primary-hover">
               <IconPrinter size={17} />
-              Open print view for {ready}
+              Print {ready.code} (once)
             </Link>
           )}
         </Card>
       </div>
       <Card title="Reprint log" className="mt-4">
-        <Table head={["Time", "Code", "Reason", "By"]} empty={log.data && !log.data.length ? <Empty>No reprints yet</Empty> : null}>
+        <Table head={["Time", "Code", "Reason", "By", "Printed"]} empty={log.data && !log.data.length ? <Empty>No reprints yet</Empty> : null}>
           {log.data?.map((r) => (
             <tr key={r.id}>
               <Td className="whitespace-nowrap text-muted-foreground">{fmtTime(r.at)}</Td>
@@ -86,6 +87,7 @@ export default function ReprintPage() {
               </Td>
               <Td>{r.reason}</Td>
               <Td>{r.userName}</Td>
+              <Td className="whitespace-nowrap text-muted-foreground">{r.servedAt ? fmtTime(r.servedAt) : "Not yet"}</Td>
             </tr>
           ))}
         </Table>

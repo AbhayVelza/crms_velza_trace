@@ -4,7 +4,7 @@
 
 import { LOT_NUMBER_MAX } from "@/lib/core/codes";
 import { DEFAULT_SETTINGS, type Settings } from "@/lib/core/types";
-import { NotFoundError, type AppendOnlyRepo, type DbSnapshot, type NewMovement, type NewScan, type Repo, type Row, type Store, type StoreTx, type Where } from "../Store";
+import { IntegrityError, NotFoundError, type AppendOnlyRepo, type DbSnapshot, type NewMovement, type NewScan, type Repo, type Row, type Store, type StoreTx, type TransactionOptions, type Where } from "../Store";
 import type { Query, SqlDriver } from "./driver";
 import { ALL_TABLES, SCHEMA_SQL, SCHEMA_VERSION } from "./schema";
 
@@ -204,6 +204,8 @@ const SPECS = {
       ["status", "status"],
       ["printedAt", "printed_at", "ts"],
       ["synced", "synced", "bool"],
+      ["kind", "order_kind"],
+      ["requestFingerprint", "request_fingerprint"],
     ),
   },
   lots: {
@@ -295,7 +297,7 @@ const SPECS = {
     key: "event_id",
     order: "history_id",
     fixed: { record_type: "REPRINT" },
-    cols: T(["id", "event_id"], ["at", "event_time", "ts"], ["code", "code"], ["itemKind", "item_kind"], ["reason", "reason"], ["userId", "login_id"], ["deviceId", "device_id"]),
+    cols: T(["id", "event_id"], ["at", "event_time", "ts"], ["code", "code"], ["itemKind", "item_kind"], ["reason", "reason"], ["userId", "login_id"], ["deviceId", "device_id"], ["printOrderId", "print_order_id"]),
     derive: async (rows) => rows.map(() => ({ event: "REPRINTED", ok: true, result: "OK" })),
   },
 } satisfies Record<string, Spec>;
@@ -548,9 +550,17 @@ export class SqlStore implements Store {
     return d;
   }
 
-  async transaction<R>(fn: (tx: StoreTx) => Promise<R>): Promise<R> {
+  async transaction<R>(fn: (tx: StoreTx) => Promise<R>, opts?: TransactionOptions): Promise<R> {
     const d = await this.driver();
-    return d.transaction((q) => fn(makeTx(q)));
+    try {
+      return await d.transaction((q) => fn(makeTx(q)), opts);
+    } catch (e) {
+      // The integrity triggers (schema v3) raise these; callers see the same error as on the JSON store.
+      const code = (e as { code?: string }).code;
+      if (code === "VZ001") throw new IntegrityError("COUNTER_BACKWARDS", (e as Error).message);
+      if (code === "VZ002") throw new IntegrityError("ISSUED_CODE_PROTECTED", (e as Error).message);
+      throw e;
+    }
   }
 
   /** Replace all data. `version` = the database's schema version: an older one is upgraded in the same transaction. */
@@ -580,7 +590,8 @@ export class SqlStore implements Store {
     // which the v2 schema refuses to upgrade until its data is converted).
     const raw = await this.connection();
     const version = await schemaVersion(raw);
-    const d = version && version !== SCHEMA_VERSION ? raw : await this.driver();
+    // v2 → v3 only adds columns and triggers, so a v2 database is upgraded first and read normally.
+    const d = version && version < 2 ? raw : await this.driver();
     return d.transaction(async (q) => {
       const tx = makeTx(q);
       const out: Record<string, unknown> = {};

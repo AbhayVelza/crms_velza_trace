@@ -5,14 +5,15 @@
 // Business logic only sees the Store interface, so switching is configuration, not code.
 
 import path from "node:path";
-import { JsonStore } from "./jsonStore";
+import { JsonStore, releaseJsonStoreLocks } from "./jsonStore";
 import { firstRunSeed } from "./seedData";
 import { createPgDriver, createPgliteDriver, describeDatabaseUrl } from "./sql/driver";
 import { SqlStore } from "./sql/sqlStore";
 import type { Store } from "./Store";
 
 export type { Store, StoreTx, DbSnapshot } from "./Store";
-export { NotFoundError } from "./Store";
+export { ConcurrentWriteError, IntegrityError, NotFoundError, type TransactionOptions } from "./Store";
+export { JsonStoreLockedError } from "./jsonStore";
 
 export type StoreKind = "json" | "postgres" | "pglite";
 
@@ -73,4 +74,5 @@ export async function closeStores(): Promise<void> {
   const stores = [...(g.__velzaStores?.values() ?? [])];
   g.__velzaStores?.clear();
   await Promise.all(stores.map((s) => (s instanceof SqlStore ? s.close() : undefined)));
+  releaseJsonStoreLocks(); // a script or test file is done with its JSON files
 }

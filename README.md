@@ -209,7 +209,19 @@ The app runs on PostgreSQL as soon as it has a connection string:
 | `batches`, `print_orders`, `batch_code_pool`, `devices`, `countries`, `flavours`, `sessions`, `id_counters`, `settings` | supporting data the screens need | |
 
 Every write runs in a serializable transaction (retried automatically on a conflict), so two people scanning the
-same case at the same moment can't both succeed. To try the database code without a server, set `STORE=pglite`
+same case at the same moment can't both succeed. Print orders of one manufacturer also take an advisory lock, so
+concurrent orders, also from several app servers, wait their turn instead of failing.
+
+**Production uses PostgreSQL.** The JSON file is for single-process trials. One process owns it through
+`data/db.json.lock`, and a second server or script on the same file is refused (503 `STORE_LOCKED`). Stop the server
+before running `seed`, `db:import-json` or `clear-activity` on that file.
+
+**Serial integrity** (details in [WORKING_MODEL.md](WORKING_MODEL.md), "Serial integrity and duplicate-print
+protection"):
+- Creating a print order needs an `idempotencyKey` (UUID): a retry returns the same order.
+- A batch's lot counter never moves backwards, and an issued code can't be deleted (enforced in both stores).
+- A sticker sheet is served only until the order is confirmed printed.
+- A single sticker is printed only through a logged reprint, once. To try the database code without a server, set `STORE=pglite`
 (and `PGLITE_DIR=data/pg` to keep the data): an embedded PostgreSQL that runs inside the app — `npm test` and
 `npm run test:e2e:postgres` use it.
 
@@ -229,8 +241,16 @@ It converts the data the app uses (`data/db.json`, or the database when `DATABAS
 - every Supplier and its sign-ins are removed;
 - it refuses, changing nothing, if a Supplier holds stock or has history, because history is permanent.
 
-The PostgreSQL schema is now v2 (tiers `MANUFACTURER`, `SS`, `DB`, `RETAILER`; ID prefixes `MF`, `SS`, `DB`, `RT`;
-status `AT_RETAILER`). A v1 database is upgraded in place once its data has been converted.
+The PostgreSQL schema is now v3. v2 brought tiers `MANUFACTURER`, `SS`, `DB` and `RETAILER`, ID prefixes `MF`, `SS`,
+`DB` and `RT`, and status `AT_RETAILER`; a v1 database is upgraded in place once its data has been converted.
+
+v3 (4 Nov 2026) adds:
+- `print_orders.order_kind` and `request_fingerprint`;
+- `code_history.print_order_id`;
+- triggers that refuse a lot counter moving backwards or an issued code being deleted.
+
+A v2 database is upgraded in place, with no data change, on the app's first start or with `npm run db:migrate`.
+Columns are only added and existing rows keep NULL. Back up first, as for any migration.
 
 Decisions made where the spec was silent are listed in [ASSUMPTIONS.md](ASSUMPTIONS.md).
 

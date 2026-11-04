@@ -44,7 +44,7 @@ beforeAll(async () => {
   await createEntity("AD0001", "devices", { manufacturerId: r.partner.id, name: "Plant Two PC" });
 
   // Plant 1: three cases, verified; case 1 → SS0001 → DB0001 → RT0001 (opened); case 2 → SS0001 → RT0004.
-  const order = await createPrintOrder(ids.op, { batches: [{ flavour: "OR", mfgDate: "2026-10-01", expiryDate: "2027-10-01", cases: 3, trays: 0 }] });
+  const order = await createPrintOrder(ids.op, { idempotencyKey: crypto.randomUUID(), batches: [{ flavour: "OR", mfgDate: "2026-10-01", expiryDate: "2027-10-01", cases: 3, trays: 0 }] });
   if (order.preview) throw new Error("expected an order");
   lots = order.printOrder.lotCodes;
   await markPrinted(ids.op, order.printOrder.id);

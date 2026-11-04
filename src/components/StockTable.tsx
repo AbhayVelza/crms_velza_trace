@@ -13,6 +13,8 @@ export interface StockItem {
   from: string | null;
   to: string | null;
   dispatchedAt: string | null;
+  /** Incoming items only: the invoice/challan they were dispatched on. */
+  invoice?: string | null;
 }
 
 export function StockTable({ items, show = "status", empty = "Nothing here" }: { items: StockItem[]; show?: "status" | "from" | "to"; empty?: string }) {

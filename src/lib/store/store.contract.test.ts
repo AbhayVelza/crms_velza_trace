@@ -270,12 +270,12 @@ describe.each(IMPLS)("Store contract: $name", (impl) => {
   it("keeps movements, scans and reprints apart, in order", async () => {
     await store.appendMovement({ type: "GENERATED", itemKind: "LOT", itemCode: "91AAA111OR00001", fromId: null, toId: "MF0001", fromStatus: null, toStatus: "GENERATED", userId: "AD0001", deviceId: null, invoice: null, note: null });
     await store.appendScan({ context: "RECEIVE", code: "91ZZZZZZOR00001", ok: false, result: "UNKNOWN_CODE", message: "Unknown", userId: "AD0001", partnerId: "SS0001", deviceId: null });
-    await store.reprints.append({ id: "r1", at: AT, code: "91AAA111OR0000161", itemKind: "PACK", reason: "torn", userId: "AD0001", deviceId: null });
+    await store.reprints.append({ id: "r1", at: AT, code: "91AAA111OR0000161", itemKind: "PACK", reason: "torn", userId: "AD0001", deviceId: null, printOrderId: null });
     await store.appendMovement({ type: "DISPATCHED", itemKind: "LOT", itemCode: "91AAA111OR00001", fromId: "MF0001", toId: "SS0001", fromStatus: "PACKED", toStatus: "IN_TRANSIT", userId: "AD0001", deviceId: null, invoice: "INV-1", note: null });
     expect((await store.movements.list()).map((m) => m.type)).toEqual(["GENERATED", "DISPATCHED"]);
     expect(await store.movements.list({ type: "DISPATCHED" })).toEqual([expect.objectContaining({ invoice: "INV-1", fromId: "MF0001", toId: "SS0001" })]);
     expect(await store.scans.list({ partnerId: "SS0001" })).toEqual([expect.objectContaining({ ok: false, result: "UNKNOWN_CODE", code: "91ZZZZZZOR00001" })]);
-    expect(await store.reprints.list()).toEqual([{ id: "r1", at: AT, code: "91AAA111OR0000161", itemKind: "PACK", reason: "torn", userId: "AD0001", deviceId: null }]);
+    expect(await store.reprints.list()).toEqual([{ id: "r1", at: AT, code: "91AAA111OR0000161", itemKind: "PACK", reason: "torn", userId: "AD0001", deviceId: null, printOrderId: null }]);
   });
 
   it("settings fall back to defaults and can be updated", async () => {

@@ -44,6 +44,8 @@ next-env.d.ts
 # local data (recreated by npm run seed)
 /data/*.json
 /data/*.tmp
+# JSON store ownership lock of the running process (removed on exit)
+/data/*.lock
 
 # playwright
 /test-results/

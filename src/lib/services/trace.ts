@@ -318,11 +318,23 @@ export async function myStock(userId: string | null) {
       ...lots.filter((l) => l.locationId === partner.id && l.status === "IN_TRANSIT").map(view),
       ...packs.filter((p) => p.locationId === partner.id && p.status === "IN_TRANSIT").map(packView),
     ],
-    incoming: [
+    incoming: await withInvoices(store, [
       ...lots.filter((l) => l.inTransitToId === partner.id && l.status === "IN_TRANSIT").map(view),
       ...packs.filter((p) => p.inTransitToId === partner.id && p.status === "IN_TRANSIT").map(packView),
-    ],
+    ]),
   };
+}
+
+/** Incoming items with the invoice/challan of the dispatch that sent them (one query for all of them). */
+async function withInvoices<T extends { code: string }>(store: Pick<StoreTx, "movements">, items: T[]): Promise<(T & { invoice: string | null })[]> {
+  if (!items.length) return [];
+  const moves = await store.movements.list({ type: "DISPATCHED", itemCode: items.map((i) => i.code) });
+  const latest = new Map<string, { at: string; invoice: string | null }>();
+  for (const m of moves) {
+    const seen = latest.get(m.itemCode);
+    if (!seen || m.at > seen.at) latest.set(m.itemCode, { at: m.at, invoice: m.invoice });
+  }
+  return items.map((i) => ({ ...i, invoice: latest.get(i.code)?.invoice ?? null }));
 }
 
 // ---------------------------------------------------------------- batches, recall

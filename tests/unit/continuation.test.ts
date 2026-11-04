@@ -29,7 +29,7 @@ let otherDevice: Device;
 
 /** A fresh batch of the plant, made by the normal new-batch flow (1 case). */
 async function newBatch(): Promise<Batch> {
-  const r = await createPrintOrder(operator, { batches: [{ flavour: "OR", mfgDate: "2026-10-01", expiryDate: "2027-10-01", cases: 1, trays: 0 }] });
+  const r = await createPrintOrder(operator, { idempotencyKey: crypto.randomUUID(), batches: [{ flavour: "OR", mfgDate: "2026-10-01", expiryDate: "2027-10-01", cases: 1, trays: 0 }] });
   if (r.preview) throw new Error("expected an order");
   return (await store().batches.findOne({ code: r.printOrder.batchCodes[0] }))!;
 }
@@ -102,8 +102,10 @@ describe("continuation from the stored counter", () => {
   });
 
   it("store counter: 10,000 lots → next 02711; another 10,000 → next 04E21", async () => {
-    const b = await newBatch();
-    await store().batches.update(b.id, { nextLot: 1 }); // a counter-only batch: start from 00001
+    // A counter-only batch (no lots yet) starting from 00001. Counters never move backwards (schema v3),
+    // so it is a new batch row, not an existing batch rewound.
+    const src = await newBatch();
+    const b = await store().batches.create({ ...src, id: crypto.randomUUID(), code: `Z${src.code.slice(1)}`, nextLot: 1 });
     expect(formatLotNumber(await store().nextLotNumber(b.code, 10_000))).toBe("00001");
     expect(formatLotNumber((await batchOf(b.code)).nextLot)).toBe("02711");
     expect(formatLotNumber(await store().nextLotNumber(b.code, 10_000))).toBe("02711");
@@ -166,8 +168,11 @@ describe("capacity and exhaustion", () => {
   });
 
   it("an invalid stored counter is reported, never used or repaired", async () => {
-    const b = await newBatch();
-    await store().batches.update(b.id, { nextLot: 0 });
+    // Damaged data (e.g. a bad restore) arrives as a row with an invalid counter: no update may move a
+    // counter backwards (schema v3), so it is written as a new batch row.
+    const src = await newBatch();
+    const b = await store().batches.create({ ...src, id: crypto.randomUUID(), code: `Y${src.code.slice(1)}`, nextLot: 0 });
+    await expect(store().batches.update(b.id, { nextLot: -5 })).rejects.toMatchObject({ code: "COUNTER_BACKWARDS" });
     await expect(cont(operator, b.code, 1, 0)).rejects.toMatchObject({ status: 409, code: "BATCH_COUNTER_INVALID" });
     expect((await batchOf(b.code)).nextLot).toBe(0);
     expect((await listContinuableBatches(operator)).batches.find((x) => x.batchCode === b.code)).toMatchObject({ status: "COUNTER_INVALID", continuable: false });
@@ -240,7 +245,7 @@ describe("devices", () => {
   it("offline new-batch orders still work (unchanged offline flow)", async () => {
     await store().devices.update(device.id, { offline: true });
     try {
-      const r = await createPrintOrder(operator, { batches: [{ flavour: "GA", mfgDate: "2026-10-01", expiryDate: "2027-10-01", cases: 1, trays: 0 }] });
+      const r = await createPrintOrder(operator, { idempotencyKey: crypto.randomUUID(), batches: [{ flavour: "GA", mfgDate: "2026-10-01", expiryDate: "2027-10-01", cases: 1, trays: 0 }] });
       expect(!r.preview && r.printOrder.synced).toBe(false);
     } finally {
       await store().devices.update(device.id, { offline: false });

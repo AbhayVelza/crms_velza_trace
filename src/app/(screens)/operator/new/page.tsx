@@ -122,6 +122,9 @@ function NewBatchesWizard() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<PrintOrder | null>(null);
+  // One request key per exact order: a retry of the same batches reuses it (the server returns the order it
+  // already saved instead of allocating again); changed batches get a new key.
+  const [request, setRequest] = useState<{ key: string; body: string } | null>(null);
 
   const flavours = (data?.flavours ?? []).filter((f) => f.active);
   const update = (i: number, patch: Partial<BatchInput>) => setBatches((bs) => bs.map((b, j) => (j === i ? { ...b, ...patch } : b)));
@@ -156,7 +159,10 @@ function NewBatchesWizard() {
     setBusy(true);
     setError(null);
     try {
-      const r = await api<{ printOrder: PrintOrder }>("/api/print-orders", { body: { batches } });
+      const body = JSON.stringify(batches);
+      const idempotencyKey = request?.body === body ? request.key : crypto.randomUUID();
+      setRequest({ key: idempotencyKey, body });
+      const r = await api<{ printOrder: PrintOrder }>("/api/print-orders", { body: { batches, idempotencyKey } });
       setCreated(r.printOrder);
       notifyDataChanged();
       setStep(6);
@@ -169,6 +175,7 @@ function NewBatchesWizard() {
   }
 
   function restart() {
+    setRequest(null);
     setStep(0);
     setCount(1);
     setBatches([newBatch()]);

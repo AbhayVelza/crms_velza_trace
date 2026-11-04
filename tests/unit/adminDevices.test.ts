@@ -86,7 +86,7 @@ describe("deleting a device", () => {
   it("a device with batches cannot be deleted, and its pool is left exactly as it was (all-or-nothing)", async () => {
     const plantPc = (await store().devices.list({ manufacturerId: MF1 }))[0];
     const operator = (await store().users.list({ role: "OPERATOR", partnerId: MF1 }))[0].id;
-    await createPrintOrder(operator, { deviceId: plantPc.id, batches: [{ flavour: "OR", mfgDate: "2026-10-01", expiryDate: "2027-10-01", cases: 1, trays: 0 }] });
+    await createPrintOrder(operator, { idempotencyKey: crypto.randomUUID(), deviceId: plantPc.id, batches: [{ flavour: "OR", mfgDate: "2026-10-01", expiryDate: "2027-10-01", cases: 1, trays: 0 }] });
     const before = (await store().batchCodePool.list({ deviceId: plantPc.id })).map((p) => `${p.code}:${p.status}`).sort();
     expect(before.some((x) => x.endsWith(":USED"))).toBe(true);
     await expect(deleteEntity(ADMIN, "devices", plantPc.id)).rejects.toMatchObject({ code: "IN_USE" });

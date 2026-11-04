@@ -22,7 +22,7 @@ const lotOf = async (lotCode: string) => (await store().lots.findOne({ lotCode }
 const packsOf = async (lotCode: string) => (await store().packs.list({ lotCode })).sort((a, b) => a.seq - b.seq);
 
 async function order(flavour: string, cases: number) {
-  const r = await createPrintOrder(ids.operator, { batches: [{ flavour, mfgDate: "2026-11-01", expiryDate: "2027-08-01", cases, trays: 0 }] });
+  const r = await createPrintOrder(ids.operator, { idempotencyKey: crypto.randomUUID(), batches: [{ flavour, mfgDate: "2026-11-01", expiryDate: "2027-08-01", cases, trays: 0 }] });
   if (r.preview) throw new Error("expected an order");
   return r.printOrder;
 }
@@ -163,13 +163,14 @@ async function snapshot(orderId: string) {
     order: { status: o.status, printedAt: o.printedAt },
     lots: lots.map((l) => [l.lotCode, l.status, l.updatedAt]),
     packs: packs.map((p) => [p.packCode, p.status, p.updatedAt]),
-    movements: (await store().movements.list()).length,
+    // status-changing history only: serving a sheet for first-time printing is logged (PRINT_SHEET_SERVED) but changes nothing
+    movements: (await store().movements.list()).filter((m) => m.type !== "PRINT_SHEET_SERVED").length,
     orders: (await store().printOrders.list()).length,
   };
 }
 
 describe("explicit print confirmation", () => {
-  it("opening the print view, reading the codes / CSV data and listing orders record nothing", async () => {
+  it("opening the print view, reading the codes / CSV data and listing orders change nothing (the sheet serving is logged)", async () => {
     const o = await order("OR", 2);
     const before = await snapshot(o.id);
     await stickersForOrder(ids.operator, o.id);
@@ -177,6 +178,9 @@ describe("explicit print confirmation", () => {
     await listPrintOrders(ids.operator);
     expect(await snapshot(o.id)).toEqual(before);
     expect(before.order).toEqual({ status: "CREATED", printedAt: null });
+    const served = (await store().movements.list({ type: "PRINT_SHEET_SERVED" })).filter((m) => m.itemCode === o.id);
+    expect(served).toHaveLength(1);
+    expect(served[0]).toMatchObject({ itemKind: "PRINT_ORDER", userId: ids.operator, fromStatus: null, toStatus: null });
   });
 
   it("a confirmation that fails part-way leaves every record unchanged; a retry then succeeds once", async () => {

@@ -6,6 +6,7 @@ import { canReprint, canVoid, lotStatusAfterReprint } from "@/lib/core/rules";
 import { getStore, type StoreTx } from "@/lib/store";
 import { badRequest, findItem, loadActor, manufacturerDevice, notFound, nowIso, requireAction, requirePartner, setLotState, unknownCodeMessage } from "./common";
 import { autoRefill, reservedCodes } from "./pool";
+import { reprintServedId } from "./printOrders";
 
 export const reprintSchema = z.object({ code: z.string(), reason: z.string() });
 export const voidSchema = z.object({ lotCode: z.string(), reason: z.string().optional() });
@@ -28,7 +29,17 @@ export async function reprint(userId: string | null, body: unknown) {
     const lotStatus = lotStatusAfterReprint(lot.status);
     const backToQc = lotStatus !== lot.status;
     if (backToQc) await setLotState(tx, lot, { status: lotStatus, quarantineReason: null }, at);
-    const row = await tx.reprints.append({ id: crypto.randomUUID(), at, code, itemKind: found.item.kind, reason: reason.trim(), userId: actor.user.id, deviceId: device.id });
+    // The authorization to print this code once more: who, when, why, which device and the order that issued it.
+    const row = await tx.reprints.append({
+      id: crypto.randomUUID(),
+      at,
+      code,
+      itemKind: found.item.kind,
+      reason: reason.trim(),
+      userId: actor.user.id,
+      deviceId: device.id,
+      printOrderId: lot.printOrderId,
+    });
     await tx.appendMovement({
       type: "REPRINTED",
       itemKind: found.item.kind,
@@ -43,8 +54,8 @@ export async function reprint(userId: string | null, body: unknown) {
       note: reason.trim(),
     });
     const message = backToQc
-      ? `Reprint of ${code} logged (same code). Lot ${lot.lotCode} is out of quarantine and back to PRINTED — QC must verify it again`
-      : `Reprint of ${code} logged (same code)`;
+      ? `Reprint of ${code} logged (same code). Lot ${lot.lotCode} is out of quarantine and back to PRINTED — QC must verify it again. Open its print view to print it once.`
+      : `Reprint of ${code} logged (same code). Open its print view to print it once.`;
     return { ok: true, message, reprint: row };
   });
 }
@@ -53,13 +64,14 @@ export async function listReprints(userId: string | null) {
   const store = getStore();
   const actor = await loadActor(store, userId);
   requireAction(actor, "reprint");
-  const [rows, users] = await Promise.all([store.reprints.list(), store.users.list()]);
+  const [rows, users, served] = await Promise.all([store.reprints.list(), store.users.list(), store.movements.list({ type: "REPRINT_SERVED" })]);
   const lots = await store.lots.list({ manufacturerId: actor.partner?.id ?? "" });
   const own = new Set(lots.map((l) => l.lotCode));
+  const servedAt = new Map(served.map((m) => [m.id, m.at]));
   return rows
     .filter((r) => own.has(r.code.slice(0, 15)))
     .sort((a, b) => b.at.localeCompare(a.at))
-    .map((r) => ({ ...r, userName: users.find((u) => u.id === r.userId)?.name ?? r.userId }));
+    .map((r) => ({ ...r, userName: users.find((u) => u.id === r.userId)?.name ?? r.userId, servedAt: servedAt.get(reprintServedId(r.id)) ?? null }));
 }
 
 export async function voidLot(userId: string | null, body: unknown) {

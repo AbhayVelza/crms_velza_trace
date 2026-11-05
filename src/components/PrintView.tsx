@@ -1,6 +1,7 @@
 "use client";
 
-// Print view: preview at real size, choose label roll or A4 sheet, window.print(), then mark PRINTED.
+// Print view: preview at real size (or enlarged on screen so codes scan from the monitor), choose label roll or
+// A4 sheet, window.print(), then mark PRINTED.
 
 import Link from "next/link";
 import { useState } from "react";
@@ -27,6 +28,8 @@ interface Sheet {
 export function PrintView({ path, backHref, backLabel }: { path: string; backHref: string; backLabel: string }) {
   const { data: sheet, error, reload } = useApi<Sheet>(path);
   const [mode, setMode] = useState<PrintMode>("roll");
+  // On screen only: real-size bars are about 1 screen pixel wide, too fine to scan from a monitor.
+  const [scannable, setScannable] = useState(true);
   const [msg, setMsg] = useState<{ tone: "ok" | "error" | "info"; text: string } | null>(null);
   // The only way an order becomes PRINTED: the operator's explicit confirmation. One request at a time.
   const [confirming, confirmPrinted] = useAction(async (orderId: string) => {
@@ -85,6 +88,10 @@ export function PrintView({ path, backHref, backLabel }: { path: string; backHre
               </button>
             ))}
           </div>
+          <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-muted-foreground" title="Printed stickers are always real size">
+            <input type="checkbox" className="h-4 w-4" checked={scannable} onChange={(e) => setScannable(e.target.checked)} data-testid="scannable-preview" />
+            Enlarge on screen to scan from the monitor
+          </label>
           <Button onClick={print}>
             <IconPrinter size={17} />
             Print {sheet.stickers.length} sticker{sheet.stickers.length === 1 ? "" : "s"}</Button>
@@ -95,7 +102,7 @@ export function PrintView({ path, backHref, backLabel }: { path: string; backHre
           )}
         </div>
         <p className="text-xs text-muted-foreground">
-          {lots} lot sticker(s) {sheet.lotSize.widthMm}×{sheet.lotSize.heightMm} mm, {sheet.stickers.length - lots} pack sticker(s) {sheet.packSize.widthMm}×{sheet.packSize.heightMm} mm. Order: lot sticker first, then its packs. Set the browser print scale to 100% (no &quot;fit to page&quot;).
+          {lots} lot sticker(s) {sheet.lotSize.widthMm}×{sheet.lotSize.heightMm} mm, {sheet.stickers.length - lots} pack sticker(s) {sheet.packSize.widthMm}×{sheet.packSize.heightMm} mm. Order: lot sticker first, then its packs. Set the browser print scale to 100% (no &quot;fit to page&quot;).{scannable ? " The preview is enlarged on screen so its barcodes can be scanned from the monitor; printed stickers are real size." : ""}
         </p>
         {order && order.status !== "PRINTED" && <Notice tone="info">{PRINT_CONFIRMATION_NOTE}</Notice>}
         {warnings.map((w) => (
@@ -105,7 +112,7 @@ export function PrintView({ path, backHref, backLabel }: { path: string; backHre
         ))}
         {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
       </div>
-      <StickerSheetView stickers={sheet.stickers} lotSize={sheet.lotSize} packSize={sheet.packSize} mode={mode} />
+      <StickerSheetView stickers={sheet.stickers} lotSize={sheet.lotSize} packSize={sheet.packSize} mode={mode} scannable={scannable} />
     </div>
   );
 }

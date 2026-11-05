@@ -27,11 +27,34 @@ interface Props {
 
 const OTHER_FIELDS = "input, select, textarea, [contenteditable=true]";
 
+/**
+ * Whether the camera was left open. A page may re-create the scan box between steps (QC: lot → its packs);
+ * the camera stays open across that instead of closing after every lot.
+ */
+let cameraWanted = false;
+
+/**
+ * Camera request. Without a size, browsers give 640×480: a pack sticker's Code 128 bars (≈0.33 mm) are then
+ * under 2 px wide and can't be read, while the lot sticker's QR still is. 1280×720 or more reads both.
+ */
+const CAMERA_CONSTRAINTS: MediaStreamConstraints = {
+  video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
+};
+/** Below this width, small (pack) barcodes need the sticker held close to the camera. */
+const LOW_RES_WIDTH = 1280;
+
 export function ScanInput({ onScan, label = "Scan code", placeholder = "Scan or type a code, then Enter", disabled, demoScreen, demoLotCode }: Props) {
   const ref = useRef<HTMLInputElement>(null);
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
-  const [camera, setCamera] = useState(false);
+  const [camera, setCameraState] = useState(cameraWanted);
+  const setCamera = useCallback((next: boolean | ((c: boolean) => boolean)) => {
+    setCameraState((c) => {
+      const v = typeof next === "function" ? next(c) : next;
+      cameraWanted = v;
+      return v;
+    });
+  }, []);
 
   const demoPath = DEMO_HELPER_ENABLED && demoScreen ? `/api/demo-codes?screen=${demoScreen}${demoLotCode ? `&lotCode=${encodeURIComponent(demoLotCode)}` : ""}` : null;
   const demo = useApi<DemoCode[]>(demoPath, { refreshOnChange: true });
@@ -132,6 +155,7 @@ function CameraScanner({ onCode, onClose }: { onCode: (code: string) => void; on
   const videoRef = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState<string | null>(null);
   const last = useRef<{ code: string; at: number }>({ code: "", at: 0 });
+  const [resolution, setResolution] = useState<{ width: number; height: number } | null>(null);
   const onCodeRef = useRef(onCode);
   useEffect(() => {
     onCodeRef.current = onCode;
@@ -146,9 +170,12 @@ function CameraScanner({ onCode, onClose }: { onCode: (code: string) => void; on
           throw new Error("Camera needs HTTPS (or localhost). Use `next dev --experimental-https` for phones.");
         }
         const [{ BrowserMultiFormatReader }, { BarcodeFormat, DecodeHintType }] = await Promise.all([import("@zxing/browser"), import("@zxing/library")]);
-        const hints = new Map<Hint, unknown>([[DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.CODE_128, BarcodeFormat.QR_CODE]]]);
+        const hints = new Map<Hint, unknown>([
+          [DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.CODE_128, BarcodeFormat.QR_CODE]],
+          [DecodeHintType.TRY_HARDER, true],
+        ]);
         const reader = new BrowserMultiFormatReader(hints);
-        const c = await reader.decodeFromConstraints({ video: { facingMode: "environment" } }, videoRef.current!, (result) => {
+        const c = await reader.decodeFromConstraints(CAMERA_CONSTRAINTS, videoRef.current!, (result) => {
           if (!result) return;
           const text = result.getText();
           const now = Date.now();
@@ -157,7 +184,14 @@ function CameraScanner({ onCode, onClose }: { onCode: (code: string) => void; on
           onCodeRef.current(text);
         });
         if (stopped) c.stop();
-        else controls = c;
+        else {
+          controls = c;
+          const track = (videoRef.current?.srcObject as MediaStream | null)?.getVideoTracks()[0];
+          // Keep refocusing on close-up stickers where the camera supports it (phones, most webcams ignore it).
+          await track?.applyConstraints({ advanced: [{ focusMode: "continuous" } as MediaTrackConstraintSet] }).catch(() => undefined);
+          const s = track?.getSettings();
+          if (s?.width && s.height && !stopped) setResolution({ width: s.width, height: s.height });
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }
@@ -172,8 +206,14 @@ function CameraScanner({ onCode, onClose }: { onCode: (code: string) => void; on
     <div className="theme-dark animate-fade-in rounded-control border border-line-strong bg-black p-2 text-foreground">
       <video ref={videoRef} className={cx("mx-auto max-h-72 w-full rounded-md object-contain", error && "hidden")} muted playsInline />
       {error && <p className="p-3 text-sm text-danger">{error}</p>}
-      <div className="mt-2 flex justify-between px-1 text-xs text-muted-foreground">
-        <span>Point the camera at a barcode or QR code</span>
+      <div className="mt-2 flex justify-between gap-2 px-1 text-xs text-muted-foreground">
+        <span data-testid="camera-status">
+          Point the camera at a barcode or QR code
+          {resolution && ` · camera ${resolution.width}×${resolution.height}`}
+          {resolution && Math.max(resolution.width, resolution.height) < LOW_RES_WIDTH && (
+            <span className="block text-warning">Low camera resolution: hold small pack stickers close and steady, or use a USB barcode scanner.</span>
+          )}
+        </span>
         <button type="button" onClick={onClose} className="rounded underline underline-offset-4 hover:text-foreground">
           Close
         </button>

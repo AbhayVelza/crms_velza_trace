@@ -2,23 +2,60 @@
 
 // Lot and pack stickers drawn at real size (mm), plus the two print modes.
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { code128Svg, qrSvg } from "@/lib/barcode";
 import type { LotSticker, PackSticker, Sticker } from "@/lib/core/stickers";
 import { lotStickerLayout, modulesFromSvg, packStickerLayout, SPEC, type Box } from "@/lib/stickerLayout";
 
 const mm = (n: number) => `${n}mm`;
 
+/** CSS pixels per millimetre (CSS fixes 1in = 96px = 25.4mm). */
+const CSS_PX_PER_MM = 96 / 25.4;
+/** Screen pixels per narrow bar wanted on screen. At about 1 px per bar (real size on a monitor) bar widths get
+ *  rounded unevenly and Code 128 cannot be read from the screen; from 2 px it decodes, 3 leaves room for a camera. */
+const SCREEN_PX_PER_MODULE = 3;
+
+/** The monitor's device pixels per CSS pixel; it changes with browser zoom and when the window moves screens. */
+function useDevicePixelRatio(): number {
+  const [dpr, setDpr] = useState(1);
+  useEffect(() => {
+    let query: MediaQueryList | null = null;
+    const update = () => {
+      setDpr(window.devicePixelRatio || 1);
+      query?.removeEventListener("change", update);
+      query = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+      query.addEventListener("change", update);
+    };
+    update();
+    return () => query?.removeEventListener("change", update);
+  }, []);
+  return dpr;
+}
+
+/**
+ * Screen-only zoom for a sticker so each narrow bar is a whole number (≥ 3) of screen pixels, which lets the
+ * barcode be scanned from the monitor. Printing ignores it (applied under `@media screen` only).
+ */
+function useScreenZoom(moduleMm: number, scannable: boolean): number {
+  const dpr = useDevicePixelRatio();
+  if (!scannable) return 1;
+  const px = moduleMm * CSS_PX_PER_MM * dpr;
+  return Math.max(SCREEN_PX_PER_MODULE, Math.ceil(px)) / px;
+}
+
+const zoomStyle = (zoom: number) => (zoom === 1 ? {} : ({ "--screen-zoom": zoom } as React.CSSProperties));
+
 function Svg({ svg, width, height, label }: { svg: string; width: number; height: number; label: string }) {
   return <div role="img" aria-label={label} style={{ width: mm(width), height: mm(height) }} dangerouslySetInnerHTML={{ __html: svg }} />;
 }
 
-function LotStickerView({ s, size }: { s: LotSticker; size: Box }) {
+function LotStickerView({ s, size, scannable }: { s: LotSticker; size: Box; scannable: boolean }) {
   const bars = useMemo(() => code128Svg(s.code), [s.code]);
   const qr = useMemo(() => qrSvg(s.qrUrl), [s.qrUrl]);
   const layout = lotStickerLayout(size, modulesFromSvg(bars));
+  const zoom = useScreenZoom(layout.barcode.moduleMm, scannable);
   return (
-    <div className="sticker sticker-lot" data-code={s.code} data-kind="LOT" style={{ width: mm(size.widthMm), height: mm(size.heightMm), padding: mm(layout.padMm) }}>
+    <div className="sticker sticker-lot" data-code={s.code} data-kind="LOT" style={{ width: mm(size.widthMm), height: mm(size.heightMm), padding: mm(layout.padMm), ...zoomStyle(zoom) }}>
       <div className="truncate font-bold" style={{ height: mm(layout.headerMm), fontSize: mm(layout.headerFontMm), lineHeight: mm(layout.headerMm) }}>
         {s.header}
       </div>
@@ -39,11 +76,12 @@ function LotStickerView({ s, size }: { s: LotSticker; size: Box }) {
   );
 }
 
-function PackStickerView({ s, size }: { s: PackSticker; size: Box }) {
+function PackStickerView({ s, size, scannable }: { s: PackSticker; size: Box; scannable: boolean }) {
   const bars = useMemo(() => code128Svg(s.code), [s.code]);
   const layout = packStickerLayout(size, modulesFromSvg(bars));
+  const zoom = useScreenZoom(layout.barcode.moduleMm, scannable);
   return (
-    <div className="sticker sticker-pack flex flex-col items-center" data-code={s.code} data-kind="PACK" style={{ width: mm(size.widthMm), height: mm(size.heightMm), padding: mm(layout.padMm) }}>
+    <div className="sticker sticker-pack flex flex-col items-center" data-code={s.code} data-kind="PACK" style={{ width: mm(size.widthMm), height: mm(size.heightMm), padding: mm(layout.padMm), ...zoomStyle(zoom) }}>
       <div className="w-full truncate text-center font-bold" style={{ height: mm(layout.headerMm), fontSize: mm(layout.headerFontMm), lineHeight: mm(layout.headerMm) }}>
         {s.header}
       </div>
@@ -57,8 +95,9 @@ function PackStickerView({ s, size }: { s: PackSticker; size: Box }) {
   );
 }
 
-export function StickerView({ sticker, lotSize, packSize }: { sticker: Sticker; lotSize: Box; packSize: Box }) {
-  return sticker.kind === "LOT" ? <LotStickerView s={sticker} size={lotSize} /> : <PackStickerView s={sticker} size={packSize} />;
+/** `scannable`: on screen, enlarge the sticker so its barcode can be scanned from the monitor (print size unchanged). */
+export function StickerView({ sticker, lotSize, packSize, scannable = false }: { sticker: Sticker; lotSize: Box; packSize: Box; scannable?: boolean }) {
+  return sticker.kind === "LOT" ? <LotStickerView s={sticker} size={lotSize} scannable={scannable} /> : <PackStickerView s={sticker} size={packSize} scannable={scannable} />;
 }
 
 export type PrintMode = "roll" | "a4";
@@ -66,7 +105,8 @@ export type PrintMode = "roll" | "a4";
 /** Page CSS for the chosen mode. Label roll: one sticker per page sized to the sticker. */
 export function PrintStyles({ mode, lotSize, packSize }: { mode: PrintMode; lotSize: Box; packSize: Box }) {
   const css =
-    mode === "roll"
+    `@media screen { .sticker { zoom: var(--screen-zoom, 1); } }\n` +
+    (mode === "roll"
       ? `@page lot { size: ${lotSize.widthMm}mm ${lotSize.heightMm}mm; margin: 0; }
          @page pack { size: ${packSize.widthMm}mm ${packSize.heightMm}mm; margin: 0; }
          @media print {
@@ -79,15 +119,15 @@ export function PrintStyles({ mode, lotSize, packSize }: { mode: PrintMode; lotS
          @media print {
            .sheet { display: flex !important; flex-wrap: wrap; gap: 2mm !important; padding: 0 !important; }
            .sticker { break-inside: avoid; border: 0.2mm dashed #bbb !important; }
-         }`;
+         }`);
   return <style>{css}</style>;
 }
 
-export function StickerSheetView({ stickers, lotSize, packSize, mode }: { stickers: Sticker[]; lotSize: Box; packSize: Box; mode: PrintMode }) {
+export function StickerSheetView({ stickers, lotSize, packSize, mode, scannable = false }: { stickers: Sticker[]; lotSize: Box; packSize: Box; mode: PrintMode; scannable?: boolean }) {
   return (
     <div className={mode === "roll" ? "sheet flex flex-col items-start gap-3" : "sheet flex flex-wrap items-start gap-2"}>
       {stickers.map((s) => (
-        <StickerView key={s.code} sticker={s} lotSize={lotSize} packSize={packSize} />
+        <StickerView key={s.code} sticker={s} lotSize={lotSize} packSize={packSize} scannable={scannable} />
       ))}
     </div>
   );

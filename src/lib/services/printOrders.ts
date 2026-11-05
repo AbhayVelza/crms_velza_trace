@@ -12,12 +12,12 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { allocateLots, batchCounter, CONTINUE_MAX_LOTS, JSON_CONTINUE_MAX_LOTS, stickerCount, type BatchCounter } from "@/lib/core/codes";
-import { planPrintOrder } from "@/lib/core/printOrder";
+import { planPrintOrder, summarizePlan } from "@/lib/core/printOrder";
 import { canReprint } from "@/lib/core/rules";
 import { stickerForCode, stickersForLots, type Sticker } from "@/lib/core/stickers";
 import type { Batch, Device, Lot, Pack, PrintOrder, Reprint } from "@/lib/core/types";
 import { ConcurrentWriteError, getStore, storeKind, type Store, type StoreTx } from "@/lib/store";
-import { badRequest, findItem, loadActor, manufacturerDevice, notFound, nowIso, requireAction, requirePartner, ServiceError, type Actor } from "./common";
+import { badRequest, findItem, loadActor, notFound, nowIso, printDevice, requireAction, requirePartner, ServiceError, type Actor } from "./common";
 import { autoRefill, reservedCodes } from "./pool";
 
 // ---------------------------------------------------------------- idempotency and allocation locking
@@ -79,14 +79,14 @@ export const printOrderSchema = z.object({
         trays: z.number(),
       }),
     )
-    .max(50),
+    .max(20, "At most 20 batches per print order"),
 });
 
 async function operatorContext(tx: StoreTx, userId: string | null, deviceId?: string) {
   const actor = await loadActor(tx, userId);
   requireAction(actor, "printOrder");
   const manufacturer = requirePartner(actor);
-  const device = await manufacturerDevice(tx, manufacturer.id, deviceId);
+  const device = await printDevice(tx, manufacturer.id, deviceId);
   return { actor, manufacturer, device };
 }
 
@@ -100,6 +100,10 @@ async function plan(tx: StoreTx, deviceId: string, batches: z.infer<typeof print
     country: settings.defaultCountry,
     poolCodes: pool.map((p) => p.code),
     flavours: flavours.map((f) => f.code),
+    // The same cap as a continuation order: one order's lots are written (and later marked printed) in one transaction.
+    maxLotsPerOrder: continueMaxLots(),
+    maxLotsNote: storeKind() === "json" ? " on the JSON file store (use PostgreSQL for production volumes)" : "",
+    today: nowIso().slice(0, 10),
   });
 }
 
@@ -109,7 +113,8 @@ export async function createPrintOrder(userId: string | null, body: unknown) {
 
   if (input.preview) {
     const { device } = await operatorContext(store, userId, input.deviceId);
-    return { preview: true as const, device, plan: await plan(store, device.id, input.batches) };
+    // Counts and ranges only: never every generated code (a 99,999-lot batch would be megabytes).
+    return { preview: true as const, device, plan: summarizePlan(await plan(store, device.id, input.batches)), maxLotsPerOrder: continueMaxLots() };
   }
 
   const key = input.idempotencyKey;
@@ -253,23 +258,24 @@ async function createNewBatchOrder(
       requestFingerprint: newBatchFingerprint(manufacturer.id, device.id, input.batches),
     };
     await tx.printOrders.create(order);
-    for (const l of lotRows) {
-      await tx.appendMovement({
-        type: "GENERATED",
-        itemKind: "LOT",
+    // One GENERATED movement per lot, written in one go.
+    await tx.appendMovements(
+      lotRows.map((l) => ({
+        type: "GENERATED" as const,
+        itemKind: "LOT" as const,
         itemCode: l.lotCode,
         fromId: null,
         toId: manufacturer.id,
         fromStatus: null,
-        toStatus: "GENERATED",
+        toStatus: "GENERATED" as const,
         userId: actor.user.id,
         deviceId: device.id,
         invoice: null,
         note: `Print order ${printOrderId.slice(0, 8)}${synced ? "" : " (offline)"}`,
-      });
-    }
+      })),
+    );
     await autoRefill(tx, device.id);
-    return { preview: false as const, printOrder: order, plan: summary };
+    return { preview: false as const, printOrder: order, plan: summarizePlan(summary) };
   }
 }
 
@@ -541,21 +547,21 @@ export async function continueBatch(userId: string | null, body: unknown) {
       await tx.printOrders.create(order);
       const firstLotHex = lots[0].lotHex;
       const lastLotHex = lots[lots.length - 1].lotHex;
-      for (const l of lotRows) {
-        await tx.appendMovement({
-          type: "GENERATED",
-          itemKind: "LOT",
+      await tx.appendMovements(
+        lotRows.map((l) => ({
+          type: "GENERATED" as const,
+          itemKind: "LOT" as const,
           itemCode: l.lotCode,
           fromId: null,
           toId: manufacturer.id,
           fromStatus: null,
-          toStatus: "GENERATED",
+          toStatus: "GENERATED" as const,
           userId: actor.user.id,
           deviceId: device.id,
           invoice: null,
           note: `Print order ${key.slice(0, 8)} · continues batch ${batch.code} from ${firstLotHex}`,
-        });
-      }
+        })),
+      );
       return {
         preview: false as const,
         replayed: false,
@@ -834,44 +840,53 @@ export async function serveReprint(userId: string | null, reprintId: string): Pr
   }
 }
 
+export const markPrintedSchema = z.object({ deviceId: z.string().optional() }).optional();
+
 /**
  * The operator's explicit "Mark as printed" confirmation (never inferred from the print dialog, a CSV download or
  * navigation): GENERATED lots of the order and their packs become PRINTED, one PRINTED movement per lot, and the
  * order gets its printedAt — all in one transaction. Repeating it changes nothing.
+ *
+ * Bulk writes (one statement for the lots, one for their packs, one batch of movements), so a 5,000-lot order
+ * is confirmed in about a second instead of one round trip per lot and pack. The PRINTED movements keep the
+ * order's PC; when the confirmation comes from another PC of the plant, that PC is named in the note.
  */
-export async function markPrinted(userId: string | null, printOrderId: string) {
+export async function markPrinted(userId: string | null, printOrderId: string, body?: unknown) {
+  const input = markPrintedSchema.parse(body ?? undefined);
   return getStore().transaction(async (tx) => {
     const actor = await loadActor(tx, userId);
     requireAction(actor, "printOrder");
     const order = await requireOwnOrder(tx, actor, printOrderId);
+    const confirmingPc = input?.deviceId ? await printDevice(tx, order.manufacturerId, input.deviceId) : null;
     const at = nowIso();
-    const lots = await tx.lots.list({ printOrderId });
-    if (order.status !== "PRINTED" && !lots.some((l) => l.status === "GENERATED")) {
+    const pending = await tx.lots.list({ printOrderId, status: "GENERATED" });
+    if (order.status !== "PRINTED" && !pending.length) {
       // Every lot was voided (or is otherwise no longer waiting for stickers): nothing to confirm.
       throw badRequest("NOTHING_TO_PRINT", "No lot of this print order is waiting to be printed (voided lots cannot be marked as printed)");
     }
-    let changed = 0;
-    for (const lot of lots.filter((l) => l.status === "GENERATED")) {
-      await tx.lots.update(lot.id, { status: "PRINTED", updatedAt: at });
-      for (const p of await tx.packs.list({ lotCode: lot.lotCode })) {
-        if (p.status === "GENERATED") await tx.packs.update(p.id, { status: "PRINTED", updatedAt: at });
-      }
-      await tx.appendMovement({
-        type: "PRINTED",
-        itemKind: "LOT",
-        itemCode: lot.lotCode,
-        fromId: lot.locationId,
-        toId: lot.locationId,
-        fromStatus: "GENERATED",
-        toStatus: "PRINTED",
-        userId: actor.user.id,
-        deviceId: order.deviceId,
-        invoice: null,
-        note: null,
-      });
-      changed++;
+    if (pending.length) {
+      const lotCodes = pending.map((l) => l.lotCode);
+      await tx.lots.updateWhere({ printOrderId, status: "GENERATED" }, { status: "PRINTED", updatedAt: at });
+      await tx.packs.updateWhere({ lotCode: lotCodes, status: "GENERATED" }, { status: "PRINTED", updatedAt: at });
+      const note = confirmingPc && confirmingPc.id !== order.deviceId ? `Confirmed on ${confirmingPc.name}` : null;
+      await tx.appendMovements(
+        pending.map((lot) => ({
+          type: "PRINTED" as const,
+          itemKind: "LOT" as const,
+          itemCode: lot.lotCode,
+          fromId: lot.locationId,
+          toId: lot.locationId,
+          fromStatus: "GENERATED" as const,
+          toStatus: "PRINTED" as const,
+          userId: actor.user.id,
+          deviceId: order.deviceId,
+          invoice: null,
+          note,
+          at,
+        })),
+      );
     }
     const updated = await tx.printOrders.update(order.id, { status: "PRINTED", printedAt: order.printedAt ?? at });
-    return { printOrder: updated, lotsPrinted: changed };
+    return { printOrder: updated, lotsPrinted: pending.length };
   });
 }

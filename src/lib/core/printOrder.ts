@@ -1,7 +1,7 @@
 // Print order planning: validates the wizard input and computes the summary
 // (batch codes from the pool, lot ranges, sticker counts) without side effects.
 
-import { allocateLots, LOT_NUMBER_MAX, stickerCount, type AllocatedLot } from "./codes";
+import { allocateLots, formatLotNumber, LOT_NUMBER_MAX, stickerCount, type AllocatedLot } from "./codes";
 
 export interface BatchInput {
   flavour: string;
@@ -25,7 +25,10 @@ export interface PlannedBatch {
   expiryDate: string;
   cases: number;
   trays: number;
+  /** Every code of the batch (preview only; empty when the order is over the lot cap). Never sent to the browser. */
   lots: AllocatedLot[];
+  /** Lots this batch will get (cases + trays when valid, else 0). */
+  lotCount: number;
   caseRange: [string, string] | null;
   trayRange: [string, string] | null;
   lotRange: [string, string] | null;
@@ -48,7 +51,18 @@ export interface PlanInput {
   /** Active flavour codes. */
   flavours: string[];
   maxBatches?: number;
+  /** Lots one print order may hold on this server's store (refused above it, never truncated). */
+  maxLotsPerOrder?: number;
+  /** Said after the lot cap, e.g. " on the JSON file store". */
+  maxLotsNote?: string;
+  /** Today (YYYY-MM-DD, server clock). When given, a manufacture date in the future is refused. */
+  today?: string;
 }
+
+/** A manufacture date may be up to this many days ahead of the server's date (time zones: India is UTC+5:30). */
+export const MFG_FUTURE_TOLERANCE_DAYS = 1;
+/** Longest shelf life accepted, in years after the manufacture date (catches a mistyped expiry year such as 2099). */
+export const MAX_SHELF_LIFE_YEARS = 5;
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -58,10 +72,10 @@ function isValidDate(s: string): boolean {
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
 }
 
-const range = (lots: AllocatedLot[]): [string, string] | null =>
-  lots.length ? [lots[0].lotHex, lots[lots.length - 1].lotHex] : null;
+const addDays = (iso: string, days: number) => new Date(Date.parse(`${iso}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+const addYears = (iso: string, years: number) => `${String(Number(iso.slice(0, 4)) + years).padStart(4, "0")}${iso.slice(4)}`;
 
-export function planPrintOrder({ batches, country, poolCodes, flavours, maxBatches = 20 }: PlanInput): PrintOrderPlan {
+export function planPrintOrder({ batches, country, poolCodes, flavours, maxBatches = 20, maxLotsPerOrder, maxLotsNote = "", today }: PlanInput): PrintOrderPlan {
   const errors: PlanError[] = [];
   if (batches.length === 0) errors.push({ batchIndex: null, field: "batches", message: "Create at least one batch" });
   if (batches.length > maxBatches) {
@@ -77,6 +91,18 @@ export function planPrintOrder({ batches, country, poolCodes, flavours, maxBatch
     });
   }
 
+  // The whole order is refused above the cap (never truncated): a big run is split into several orders.
+  const lotsOf = (n: number) => (Number.isInteger(n) && n > 0 ? n : 0);
+  const requested = batches.reduce((s, b) => s + lotsOf(b.cases) + lotsOf(b.trays), 0);
+  const overCap = maxLotsPerOrder !== undefined && requested > maxLotsPerOrder;
+  if (overCap) {
+    errors.push({
+      batchIndex: null,
+      field: "batches",
+      message: `At most ${maxLotsPerOrder.toLocaleString("en-IN")} lots per print order${maxLotsNote}; requested ${requested.toLocaleString("en-IN")} — split the run into several orders`,
+    });
+  }
+
   const planned: PlannedBatch[] = batches.map((b, i) => {
     const label = `Batch ${i + 1}`;
     if (!flavours.includes(b.flavour)) errors.push({ batchIndex: i, field: "flavour", message: `${label}: choose a flavour` });
@@ -84,8 +110,13 @@ export function planPrintOrder({ batches, country, poolCodes, flavours, maxBatch
     const expOk = isValidDate(b.expiryDate);
     if (!mfgOk) errors.push({ batchIndex: i, field: "mfgDate", message: `${label}: manufacture date is missing or invalid` });
     if (!expOk) errors.push({ batchIndex: i, field: "expiryDate", message: `${label}: expiry date is missing or invalid` });
+    if (mfgOk && today && b.mfgDate > addDays(today, MFG_FUTURE_TOLERANCE_DAYS)) {
+      errors.push({ batchIndex: i, field: "mfgDate", message: `${label}: manufacture date ${b.mfgDate} is in the future (today is ${today})` });
+    }
     if (mfgOk && expOk && b.expiryDate <= b.mfgDate) {
       errors.push({ batchIndex: i, field: "expiryDate", message: `${label}: expiry date must be after manufacture date` });
+    } else if (mfgOk && expOk && b.expiryDate > addYears(b.mfgDate, MAX_SHELF_LIFE_YEARS)) {
+      errors.push({ batchIndex: i, field: "expiryDate", message: `${label}: expiry date ${b.expiryDate} is more than ${MAX_SHELF_LIFE_YEARS} years after manufacture — check the year` });
     }
     const countsOk = [b.cases, b.trays].every((n) => Number.isInteger(n) && n >= 0);
     if (!countsOk) errors.push({ batchIndex: i, field: "cases", message: `${label}: cases and trays must be whole numbers ≥ 0` });
@@ -97,12 +128,14 @@ export function planPrintOrder({ batches, country, poolCodes, flavours, maxBatch
 
     const batchCode = poolCodes[i] ?? null;
     let lots: AllocatedLot[] = [];
-    if (countsOk && b.cases + b.trays > 0 && b.cases + b.trays <= LOT_NUMBER_MAX && flavours.includes(b.flavour)) {
+    const allocatable = countsOk && b.cases + b.trays > 0 && b.cases + b.trays <= LOT_NUMBER_MAX && flavours.includes(b.flavour);
+    // Over the lot cap nothing is allocated, not even for the preview (ranges are worked out from the counts).
+    if (allocatable && !overCap) {
       // Preview codes use a placeholder batch code when the pool is short; they are never saved.
       lots = allocateLots({ code: batchCode ?? "XXXXXX", country, flavour: b.flavour, nextLot: 1 }, b.cases, b.trays).lots;
     }
-    const caseLots = lots.filter((l) => l.lotType === "CASE");
-    const trayLots = lots.filter((l) => l.lotType === "TRAY");
+    const n = allocatable ? b.cases + b.trays : 0;
+    const span = (from: number, to: number): [string, string] | null => (allocatable && to >= from ? [formatLotNumber(from), formatLotNumber(to)] : null);
     return {
       index: i,
       batchCode,
@@ -112,9 +145,10 @@ export function planPrintOrder({ batches, country, poolCodes, flavours, maxBatch
       cases: b.cases,
       trays: b.trays,
       lots,
-      caseRange: range(caseLots),
-      trayRange: range(trayLots),
-      lotRange: range(lots),
+      lotCount: n,
+      caseRange: span(1, b.cases),
+      trayRange: span(b.cases + 1, n),
+      lotRange: span(1, n),
       stickerCount: countsOk ? stickerCount(b.cases, b.trays) : 0,
     };
   });
@@ -122,8 +156,23 @@ export function planPrintOrder({ batches, country, poolCodes, flavours, maxBatch
   return {
     ok: errors.length === 0,
     batches: planned,
-    totalLots: planned.reduce((s, b) => s + b.lots.length, 0),
+    totalLots: planned.reduce((s, b) => s + b.lotCount, 0),
     totalStickers: planned.reduce((s, b) => s + b.stickerCount, 0),
     errors,
+  };
+}
+
+/** One batch of the plan as the screen gets it: counts and ranges, with the first and last lot code, never every code. */
+export type PlannedBatchSummary = Omit<PlannedBatch, "lots"> & { firstLotCode: string | null; lastLotCode: string | null };
+
+/** The plan as the preview and create responses carry it: its size does not grow with the number of lots. */
+export interface PrintOrderPlanSummary extends Omit<PrintOrderPlan, "batches"> {
+  batches: PlannedBatchSummary[];
+}
+
+export function summarizePlan(plan: PrintOrderPlan): PrintOrderPlanSummary {
+  return {
+    ...plan,
+    batches: plan.batches.map(({ lots, ...b }) => ({ ...b, firstLotCode: lots[0]?.lotCode ?? null, lastLotCode: lots[lots.length - 1]?.lotCode ?? null })),
   };
 }

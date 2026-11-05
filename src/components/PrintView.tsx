@@ -10,6 +10,7 @@ import type { PrintOrder } from "@/lib/core/types";
 import { notifyDataChanged } from "@/lib/events";
 import type { Box } from "@/lib/stickerLayout";
 import { PrintStyles, StickerSheetView, stickerWarnings, type PrintMode } from "./Stickers";
+import { thisPcId } from "./DeviceBar";
 import { useAction } from "./useAction";
 import { IconArrowLeft, IconPrinter } from "./icons";
 import { PRINT_CONFIRMATION_NOTE, PrintOrderStatus } from "./PrintOrderStatus";
@@ -66,7 +67,7 @@ export function PrintView({ path, oncePath, backHref, backLabel }: { path?: stri
   // The only way an order becomes PRINTED: the operator's explicit confirmation. One request at a time.
   const [confirming, confirmPrinted] = useAction(async (orderId: string) => {
     try {
-      const r = await api<{ lotsPrinted: number; printOrder: PrintOrder }>(`/api/print-orders/${orderId}/printed`, { body: {} });
+      const r = await api<{ lotsPrinted: number; printOrder: PrintOrder }>(`/api/print-orders/${orderId}/printed`, { body: { deviceId: thisPcId() } });
       const when = fmtTime(r.printOrder.printedAt);
       setMsg({ tone: "ok", text: r.lotsPrinted ? `${r.lotsPrinted} lot(s) marked PRINTED at ${when} — ready for QC verification` : `Already marked PRINTED at ${when}` });
       setConfirmedOrder(r.printOrder);

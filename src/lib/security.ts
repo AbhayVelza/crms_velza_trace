@@ -46,12 +46,23 @@ export const MAX_JSON_BYTES = 256 * 1024;
 /**
  * Client IP for rate limiting. Behind a reverse proxy set CLIENT_IP_HEADER to the header that proxy
  * overwrites (e.g. "cf-connecting-ip" for Cloudflare, "x-real-ip" for Nginx); a client can't fake it then.
- * Without one, X-Forwarded-For is used — it can be faked, which is why the global limit also exists.
+ * Without one, the RIGHTMOST X-Forwarded-For entry is used (the hop nearest this server, added by Next or the
+ * proxy); the leftmost entries are whatever the client sent. It can still be faked by a direct client, which is
+ * why the global limit also exists and why production warns once when CLIENT_IP_HEADER is unset.
  */
 export function clientIp(headers: Headers, trustedHeader = process.env.CLIENT_IP_HEADER): string {
   const trusted = trustedHeader ? headers.get(trustedHeader.toLowerCase()) : null;
-  const raw = trusted ?? headers.get("x-forwarded-for")?.split(",")[0] ?? "";
+  if (!trustedHeader) warnUntrustedIpOnce();
+  const hops = (headers.get("x-forwarded-for") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const raw = trusted ?? hops[hops.length - 1] ?? "";
   return raw.trim().slice(0, 64) || "unknown";
+}
+
+let warnedUntrustedIp = false;
+function warnUntrustedIpOnce() {
+  if (warnedUntrustedIp || process.env.NODE_ENV !== "production") return;
+  warnedUntrustedIp = true;
+  console.warn("[security] CLIENT_IP_HEADER is not set: per-client rate limits and sign-in lockout use X-Forwarded-For, which a client can spoof. Set it to your proxy's client-IP header.");
 }
 
 /**

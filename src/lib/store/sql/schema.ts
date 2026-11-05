@@ -9,8 +9,11 @@
 //
 // v3 (4 Nov 2026): print order kind + request fingerprint, reprint → original print order, and triggers
 // that refuse a lot counter moving backwards or an issued code being deleted. Added in place; no data change.
+//
+// v4 (4 Nov 2026): indexes for the plant's queries (print order list, reprint list, unsynced counts and sync,
+// reserved pool codes). Indexes only (CREATE INDEX IF NOT EXISTS); no table, column or data change.
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 // Checks whose values changed in v2. Each is named explicitly — with the name PostgreSQL gave it in
 // v1 — so the upgrade can replace it, and is written once here for both CREATE TABLE and the upgrade.
@@ -341,6 +344,18 @@ $$;
 DROP TRIGGER IF EXISTS codes_issued_protected ON codes;
 CREATE TRIGGER codes_issued_protected BEFORE UPDATE OF code OR DELETE ON codes
   FOR EACH ROW EXECUTE FUNCTION codes_issued_protected();
+
+-- ============================================================ v4: plant query indexes
+-- A plant's codes, orders and batches (print order list, reprint list); a PC's unsynced rows (device bar counts,
+-- Sync); a PC's reserved batch codes (every print order preview and create). Partial indexes stay small: once
+-- synced, a row leaves them.
+CREATE INDEX IF NOT EXISTS codes_manufacturer ON codes (manufacturer_id, code_type);
+CREATE INDEX IF NOT EXISTS codes_device_unsynced ON codes (device_id) WHERE NOT synced;
+CREATE INDEX IF NOT EXISTS print_orders_manufacturer ON print_orders (manufacturer_id);
+CREATE INDEX IF NOT EXISTS print_orders_device_unsynced ON print_orders (device_id) WHERE NOT synced;
+CREATE INDEX IF NOT EXISTS batches_manufacturer ON batches (manufacturer_id);
+CREATE INDEX IF NOT EXISTS batches_device_unsynced ON batches (device_id) WHERE NOT synced;
+CREATE INDEX IF NOT EXISTS batch_code_pool_device ON batch_code_pool (device_id, status);
 
 INSERT INTO schema_info (id, version) VALUES (1, ${SCHEMA_VERSION})
   ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version, applied_at = now();

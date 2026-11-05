@@ -1,4 +1,4 @@
--- Velza Traceability — PostgreSQL schema v3.
+-- Velza Traceability — PostgreSQL schema v4.
 -- Generated from src/lib/store/sql/schema.ts by `npm run db:schema`; do not edit by hand.
 -- The app applies this itself on first use (and `npm run db:migrate` does it on demand); every
 -- statement is safe to run again.
@@ -321,5 +321,17 @@ DROP TRIGGER IF EXISTS codes_issued_protected ON codes;
 CREATE TRIGGER codes_issued_protected BEFORE UPDATE OF code OR DELETE ON codes
   FOR EACH ROW EXECUTE FUNCTION codes_issued_protected();
 
-INSERT INTO schema_info (id, version) VALUES (1, 3)
+-- ============================================================ v4: plant query indexes
+-- A plant's codes, orders and batches (print order list, reprint list); a PC's unsynced rows (device bar counts,
+-- Sync); a PC's reserved batch codes (every print order preview and create). Partial indexes stay small: once
+-- synced, a row leaves them.
+CREATE INDEX IF NOT EXISTS codes_manufacturer ON codes (manufacturer_id, code_type);
+CREATE INDEX IF NOT EXISTS codes_device_unsynced ON codes (device_id) WHERE NOT synced;
+CREATE INDEX IF NOT EXISTS print_orders_manufacturer ON print_orders (manufacturer_id);
+CREATE INDEX IF NOT EXISTS print_orders_device_unsynced ON print_orders (device_id) WHERE NOT synced;
+CREATE INDEX IF NOT EXISTS batches_manufacturer ON batches (manufacturer_id);
+CREATE INDEX IF NOT EXISTS batches_device_unsynced ON batches (device_id) WHERE NOT synced;
+CREATE INDEX IF NOT EXISTS batch_code_pool_device ON batch_code_pool (device_id, status);
+
+INSERT INTO schema_info (id, version) VALUES (1, 4)
   ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version, applied_at = now();

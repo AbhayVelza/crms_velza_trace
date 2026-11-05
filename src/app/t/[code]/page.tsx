@@ -1,12 +1,13 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
+import { codeFromParam } from "./codeParam";
 import { PublicLookup } from "./PublicLookup";
 
 export const metadata: Metadata = { title: "Velza product check" };
 
 async function Lookup({ params }: { params: PageProps<"/t/[code]">["params"] }) {
   const { code } = await params;
-  return <PublicLookup code={decodeURIComponent(code)} />;
+  return <PublicLookup code={codeFromParam(code)} />;
 }
 
 /** What a QR scan opens. Safe fields only: no partners, invoices or history. */

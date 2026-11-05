@@ -11,7 +11,7 @@ import { closeSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, w
 import os from "node:os";
 import path from "node:path";
 import { LOT_NUMBER_MAX } from "@/lib/core/codes";
-import { DEFAULT_SETTINGS, type Batch, type Lot, type Pack, type Settings } from "@/lib/core/types";
+import { DEFAULT_SETTINGS, type Batch, type Lot, type Movement, type Pack, type Settings } from "@/lib/core/types";
 import { conversionNeeded } from "./convertChain";
 import {
   COLLECTIONS,
@@ -257,6 +257,21 @@ function makeTx(db: DbSnapshot): StoreTx {
         list[i] = { ...list[i], ...clone(patch), id };
         return clone(list[i]);
       },
+      async updateWhere(where, patch) {
+        if (!Object.values(where ?? {}).some((v) => v !== undefined)) throw new Error(`${name}: updateWhere needs a filter`);
+        const test = matcher(where);
+        const p = clone(patch) as Record<string, unknown>;
+        delete p.id;
+        const list = rows();
+        const ids: string[] = [];
+        // One pass over the table, patched in place (no lookup per row).
+        for (let i = 0; i < list.length; i++) {
+          if (!test(list[i])) continue;
+          list[i] = { ...list[i], ...p, id: list[i].id };
+          ids.push(list[i].id);
+        }
+        return ids;
+      },
       async delete(id) {
         const list = rows();
         const i = list.findIndex((x) => x.id === id);
@@ -283,6 +298,14 @@ function makeTx(db: DbSnapshot): StoreTx {
       }
       return batches.update(id, patch);
     },
+    async updateWhere(where, patch) {
+      if (patch.nextLot !== undefined) {
+        const test = matcher(where);
+        const back = db.batches.find((b) => test(b) && typeof b.nextLot === "number" && !(Number(patch.nextLot) >= b.nextLot));
+        if (back) throw new IntegrityError("COUNTER_BACKWARDS", `Batch ${back.code}: the lot counter cannot move backwards (${back.nextLot} → ${patch.nextLot})`);
+      }
+      return batches.updateWhere(where, patch);
+    },
   };
   const lots = repo<Lot>("lots");
   const guardedLots: Repo<Lot> = {
@@ -304,6 +327,8 @@ function makeTx(db: DbSnapshot): StoreTx {
     },
   };
 
+  const movementRows = repo<Movement>("movements");
+
   const tx: StoreTx = {
     countries: repo("countries"),
     flavours: repo("flavours"),
@@ -322,6 +347,12 @@ function makeTx(db: DbSnapshot): StoreTx {
 
     async appendMovement(m: NewMovement) {
       return tx.movements.append({ ...m, id: crypto.randomUUID(), at: m.at ?? new Date().toISOString() });
+    },
+    async appendMovements(ms: NewMovement[]) {
+      const now = new Date().toISOString();
+      const rows: Movement[] = ms.map((m) => ({ ...m, id: crypto.randomUUID(), at: m.at ?? now }));
+      await movementRows.createMany(rows);
+      return rows.map(clone);
     },
     async appendScan(s: NewScan) {
       return tx.scans.append({ ...s, id: crypto.randomUUID(), at: s.at ?? new Date().toISOString() });
@@ -471,6 +502,7 @@ export class JsonStore implements Store {
       create: write((r, row: T) => r.create(row)),
       createMany: write((r, rows: T[]) => r.createMany(rows)),
       update: write((r, id: string, patch: Partial<Omit<T, "id">>) => r.update(id, patch)),
+      updateWhere: write((r, where: Where<T>, patch: Partial<Omit<T, "id">>) => r.updateWhere(where, patch)),
       delete: write((r, id: string) => r.delete(id)),
     };
   }
@@ -478,6 +510,10 @@ export class JsonStore implements Store {
   private ledger<T extends Row>(name: "movements" | "scans" | "reprints"): AppendOnlyRepo<T> {
     const r = this.repo<T>(name);
     return { list: r.list, append: (row) => this.transaction((tx) => (tx[name] as unknown as AppendOnlyRepo<T>).append(row)) };
+  }
+
+  appendMovements(ms: NewMovement[]) {
+    return this.transaction((tx) => tx.appendMovements(ms));
   }
 
   countries = this.repo<DbSnapshot["countries"][number]>("countries");

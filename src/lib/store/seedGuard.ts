@@ -55,9 +55,12 @@ export async function checkJsonTarget(file: string): Promise<void> {
 
 const stamp = (d: Date) => d.toISOString().replace(/[:.]/g, "-").replace("T", "_").slice(0, 19);
 
-/** Writes the backup without ever replacing a file, then reads it back. Returns its path. */
-async function writeBackup(snapshot: DbSnapshot, dir: string, now: Date): Promise<string> {
-  const file = path.join(dir, `db.backup-${stamp(now)}-before-seed.json`);
+/**
+ * Writes the backup without ever replacing a file, then reads it back. Returns its path. `label` names what the
+ * backup comes before (db.backup-<time>-before-<label>.json), so other guarded scripts can reuse it.
+ */
+export async function writeBackup(snapshot: DbSnapshot, dir: string, now: Date, label = "seed"): Promise<string> {
+  const file = path.join(dir, `db.backup-${stamp(now)}-before-${label}.json`);
   try {
     await mkdir(dir, { recursive: true });
     const text = JSON.stringify(snapshot, null, 1);

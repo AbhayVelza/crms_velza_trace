@@ -30,3 +30,20 @@ export function checkCodeFormat(raw: string): CodeCheck {
   if (!parsed.ok) return { ok: false, code, message: `${code} is not a Velza code: ${parsed.error.message}` };
   return { ok: true, code, kind: parsed.value.kind };
 }
+
+/**
+ * Longest raw scan input the server accepts (a full QR link with a long host still fits). Anything longer is not a
+ * Velza code and is refused before it reaches the scan audit.
+ */
+export const MAX_SCAN_INPUT = 256;
+
+/**
+ * Public QR page input → what to look up and whether to log it. Only a well-formed code (format check passes) is
+ * worth a scan-audit row: garbage, over-long text or a broken link is answered "Unregistered code" and never logged,
+ * so nobody can fill the audit log or HQ alerts by typing junk into /t/<anything>.
+ */
+export function publicScanInput(raw: string): { code: string; loggable: boolean } {
+  if (typeof raw !== "string" || raw.length > MAX_SCAN_INPUT) return { code: "", loggable: false };
+  const check = checkCodeFormat(raw);
+  return check.ok ? { code: check.code, loggable: true } : { code: check.code.slice(0, 40), loggable: false };
+}

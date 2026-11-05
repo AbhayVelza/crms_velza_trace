@@ -15,7 +15,7 @@ import { damagedCounts, damagedUnits, listDamaged, reportDamaged } from "@/lib/s
 import { dispatch, myPartners, openLot, receive } from "@/lib/services/movement";
 import { setDeviceOffline } from "@/lib/services/operator";
 import { codesForOrder, createPrintOrder, markPrinted } from "@/lib/services/printOrders";
-import { alerts, batchReport, dashboard, listBatches, lookup, myStock, recall, recallReport, stockCounts } from "@/lib/services/trace";
+import { alerts, batchReport, dashboard, listBatches, lookup, myStock, recall, recallReport, stockCounts, timelineOrder } from "@/lib/services/trace";
 import { verify } from "@/lib/services/verify";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
 
@@ -193,8 +193,12 @@ describe("a network with stock at every tier", () => {
       if (!t.found) throw new Error("not found");
       expect(whole(reads)).toEqual([]);
       expect(t).toMatchObject({ code: lots[1], kind: "LOT", status: "OPENED", location: expect.stringMatching(/^Retailer-1/), locationTier: "RETAILER" });
-      const expected = ref.snap.movements.filter((m) => m.itemCode === lots[1] || (m.itemKind === "BATCH" && m.itemCode === lots[1].slice(2, 8))).sort((a, b) => a.at.localeCompare(b.at));
+      // An opened lot's history includes its packs' own events (here: the single damaged pack).
+      const expected = ref.snap.movements
+        .filter((m) => m.itemCode === lots[1] || (m.itemKind === "PACK" && m.itemCode.startsWith(lots[1])) || (m.itemKind === "BATCH" && m.itemCode === lots[1].slice(2, 8)))
+        .sort(timelineOrder);
       expect(t.timeline.map((e) => [e.event, e.itemCode, e.at])).toEqual(expected.map((m) => [m.type, m.itemCode, m.at]));
+      expect(t.timeline).toContainEqual(expect.objectContaining({ event: "DAMAGED", itemCode: `${lots[1]}63`, itemKind: "PACK" }));
       expect(t.timeline.map((e) => e.event)).toEqual(expect.arrayContaining(["DISPATCHED", "RECEIVED", "OPENED"]));
       expect(t.timeline.find((e) => e.event === "DISPATCHED" && e.to?.startsWith("DB-1"))).toMatchObject({ from: expect.stringMatching(/^SS-1/), user: expect.any(String) });
       expect(t.children.map((c) => c.code)).toEqual(ref.snap.packs.filter((p) => p.lotCode === lots[1]).sort((a, b) => a.seq - b.seq).map((p) => p.packCode));
@@ -208,7 +212,7 @@ describe("a network with stock at every tier", () => {
       if (!t.found) throw new Error("not found");
       expect(whole(reads)).toEqual([]);
       expect(t).toMatchObject({ kind: "PACK", status: "DAMAGED", parent: { code: lots[1], status: "OPENED" }, children: [] });
-      const expected = ref.snap.movements.filter((m) => m.itemCode === lots[1] || m.itemCode === pack).sort((a, b) => a.at.localeCompare(b.at));
+      const expected = ref.snap.movements.filter((m) => m.itemCode === lots[1] || m.itemCode === pack).sort(timelineOrder);
       expect(t.timeline.map((e) => [e.event, e.itemCode])).toEqual(expected.map((m) => [m.type, m.itemCode]));
       expect(t.timeline.at(-1)).toMatchObject({ event: "DAMAGED", itemCode: pack, note: "Leaking" });
     });
@@ -269,7 +273,8 @@ describe("a network with stock at every tier", () => {
       expect(d.recentAlerts.map((a) => a.id)).toEqual(ref.alertList.slice(0, 10).map((a) => a.id));
       // Stock needs every synced lot and pack; history and the scan audit are read by filter only.
       expect(whole(reads, ["movements", "scans", "reprints"])).toEqual([]);
-      expect(reads.filter((r) => r.table === "scans").map((r) => r.where)).toEqual([{ ok: false }]);
+      // Failed scans, and successful public-page scans (copied-sticker check).
+      expect(reads.filter((r) => r.table === "scans").map((r) => r.where)).toEqual([{ ok: false }, { context: "PUBLIC_LOOKUP", ok: true }]);
     });
 
     it("is for HQ only", async () => {
@@ -286,9 +291,10 @@ describe("a network with stock at every tier", () => {
       expect(new Set(list.map((a) => a.type))).toEqual(new Set(["NOT_RECEIVED", "WRONG_RECEIVER", "UNKNOWN_CODE", "DAMAGED"]));
       expect(list.find((a) => a.type === "NOT_RECEIVED")).toMatchObject({ code: lots[3], partner: expect.stringMatching(/^SS-1/) });
       expect(list.find((a) => a.type === "WRONG_RECEIVER")).toMatchObject({ code: lots[2], partner: expect.stringMatching(/^Retailer-1/), user: expect.any(String) });
-      // The plant's damage report on its unsynced case is not shown; the only alert naming that code is HQ's
-      // own failed lookup of it (a failed scan, as before).
-      expect(list.filter((a) => a.code.startsWith(unsynced)).map((a) => [a.type, a.user])).toEqual([["UNKNOWN_CODE", "Velza HQ"]]);
+      // The plant's damage report on its unsynced case is not shown, and HQ's own failed lookup of it is audited
+      // but raises no alert (LOW-hq-search-alerts).
+      expect(list.filter((a) => a.code.startsWith(unsynced))).toEqual([]);
+      expect(await store().scans.list({ context: "LOOKUP", code: unsynced, ok: false })).not.toHaveLength(0);
       expect((await store().movements.list({ type: "DAMAGED", itemCode: unsynced })).length).toBe(1); // it was reported
     });
 
@@ -417,7 +423,11 @@ describe("a network with stock at every tier", () => {
       expect(order.result.totals).toMatchObject({ stickers: 6 * 5, cases: 6, packs: 6 * 4 });
       expect(order.result.codes.filter((r) => r.codeType === "PACK" && r.lotCode === lots[0]).map((r) => r.packSequence)).toEqual([1, 2, 3, 4]);
 
-      await recall(ids.hq, { batchCode, reason: "Scalability regression check" });
+      // The recall itself reads the batch's packs once (not one query per lot) inside its transaction.
+      const recalling = await readsOf(() => recall(ids.hq, { batchCode, reason: "Scalability regression check" }));
+      const recallTx = recalling.reads.filter((r) => r.table === "packs" && Array.isArray(r.where?.lotCode) && (r.where.lotCode as string[]).length === 6);
+      expect(recallTx).toHaveLength(1);
+      expect(recalling.reads.filter((r) => r.table === "packs" && typeof r.where?.lotCode === "string")).toEqual([]);
       const recalled = await readsOf(() => recallReport(ids.hq, batchCode));
       expect(whole(recalled.reads)).toEqual([]);
       const opened = recalled.result.items.find((i) => i.code === lots[1])!;

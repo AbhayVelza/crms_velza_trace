@@ -27,7 +27,7 @@ interface BatchRow {
 
 interface Report {
   batch: BatchRow & { recalledAt: string | null; recallReason: string | null };
-  summary: { lots: number; cases: number; trays: number; printed: number; packed: number; quarantined: number; void: number; reprinted: number; recalled: number };
+  summary: { lots: number; cases: number; trays: number; printed: number; packed: number; quarantined: number; void: number; reprinted: number; recalled: number; recallable?: number };
   lots: { code: string; lotType: string; status: string; location: string; quarantineReason: string | null }[];
 }
 
@@ -109,8 +109,9 @@ function BatchReport({ code }: { code: string }) {
   async function recall() {
     setMsg(null);
     try {
-      const r = await api<RecallReport>("/api/recall", { body: { batchCode: code, reason } });
-      setMsg({ tone: "ok", text: `Batch ${code} recalled: ${r.items.length} lot(s) marked RECALLED` });
+      const r = await api<RecallReport>("/api/recall", { body: { batchCode: code, reason, confirm: true } });
+      // Void lots are left as they are: count only the lots this recall marked.
+      setMsg({ tone: "ok", text: `Batch ${code} recalled: ${r.items.filter((i) => i.status === "RECALLED").length} lot(s) marked RECALLED` });
       setConfirming(false);
       notifyDataChanged();
     } catch (e) {
@@ -189,7 +190,7 @@ function BatchReport({ code }: { code: string }) {
             <div className="space-y-3">
               <p className="text-sm text-foreground-2">Recall marks every lot and pack of this batch RECALLED wherever it is. Any later scan raises a BLOCKED_CODE alert and the public page shows &quot;Recalled — do not consume&quot;.</p>
               <Field label="Reason">
-                <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Quality complaint, contamination risk" />
+                <Input value={reason} maxLength={300} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Quality complaint, contamination risk" />
               </Field>
               {!confirming ? (
                 <Button variant="danger" disabled={!reason.trim()} onClick={() => setConfirming(true)}>
@@ -202,7 +203,7 @@ function BatchReport({ code }: { code: string }) {
                     This cannot be undone.
                   </span>
                   <Button variant="danger" onClick={runRecall} loading={recalling}>
-                    Yes, recall {r.summary.lots} lot(s)
+                    Yes, recall {r.summary.recallable ?? r.summary.lots - r.summary.void} lot(s)
                   </Button>
                   <Button variant="secondary" onClick={() => setConfirming(false)} disabled={recalling}>
                     Cancel

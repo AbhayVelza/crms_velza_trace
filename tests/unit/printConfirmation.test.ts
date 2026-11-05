@@ -188,16 +188,14 @@ describe("explicit print confirmation", () => {
     const before = await snapshot(o.id);
     const s = store();
     const real = s.transaction.bind(s);
-    // Fail on the second PRINTED movement: the first lot and its packs were already updated inside the transaction.
+    // Fail on writing the PRINTED movements: every lot and pack was already updated inside the transaction.
     const spy = vi.spyOn(s, "transaction").mockImplementation(((fn: (tx: unknown) => Promise<unknown>) =>
       real(async (tx) => {
-        let n = 0;
         const failing = new Proxy(tx, {
           get(t, prop, r) {
-            if (prop === "appendMovement") {
-              return async (...a: Parameters<typeof tx.appendMovement>) => {
-                if (++n === 2) throw new Error("simulated storage failure");
-                return t.appendMovement(...a);
+            if (prop === "appendMovement" || prop === "appendMovements") {
+              return async () => {
+                throw new Error("simulated storage failure");
               };
             }
             const v = Reflect.get(t, prop, r);

@@ -9,13 +9,19 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { formatLotNumber, LOT_NUMBER_MAX, parseCode } from "@/lib/core/codes";
 import type { Batch, Device, Lot, User } from "@/lib/core/types";
 import { closeStores, getStore, storeKind } from "@/lib/store";
-import { reprint, voidLot } from "@/lib/services/operator";
-import { codesForOrder, continueBatch, continueMaxLots, createPrintOrder, listContinuableBatches, listPrintOrders, markPrinted, stickersForOrder } from "@/lib/services/printOrders";
+import { reprint as reprintOn, voidLot as voidLotOn } from "@/lib/services/operator";
+import { codesForOrder, continueBatch as continueBatchOn, continueMaxLots, createPrintOrder as createPrintOrderOn, listContinuableBatches, listPrintOrders, markPrinted, stickersForOrder } from "@/lib/services/printOrders";
 import { listBatches, publicLookup } from "@/lib/services/trace";
 import { verify } from "@/lib/services/verify";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
 
 const isJson = storeKind() === "json";
+// This plant has two PCs, so every print operation names its PC (as the screens do with "This PC"); Line-1 unless a test says otherwise.
+const onPc = (body: object) => ({ deviceId: device.id, ...body });
+const createPrintOrder = (user: string, body: object) => createPrintOrderOn(user, onPc(body));
+const continueBatch = (user: string, body: object) => continueBatchOn(user, onPc(body));
+const reprint = (user: string, body: object) => reprintOn(user, onPc(body));
+const voidLot = (user: string, body: object) => voidLotOn(user, onPc(body));
 const store = () => getStore();
 const key = () => crypto.randomUUID();
 let dir: string;

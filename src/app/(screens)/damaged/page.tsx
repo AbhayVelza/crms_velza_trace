@@ -1,10 +1,15 @@
 "use client";
 
-import { useState } from "react";
+// Report damage in four steps: what is wrong → scan the damaged item → photo of it showing its barcode
+// → report. The barcode read from the photo must be the scanned code; the server checks that again.
+
+import { useRef, useState } from "react";
+import { IconCamera, IconCircleCheck, IconCircleX } from "@/components/icons";
 import { ScanInput, ScanLog, type ScanLogEntry } from "@/components/ScanInput";
 import { Button, Card, Code, Empty, Field, fmtTime, Input, Notice, PageTitle, Table, Td } from "@/components/ui";
 import { useApi } from "@/components/useApi";
 import { api, errorText } from "@/lib/client";
+import { preparePhoto, type PreparedPhoto } from "@/lib/damagePhotoClient";
 import { notifyDataChanged } from "@/lib/events";
 
 interface DamagedItem {
@@ -18,29 +23,72 @@ interface DamagedItem {
   reason: string | null;
   reportedAt: string | null;
   reportedBy: string | null;
+  photoUrl: string | null;
 }
 
 const QUICK_REASONS = ["Crushed / dented", "Leaking", "Torn or wet packaging", "Broken cans"];
 
+const PHOTO_BUTTON = "inline-flex min-h-10 items-center gap-2 rounded-full border px-4 transition-colors duration-150";
+const PHOTO_BUTTON_ON = `${PHOTO_BUTTON} cursor-pointer border-line-strong bg-surface font-semibold text-foreground hover:border-foreground`;
+const PHOTO_BUTTON_OFF = `${PHOTO_BUTTON} cursor-not-allowed border-line bg-surface text-muted-foreground opacity-60`;
+
 let seq = 0;
+
+type PhotoState = { status: "reading" } | { status: "ready"; photo: PreparedPhoto } | { status: "error"; message: string };
 
 export default function DamagedPage() {
   const list = useApi<{ counts: { cases: number; trays: number; packs: number }; items: DamagedItem[] }>("/api/damaged", { refreshOnChange: true });
   const [reason, setReason] = useState("");
+  const [code, setCode] = useState<string | null>(null);
+  const [photo, setPhoto] = useState<PhotoState | null>(null);
+  const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<ScanLogEntry[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
 
-  async function onScan(code: string) {
+  const ready = photo?.status === "ready" ? photo.photo : null;
+  const matches = !!ready && !!code && ready.code === code;
+  const canReport = !!reason.trim() && !!code && matches && !busy;
+  const canPhoto = !!code && !busy;
+
+  function clearPhoto() {
+    setPhoto(null);
+    if (fileRef.current) fileRef.current.value = "";
+  }
+
+  function onScan(scanned: string) {
+    setCode(scanned);
+    // A photo checked against another code must be taken again.
+    if (photo?.status === "ready" && photo.photo.code !== scanned) clearPhoto();
+  }
+
+  async function onPhoto(file: File | undefined) {
+    if (!file) return;
+    setPhoto({ status: "reading" });
+    try {
+      setPhoto({ status: "ready", photo: await preparePhoto(file) });
+    } catch (e) {
+      setPhoto({ status: "error", message: errorText(e) });
+    }
+  }
+
+  async function report() {
+    if (!canReport || !ready || !code) return;
+    setBusy(true);
     let ok = false;
     let message: string;
     try {
-      const r = await api<{ ok: boolean; code?: string; message: string }>("/api/damaged", { body: { code, reason } });
+      const r = await api<{ ok: boolean; code?: string; message: string }>("/api/damaged", { body: { code, reason, photo: ready.dataUrl, photoCode: ready.code } });
       ok = r.ok;
       message = r.ok ? r.message : `${r.code}: ${r.message}`;
     } catch (e) {
       message = errorText(e);
+    } finally {
+      setBusy(false);
     }
     setLog((l) => [{ id: ++seq, code, ok, message, at: new Date().toISOString() }, ...l].slice(0, 30));
     if (ok) {
+      setCode(null);
+      clearPhoto();
       notifyDataChanged();
       list.reload();
     }
@@ -52,11 +100,11 @@ export default function DamagedPage() {
     <>
       <PageTitle
         title="Damaged"
-        subtitle="Report a damaged case, tray or pack held here. It leaves your stock, can no longer move, and Velza HQ is alerted."
+        subtitle="Report a damaged case, tray or pack held here, with a photo of it. It leaves your stock, can no longer move, and Velza HQ is alerted."
       />
       <div className="grid gap-4 lg:grid-cols-2 lg:gap-5">
         <Card title="Report damage">
-          <Field label="1. What is wrong?" hint="Kept for every code you scan until you change it">
+          <Field label="1. What is wrong?" hint="Kept for every item you report until you change it">
             <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Crushed in transit" maxLength={300} />
           </Field>
           <div className="mt-2 flex flex-wrap gap-2">
@@ -66,14 +114,93 @@ export default function DamagedPage() {
               </Button>
             ))}
           </div>
+
           <div className="mt-4">
             {!reason.trim() && <Notice tone="info" className="mb-2">Say what is wrong first, then scan.</Notice>}
             <ScanInput label="2. Scan the damaged case, tray or pack" onScan={onScan} demoScreen="damage" disabled={!reason.trim()} />
+            {code && (
+              <p className="mt-2 text-sm" data-testid="damage-code">
+                Reporting <Code>{code}</Code>{" "}
+                <button
+                  type="button"
+                  className="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                  onClick={() => {
+                    setCode(null);
+                    clearPhoto();
+                  }}
+                >
+                  change
+                </button>
+              </p>
+            )}
           </div>
           <p className="mt-2 text-xs text-muted-foreground">
             Scan the lot code to report a whole case or tray, sealed or opened (an opened one takes the packs of it still here).
             Single packs can be reported once the lot is opened.
           </p>
+
+          <div className="mt-4">
+            <Field label="3. Photo of the damage, with its barcode" hint="One photo showing the damage and the item's barcode or QR sticker, clear and in focus.">
+              <input
+                ref={fileRef}
+                id="damage-photo"
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="sr-only"
+                aria-label="Photo of the damaged item"
+                disabled={!canPhoto}
+                onChange={(e) => onPhoto(e.target.files?.[0])}
+              />
+              <label htmlFor="damage-photo" aria-disabled={!canPhoto} className={canPhoto ? PHOTO_BUTTON_ON : PHOTO_BUTTON_OFF}>
+                <IconCamera size={17} />
+                {photo ? "Retake / choose another photo" : "Take or choose photo"}
+              </label>
+            </Field>
+            {!code && <p className="mt-1 text-xs text-muted-foreground">Scan the damaged item first.</p>}
+            {photo?.status === "reading" && <p className="mt-2 text-sm text-muted-foreground">Reading the barcode in the photo…</p>}
+            {photo?.status === "error" && (
+              <Notice tone="error" className="mt-2">
+                {photo.message}
+              </Notice>
+            )}
+            {ready && (
+              <div className="mt-3 flex gap-3" data-testid="damage-photo-check">
+                {/* eslint-disable-next-line @next/next/no-img-element -- local preview of the photo being uploaded */}
+                <img src={ready.dataUrl} alt="Photo of the damaged item" className="h-28 w-28 shrink-0 rounded-md border border-line object-cover" />
+                <div className="text-sm">
+                  {!ready.code ? (
+                    <p className="flex items-start gap-1.5 text-danger">
+                      <IconCircleX size={17} className="mt-0.5 shrink-0" />
+                      <span>No barcode or QR code found in this photo. Retake it with the code label clear and in focus.</span>
+                    </p>
+                  ) : matches ? (
+                    <p className="flex items-start gap-1.5 text-success">
+                      <IconCircleCheck size={17} className="mt-0.5 shrink-0" />
+                      <span>
+                        Barcode in the photo matches <Code>{ready.code}</Code>.
+                      </span>
+                    </p>
+                  ) : (
+                    <p className="flex items-start gap-1.5 text-danger">
+                      <IconCircleX size={17} className="mt-0.5 shrink-0" />
+                      <span>
+                        The photo shows <Code>{ready.code}</Code>, not the scanned <Code>{code}</Code>. Photograph the damaged item itself.
+                      </span>
+                    </p>
+                  )}
+                  <p className="mt-1 text-xs text-muted-foreground">{Math.round(ready.bytes / 1024)} KB</p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="mt-5 border-t border-line pt-4">
+            <Button onClick={report} loading={busy} disabled={!canReport}>
+              4. Report damaged
+            </Button>
+            {!canReport && !busy && <p className="mt-2 text-xs text-muted-foreground">Needs a reason, the scanned code and a photo whose barcode matches it.</p>}
+          </div>
           <div className="mt-4">
             <ScanLog entries={log} />
           </div>
@@ -94,7 +221,7 @@ export default function DamagedPage() {
               </div>
             ))}
           </div>
-          <Table head={["Code", "What", "Reason", "Reported"]} empty={items.length ? null : <Empty>Nothing reported damaged</Empty>}>
+          <Table head={["Code", "What", "Reason", "Photo", "Reported"]} empty={items.length ? null : <Empty>Nothing reported damaged</Empty>}>
             {items.map((d) => (
               <tr key={d.code} data-testid="damaged-row">
                 <Td>
@@ -106,6 +233,16 @@ export default function DamagedPage() {
                   <div className="text-muted-foreground">Batch {d.batchCode}</div>
                 </Td>
                 <Td>{d.reason ?? "—"}</Td>
+                <Td>
+                  {d.photoUrl ? (
+                    <a href={d.photoUrl} target="_blank" rel="noreferrer" data-testid="damaged-photo">
+                      {/* eslint-disable-next-line @next/next/no-img-element -- private photo from our own API */}
+                      <img src={d.photoUrl} alt={`Photo of damaged ${d.code}`} className="h-14 w-14 rounded-md border border-line object-cover" loading="lazy" />
+                    </a>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">—</span>
+                  )}
+                </Td>
                 <Td className="whitespace-nowrap text-xs text-muted-foreground">
                   {fmtTime(d.reportedAt)}
                   {d.reportedBy && <div>{d.reportedBy}</div>}

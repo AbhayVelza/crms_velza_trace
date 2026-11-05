@@ -81,15 +81,18 @@ function guard(req: Request): Response | null {
   return null;
 }
 
-/** JSON request body: must be declared as JSON (blocks plain HTML form posts) and at most MAX_JSON_BYTES. */
-export async function jsonBody(req: Request): Promise<unknown> {
+/**
+ * JSON request body: must be declared as JSON (blocks plain HTML form posts) and at most MAX_JSON_BYTES
+ * (a route that carries a photo passes its own, larger limit).
+ */
+export async function jsonBody(req: Request, maxBytes = MAX_JSON_BYTES): Promise<unknown> {
   if (!(req.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) {
     throw new ServiceError(415, "UNSUPPORTED_MEDIA_TYPE", "Request body must be JSON (content-type: application/json)");
   }
-  const tooLarge = () => new ServiceError(413, "TOO_LARGE", `Request body is larger than ${MAX_JSON_BYTES / 1024} KB`);
-  if (Number(req.headers.get("content-length") ?? 0) > MAX_JSON_BYTES) throw tooLarge();
+  const tooLarge = () => new ServiceError(413, "TOO_LARGE", `Request body is larger than ${Math.round(maxBytes / 1024)} KB`);
+  if (Number(req.headers.get("content-length") ?? 0) > maxBytes) throw tooLarge();
   const text = await req.text();
-  if (Buffer.byteLength(text) > MAX_JSON_BYTES) throw tooLarge();
+  if (Buffer.byteLength(text) > maxBytes) throw tooLarge();
   try {
     return JSON.parse(text);
   } catch {

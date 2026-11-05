@@ -14,6 +14,8 @@ interface AlertRow {
   message: string;
   partner: string | null;
   user: string | null;
+  /** Damage alerts: the photo of the damaged item (with its barcode). */
+  photoUrl?: string | null;
 }
 
 const CHIP = "inline-flex items-center rounded-full border px-3 py-1 text-sm font-medium transition-colors duration-150";
@@ -56,7 +58,15 @@ export default function AlertsPage() {
                   <Code>{a.code}</Code>
                 </Link>
               </Td>
-              <Td>{a.message}</Td>
+              <Td>
+                {a.message}
+                {a.photoUrl && (
+                  <a href={a.photoUrl} target="_blank" rel="noreferrer" className="mt-1 block w-fit" data-testid="alert-photo">
+                    {/* eslint-disable-next-line @next/next/no-img-element -- private photo from our own API */}
+                    <img src={a.photoUrl} alt={`Photo of damaged ${a.code}`} className="h-16 w-16 rounded-md border border-line object-cover" loading="lazy" />
+                  </a>
+                )}
+              </Td>
               <Td className="text-xs text-muted-foreground">
                 {a.partner}
                 {a.user && <div>{a.user}</div>}

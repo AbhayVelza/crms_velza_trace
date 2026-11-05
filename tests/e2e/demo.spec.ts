@@ -3,6 +3,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import { BarcodeFormat, BinaryBitmap, DecodeHintType, HybridBinarizer, MultiFormatReader, RGBLuminanceSource } from "@zxing/library";
 import { PNG } from "pngjs";
+import bwipjs from "bwip-js/node";
+import { CODE128_OPTIONS, QR_OPTIONS } from "../../src/lib/barcode";
 
 let lots: string[] = []; // [OR 00001 case, OR 00002 case, OR 00003 tray, GA 00001 tray]
 let offlineLot = ""; // the No Sugar case made while the device was offline (step 8)
@@ -80,6 +82,12 @@ async function scan(page: Page, code: string) {
   await expect(items).toHaveCount(before + 1);
   const first = items.first();
   return { ok: (await first.getAttribute("data-ok")) === "true", text: await first.innerText() };
+}
+
+/** A stand-in photo of a damaged item: its sticker's QR (the public lookup URL) or its Code 128 barcode, as a PNG. */
+function stickerPhoto(code: string, kind: "qr" | "code128") {
+  const opts = kind === "qr" ? { ...QR_OPTIONS, text: `http://localhost/t/${code}`, scale: 8 } : { ...CODE128_OPTIONS, text: code, scale: 4, height: 14 };
+  return bwipjs.toBuffer({ ...opts, paddingwidth: 30, paddingheight: 30, backgroundcolor: "FFFFFF" });
 }
 
 async function dispatch(page: Page, role: string, tag: string | null, to: string, invoice: string, codes: string[]) {
@@ -393,14 +401,34 @@ test.describe.serial("Velza demo script (9.1)", () => {
     await as(page, "SS", "SS-1", "/damaged");
     await expect(page.locator("#scan-input")).toBeDisabled(); // reason first
     await page.getByRole("button", { name: "Crushed / dented" }).click();
-    const r = await scan(page, offlineLot);
-    expect(r.ok, r.text).toBe(true);
+    await page.locator("#scan-input").fill(offlineLot);
+    await page.locator("#scan-input").press("Enter");
+    await expect(page.getByTestId("damage-code")).toContainText(offlineLot);
+    const reportButton = page.getByRole("button", { name: "4. Report damaged" });
+    await expect(reportButton).toBeDisabled(); // no photo yet
+    // A photo of another item's barcode is refused in the page.
+    await page.locator("#damage-photo").setInputFiles({ name: "wrong.png", mimeType: "image/png", buffer: await stickerPhoto(lots[0], "code128") });
+    await expect(page.getByTestId("damage-photo-check")).toContainText(`The photo shows ${lots[0]}, not the scanned ${offlineLot}`);
+    await expect(reportButton).toBeDisabled();
+    // The item's own QR (the public lookup URL) matches.
+    await page.locator("#damage-photo").setInputFiles({ name: "damaged.png", mimeType: "image/png", buffer: await stickerPhoto(offlineLot, "qr") });
+    await expect(page.getByTestId("damage-photo-check")).toContainText(`Barcode in the photo matches ${offlineLot}`);
+    const items = page.getByTestId("scan-log").locator("li");
+    await reportButton.click();
+    await expect(items).toHaveCount(1);
+    expect(await items.first().getAttribute("data-ok"), await items.first().innerText()).toBe("true");
+    await expect(page.getByTestId("damage-code")).toHaveCount(0); // ready for the next item
     await expect(page.getByTestId("damaged-row")).toHaveCount(1);
+    const photo = page.getByTestId("damaged-photo").locator("img");
+    await expect(photo).toBeVisible();
+    expect(await photo.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
     await expect(page.getByTestId("damaged-row")).toContainText("Crushed / dented");
     await expect(page.getByTestId("damaged-counts")).toContainText(/1s*Cases/);
 
     await as(page, "TRACE_OWNER", null, "/hq/alerts");
-    await expect(page.getByTestId("alert-row").filter({ hasText: "DAMAGED" }).filter({ hasText: offlineLot })).toHaveCount(1);
+    const alert = page.getByTestId("alert-row").filter({ hasText: "DAMAGED" }).filter({ hasText: offlineLot });
+    await expect(alert).toHaveCount(1);
+    await expect(alert.getByTestId("alert-photo").locator("img")).toBeVisible();
     await page.goto("/hq");
     await expect(page.getByRole("row", { name: /^Super Stockist SS-1/ })).toContainText("1 case");
   });

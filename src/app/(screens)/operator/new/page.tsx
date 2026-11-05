@@ -52,6 +52,23 @@ function CountInput({ value, onChange, label }: { value: number; onChange: (n: n
   );
 }
 
+const PILL_ON = "inline-flex min-h-10 items-center gap-2 rounded-full border-2 border-primary bg-primary px-4 font-semibold text-primary-foreground transition-colors duration-150 [&_span]:text-primary-foreground/70";
+const PILL_OFF = "inline-flex min-h-10 items-center gap-2 rounded-full border border-line-strong bg-surface px-4 text-foreground-2 transition-colors duration-150 hover:border-foreground hover:text-foreground";
+
+function FlavourPicker({ value, onChange, label }: { value: string; onChange: (code: string) => void; label: string }) {
+  const { data } = useSession();
+  const flavours = (data?.flavours ?? []).filter((f) => f.active);
+  return (
+    <div role="group" aria-label={label} className="flex flex-wrap gap-2">
+      {flavours.map((f) => (
+        <button key={f.code} type="button" onClick={() => onChange(f.code)} aria-pressed={value === f.code} className={value === f.code ? PILL_ON : PILL_OFF}>
+          {f.name} <span className="font-mono text-xs text-muted-foreground">{f.code}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 type Mode = "new" | "continue";
 
 export default function NewPrintOrderPage() {
@@ -112,7 +129,7 @@ function StepList({ steps, step }: { steps: readonly string[]; step: number }) {
 }
 
 function NewBatchesWizard() {
-  const { data, flavourName } = useSession();
+  const { flavourName } = useSession();
   const router = useRouter();
   const [step, setStep] = useState(0);
   const [count, setCount] = useState(1);
@@ -123,7 +140,6 @@ function NewBatchesWizard() {
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<PrintOrder | null>(null);
 
-  const flavours = (data?.flavours ?? []).filter((f) => f.active);
   const update = (i: number, patch: Partial<BatchInput>) => setBatches((bs) => bs.map((b, j) => (j === i ? { ...b, ...patch } : b)));
 
   async function loadPreview() {
@@ -206,19 +222,7 @@ function NewBatchesWizard() {
           <>
             <h2 className="mb-3 font-bold text-foreground">Which flavour?</h2>
             {perBatch((b, i) => (
-              <div className="flex flex-wrap gap-2">
-                {flavours.map((f) => (
-                  <button
-                    key={f.code}
-                    type="button"
-                    onClick={() => update(i, { flavour: f.code })}
-                    aria-pressed={b.flavour === f.code}
-                    className={b.flavour === f.code ? "inline-flex min-h-10 items-center gap-2 rounded-full border-2 border-primary bg-primary px-4 font-semibold text-primary-foreground transition-colors duration-150 [&_span]:text-primary-foreground/70" : "inline-flex min-h-10 items-center gap-2 rounded-full border border-line-strong bg-surface px-4 text-foreground-2 transition-colors duration-150 hover:border-foreground hover:text-foreground"}
-                  >
-                    {f.name} <span className="font-mono text-xs text-muted-foreground">{f.code}</span>
-                  </button>
-                ))}
-              </div>
+              <FlavourPicker label={`Batch ${i + 1} flavour`} value={b.flavour} onChange={(code) => update(i, { flavour: code })} />
             ))}
           </>
         )}
@@ -376,7 +380,7 @@ function NewBatchesWizard() {
 // the range the server actually allocated. One request key per (batch, cases, trays), kept across
 // retries so a repeated "Create & print" never allocates twice.
 
-const CONTINUE_STEPS = ["Choose batch", "Cases & trays", "Summary", "Print"] as const;
+const CONTINUE_STEPS = ["Choose batch", "Flavour, cases & trays", "Summary", "Print"] as const;
 
 interface ContinuableBatch {
   batchCode: string;
@@ -395,6 +399,7 @@ interface ContinuePreview {
   problem: { code: string; message: string } | null;
   batch: ContinuableBatch;
   device: { name: string; offline: boolean };
+  flavour: { code: string; name: string; changed: boolean };
   totalLots: number;
   stickerCount: number;
   expectedFirstLotHex: string | null;
@@ -407,6 +412,8 @@ interface ContinueResult {
   replayed: boolean;
   printOrder: PrintOrder;
   batchCode: string;
+  flavour: string;
+  flavourName: string;
   firstLotHex: string;
   lastLotHex: string;
   totalLots: number;
@@ -425,9 +432,11 @@ const fmt = (n: number | null) => (n === null ? "—" : n.toLocaleString("en-IN"
 
 function ContinueBatchWizard() {
   const router = useRouter();
+  const { flavourName } = useSession();
   const list = useApi<{ maxLotsPerOrder: number; batches: ContinuableBatch[] }>("/api/print-orders/continue", { refreshOnChange: true });
   const [step, setStep] = useState(0);
   const [batchCode, setBatchCode] = useState<string | null>(null);
+  const [flavour, setFlavour] = useState("");
   const [cases, setCases] = useState(0);
   const [trays, setTrays] = useState(0);
   const [preview, setPreview] = useState<ContinuePreview | null>(null);
@@ -438,8 +447,13 @@ function ContinueBatchWizard() {
 
   const selected = list.data?.batches.find((b) => b.batchCode === batchCode) ?? null;
   // A different request needs a different key; the same request keeps its key across retries.
-  const choose = (code: string) => {
-    setBatchCode(code);
+  const choose = (b: ContinuableBatch) => {
+    setBatchCode(b.batchCode);
+    setFlavour(b.flavour); // the batch's own flavour unless the operator switches it
+    setKey(null);
+  };
+  const chooseFlavour = (code: string) => {
+    setFlavour(code);
     setKey(null);
   };
   const changeCount = (set: (n: number) => void) => (n: number) => {
@@ -452,7 +466,7 @@ function ContinueBatchWizard() {
     setBusy(true);
     setError(null);
     try {
-      setPreview(await api<ContinuePreview>("/api/print-orders/continue", { body: { batchCode, cases, trays, preview: true } }));
+      setPreview(await api<ContinuePreview>("/api/print-orders/continue", { body: { batchCode, flavour, cases, trays, preview: true } }));
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -464,6 +478,7 @@ function ContinueBatchWizard() {
     setError(null);
     if (step === 0 && !selected?.continuable) return setError("Choose a batch that can be continued");
     if (step === 1) {
+      if (!flavour) return setError("Choose a flavour");
       if (!Number.isInteger(cases) || !Number.isInteger(trays) || cases < 0 || trays < 0) return setError("Cases and trays must be whole numbers");
       if (cases + trays < 1) return setError("Enter at least one case or tray");
       setPreview(null);
@@ -479,7 +494,7 @@ function ContinueBatchWizard() {
     setBusy(true);
     setError(null);
     try {
-      const r = await api<ContinueResult>("/api/print-orders/continue", { body: { batchCode, cases, trays, idempotencyKey } });
+      const r = await api<ContinueResult>("/api/print-orders/continue", { body: { batchCode, flavour, cases, trays, idempotencyKey } });
       setCreated(r);
       notifyDataChanged();
       setStep(3);
@@ -496,6 +511,7 @@ function ContinueBatchWizard() {
   function restart() {
     setStep(0);
     setBatchCode(null);
+    setFlavour("");
     setCases(0);
     setTrays(0);
     setPreview(null);
@@ -512,7 +528,7 @@ function ContinueBatchWizard() {
           <>
             <h2 className="mb-1 font-bold text-foreground">Which batch do you want to continue?</h2>
             <p className="mb-3 text-sm text-muted-foreground">
-              New lots continue from the batch&apos;s next lot number and keep its flavour, manufacture and expiry dates. For different dates, create a new batch.
+              New lots continue from the batch&apos;s next lot number and keep its manufacture and expiry dates. You can keep the batch&apos;s flavour or switch to another one in the next step. For different dates, create a new batch.
             </p>
             {list.error && <Notice tone="error">{list.error}</Notice>}
             {!list.data && !list.error && <Loading>Loading batches…</Loading>}
@@ -522,9 +538,15 @@ function ContinueBatchWizard() {
                 empty={!list.data.batches.length ? <span className="text-muted-foreground">No batches yet. Create one with New batches.</span> : null}
               >
                 {list.data.batches.map((b) => (
-                  <tr key={b.batchCode} data-testid={`continue-batch-${b.batchCode}`} className={cx(batchCode === b.batchCode && "bg-muted")}>
+                  <tr
+                    key={b.batchCode}
+                    data-testid={`continue-batch-${b.batchCode}`}
+                    // The whole row selects the batch, not only the small radio (keyboard users still use the radio).
+                    onClick={() => b.continuable && batchCode !== b.batchCode && choose(b)}
+                    className={cx(b.continuable ? "cursor-pointer hover:bg-surface-2" : "opacity-60", batchCode === b.batchCode && "bg-muted")}
+                  >
                     <Td>
-                      <input type="radio" name="continue-batch" aria-label={`Batch ${b.batchCode}`} checked={batchCode === b.batchCode} disabled={!b.continuable} onChange={() => choose(b.batchCode)} />
+                      <input type="radio" name="continue-batch" aria-label={`Batch ${b.batchCode}`} className="h-4 w-4 cursor-pointer" checked={batchCode === b.batchCode} disabled={!b.continuable} onChange={() => choose(b)} />
                     </Td>
                     <Td>
                       <Code>{b.batchCode}</Code>
@@ -553,8 +575,16 @@ function ContinueBatchWizard() {
         {step === 1 && selected && (
           <div className="space-y-4">
             <h2 className="font-bold text-foreground">
-              How many cases and trays for batch <Code>{selected.batchCode}</Code> · {selected.flavourName}?
+              Flavour, cases and trays for batch <Code>{selected.batchCode}</Code>
             </h2>
+            <Field label="Flavour" hint={`Batch flavour: ${selected.flavourName}. Pick another flavour to print these lots as that flavour; the lot numbers still continue from the batch.`}>
+              <FlavourPicker label="Flavour" value={flavour} onChange={chooseFlavour} />
+            </Field>
+            {flavour && flavour !== selected.flavour && (
+              <Notice tone="info">
+                Switching flavour: {selected.flavourName} → <strong>{flavourName(flavour)}</strong>. The new lots will be printed as {flavourName(flavour)} in batch <Code>{selected.batchCode}</Code>.
+              </Notice>
+            )}
             <Field label="Cases (4 packs × 6 cans)">
               <CountInput label="Cases" value={cases} onChange={changeCount(setCases)} />
             </Field>
@@ -578,7 +608,10 @@ function ContinueBatchWizard() {
                     <Td>
                       <Code>{preview.batch.batchCode}</Code>
                     </Td>
-                    <Td>{preview.batch.flavourName}</Td>
+                    <Td>
+                      {preview.flavour.name}
+                      {preview.flavour.changed && <div className="text-xs text-muted-foreground">was {preview.batch.flavourName}</div>}
+                    </Td>
                     <Td className="whitespace-nowrap text-xs">
                       {preview.batch.mfgDate} → {preview.batch.expiryDate}
                     </Td>
@@ -617,7 +650,7 @@ function ContinueBatchWizard() {
           <div className="space-y-3">
             <Notice tone="ok">
               {created.replayed ? "This order was already created (the request was repeated), so it is shown again. " : "Print order created: "}
-              {countLabel(created.stickerCount, "sticker")}, {countLabel(created.totalLots, "lot")} for batch {created.batchCode}:{" "}
+              {countLabel(created.stickerCount, "sticker")}, {countLabel(created.totalLots, "lot")} of {created.flavourName} for batch {created.batchCode}:{" "}
               <Code>
                 <span data-testid="continue-range">{lotRangeLabel(created.firstLotHex, created.lastLotHex)}</span>
               </Code>

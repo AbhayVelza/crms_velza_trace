@@ -32,6 +32,11 @@ async function names(tx: StoreTx, only?: { partners: Ids; users: Ids; devices: I
   };
 }
 
+/** The batch's flavour first, then any other flavours its continued lots use: "Original, Green Apple". */
+function flavoursLabel(batch: { flavour: string }, lots: { flavour: string }[], name: (code: string) => string) {
+  return [...new Set([batch.flavour, ...lots.map((l) => l.flavour)])].map(name).join(", ");
+}
+
 function locationLabel(partners: Partner[], item: { status: ItemStatus; locationId: string; inTransitToId: string | null }) {
   const at = partnerName(partners, item.locationId);
   if (item.status === "IN_TRANSIT") return `In transit: ${at} → ${partnerName(partners, item.inTransitToId)}`;
@@ -98,7 +103,8 @@ export async function lookup(userId: string | null, rawCode: string) {
     quarantineReason: item.lot.quarantineReason,
     batch: batch && {
       code: batch.code,
-      flavour: n.flavour(batch.flavour),
+      // The lot's own flavour: a continued batch may hold lots of several flavours.
+      flavour: n.flavour(item.lot.flavour),
       mfgDate: batch.mfgDate,
       expiryDate: batch.expiryDate,
       status: batch.status,
@@ -344,7 +350,7 @@ export async function listBatches(userId: string | null) {
       const bl = lotsOf.get(b.code) ?? [];
       return {
         ...b,
-        flavourName: n.flavour(b.flavour),
+        flavourName: flavoursLabel(b, bl, n.flavour),
         manufacturer: n.partner(b.manufacturerId),
         counter: batchCounter(b),
         displayStatus: batchDisplayStatus(b),
@@ -368,7 +374,7 @@ export async function batchReport(userId: string | null, batchCode: string) {
   const ever = (type: Movement["type"]) => new Set(movements.filter((m) => m.type === type).map((m) => m.itemCode)).size;
   const reprints = (await store.reprints.list()).filter((r) => lotCodes.has(r.code.slice(0, 15)));
   return {
-    batch: { ...batch, flavourName: n.flavour(batch.flavour), manufacturer: n.partner(batch.manufacturerId), counter: batchCounter(batch), displayStatus: batchDisplayStatus(batch) },
+    batch: { ...batch, flavourName: flavoursLabel(batch, lots, n.flavour), manufacturer: n.partner(batch.manufacturerId), counter: batchCounter(batch), displayStatus: batchDisplayStatus(batch) },
     summary: {
       lots: lots.length,
       cases: lots.filter((l) => l.lotType === "CASE").length,

@@ -127,7 +127,7 @@ to SS0001 → continue with D and E. Codes can be typed or scanned with a USB sc
 
 ## 6. Known results to expect
 
-- **DEF-001:** `http://localhost:3300/api/admin/settings` shows the settings JSON even when signed out (should be refused).
+- **DEF-001 (fixed 4 Nov 2026):** `http://localhost:3300/api/admin/settings` now answers 401 when signed out and 403 for anyone but Velza Admin.
 - **DEF-003:** with sign-in on, the browser console shows a 404 for `/api/auth/dev-users` on each page (harmless probe).
 - No text search, sorting or pagination on the partner table (DEF-004).
 - A Maharashtra partner accepts a Delhi PIN code (INFO-1).
@@ -138,3 +138,42 @@ to SS0001 → continue with D and E. Codes can be typed or scanned with a USB sc
 - For API results, attach `docs/qa/qa-run-results.json` and `docs/qa/qa-ui-results.json` from the latest run.
 - Note the date, the commit (`git log -1 --oneline`) and whether sign-in was on.
 - Never include the credentials file, passwords or session cookies in evidence.
+
+## 8. Scanning hardware tests (phones, USB and Bluetooth scanners)
+
+Automated tests use the browser's fake camera and simulated keyboard input only. These tests need the real devices;
+until someone runs them, every row is **NOT RUN**.
+
+**Setup**
+
+- Camera on a phone needs a secure address. `http://localhost` works only on the PC itself; a phone on the Wi-Fi needs
+  **https://** — for a trial, `npx next dev --experimental-https -H 0.0.0.0 -p 3300` on a test copy with QA data
+  (accept the self-signed certificate on the phone), or the HTTPS address of a staging server. Never disable browser
+  security to get the camera working.
+- Print a test sheet from **Print orders → Print view** (one case: 1 lot sticker with barcode + QR, 4 pack stickers) at
+  100% scale, plus one sticker printed blurred/creased for the damaged-sticker test.
+- Scanners: set to USB-HID / Bluetooth-HID **keyboard mode** with an **Enter (CR) suffix**; keyboard layout matching the
+  PC (US/UK). No driver is needed.
+
+**Procedure** — on QC → Verify (and repeat the scanner rows on Dispatch and Receive):
+
+1. Scan the lot sticker → its packs appear PENDING. 2. Scan each pack → each turns SCANNED, counters and % move.
+3. Scan a pack twice → "already scanned", the row stays SCANNED, the count does not change. 4. Scan a pack of another
+case → refused, listed under "refused scans not on this list". 5. Scan 4 packs as fast as possible → all 4 ticked, none
+lost. 6. Turn Wi-Fi off, scan → "Not checked … scan it again", nothing ticked; Wi-Fi on, scan again → ticked once.
+7. Camera only: refuse the permission prompt → clear message; allow it in the site settings → Start camera works.
+8. Camera only: switch cameras (if listed), torch on/off (if offered), then leave the page → the camera light goes off.
+
+| # | Device / browser / OS | Scanner model | Code type | Conditions | Result (PASS / FAIL + note) |
+|---|---|---|---|---|---|
+| H1 | Android phone, Chrome, rear camera | — | Lot QR | Good light, 15–25 cm | NOT RUN |
+| H2 | Android phone, Chrome, rear camera | — | Lot barcode, pack barcode | Good light; then poor light with torch | NOT RUN |
+| H3 | iPhone, Safari, rear camera | — | Lot QR, lot barcode, pack barcode | Good and poor light (iPhone Safari has no torch control) | NOT RUN |
+| H4 | Phone, Chrome/Safari | — | Any | Front ↔ rear camera switch; permission refused then allowed | NOT RUN |
+| H5 | Phone, Chrome/Safari | — | Any | Leave the page / lock the phone → camera released | NOT RUN |
+| H6 | Plant PC, Edge/Chrome | 2D USB scanner (model: …) | Lot QR, lot barcode, pack barcode | Fast repeated scans; damaged sticker | NOT RUN |
+| H7 | Tablet or phone, Chrome | Bluetooth scanner, keyboard mode (model: …) | Lot barcode, pack barcode | Fast scans; walk out of range and back (disconnect) | NOT RUN |
+| H8 | Any | Any | Pack | Network interruption during a scan (step 6) | NOT RUN |
+
+Record for each row: date, browser and OS version, scanner model and firmware, code type, distance and light, what
+happened, and screenshots (no passwords in them).

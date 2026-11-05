@@ -3,17 +3,20 @@
 import { z } from "zod";
 import { formatLotNumber } from "@/lib/core/codes";
 import { canReprint, canVoid, lotStatusAfterReprint } from "@/lib/core/rules";
+import { scannedCodeSchema } from "@/lib/scan/scannedCode";
 import { getStore, type StoreTx } from "@/lib/store";
-import { badRequest, findItem, loadActor, manufacturerDevice, notFound, nowIso, requireAction, requirePartner, setLotState, unknownCodeMessage } from "./common";
+import { badRequest, findItem, loadActor, notFound, nowIso, printDevice, requireAction, requirePartner, setLotState, unknownCodeMessage } from "./common";
 import { autoRefill, reservedCodes } from "./pool";
+import { reprintServedId } from "./printOrders";
 
-export const reprintSchema = z.object({ code: z.string(), reason: z.string() });
-export const voidSchema = z.object({ lotCode: z.string(), reason: z.string().optional() });
+// deviceId: the PC chosen as "This PC" in the device bar (required when the plant has several PCs).
+export const reprintSchema = z.object({ code: scannedCodeSchema, reason: z.string().max(500), deviceId: z.string().optional() });
+export const voidSchema = z.object({ lotCode: scannedCodeSchema, reason: z.string().max(500).optional(), deviceId: z.string().optional() });
 export const deviceSchema = z.object({ offline: z.boolean() });
 export const syncSchema = z.object({ deviceId: z.string().optional() });
 
 export async function reprint(userId: string | null, body: unknown) {
-  const { code, reason } = reprintSchema.parse(body);
+  const { code, reason, deviceId } = reprintSchema.parse(body);
   return getStore().transaction(async (tx) => {
     const actor = await loadActor(tx, userId);
     requireAction(actor, "reprint");
@@ -22,13 +25,23 @@ export async function reprint(userId: string | null, body: unknown) {
     if (!found.ok || found.item.lot.manufacturerId !== manufacturer.id) throw badRequest("UNKNOWN_CODE", found.ok ? unknownCodeMessage(code) : found.message);
     const check = canReprint(found.item.movable, reason);
     if (!check.ok) throw badRequest(check.code, check.message);
-    const device = await manufacturerDevice(tx, manufacturer.id);
+    const device = await printDevice(tx, manufacturer.id, deviceId);
     const at = nowIso();
     const lot = found.item.lot;
     const lotStatus = lotStatusAfterReprint(lot.status);
     const backToQc = lotStatus !== lot.status;
     if (backToQc) await setLotState(tx, lot, { status: lotStatus, quarantineReason: null }, at);
-    const row = await tx.reprints.append({ id: crypto.randomUUID(), at, code, itemKind: found.item.kind, reason: reason.trim(), userId: actor.user.id, deviceId: device.id });
+    // The authorization to print this code once more: who, when, why, which device and the order that issued it.
+    const row = await tx.reprints.append({
+      id: crypto.randomUUID(),
+      at,
+      code,
+      itemKind: found.item.kind,
+      reason: reason.trim(),
+      userId: actor.user.id,
+      deviceId: device.id,
+      printOrderId: lot.printOrderId,
+    });
     await tx.appendMovement({
       type: "REPRINTED",
       itemKind: found.item.kind,
@@ -43,8 +56,8 @@ export async function reprint(userId: string | null, body: unknown) {
       note: reason.trim(),
     });
     const message = backToQc
-      ? `Reprint of ${code} logged (same code). Lot ${lot.lotCode} is out of quarantine and back to PRINTED — QC must verify it again`
-      : `Reprint of ${code} logged (same code)`;
+      ? `Reprint of ${code} logged (same code). Lot ${lot.lotCode} is out of quarantine and back to PRINTED — QC must verify it again. Open its print view to print it once.`
+      : `Reprint of ${code} logged (same code). Open its print view to print it once.`;
     return { ok: true, message, reprint: row };
   });
 }
@@ -53,17 +66,18 @@ export async function listReprints(userId: string | null) {
   const store = getStore();
   const actor = await loadActor(store, userId);
   requireAction(actor, "reprint");
-  const [rows, users] = await Promise.all([store.reprints.list(), store.users.list()]);
+  const [rows, users, served] = await Promise.all([store.reprints.list(), store.users.list(), store.movements.list({ type: "REPRINT_SERVED" })]);
   const lots = await store.lots.list({ manufacturerId: actor.partner?.id ?? "" });
   const own = new Set(lots.map((l) => l.lotCode));
+  const servedAt = new Map(served.map((m) => [m.id, m.at]));
   return rows
     .filter((r) => own.has(r.code.slice(0, 15)))
     .sort((a, b) => b.at.localeCompare(a.at))
-    .map((r) => ({ ...r, userName: users.find((u) => u.id === r.userId)?.name ?? r.userId }));
+    .map((r) => ({ ...r, userName: users.find((u) => u.id === r.userId)?.name ?? r.userId, servedAt: servedAt.get(reprintServedId(r.id)) ?? null }));
 }
 
 export async function voidLot(userId: string | null, body: unknown) {
-  const { lotCode, reason } = voidSchema.parse(body);
+  const { lotCode, reason, deviceId } = voidSchema.parse(body);
   return getStore().transaction(async (tx) => {
     const actor = await loadActor(tx, userId);
     requireAction(actor, "void");
@@ -72,7 +86,10 @@ export async function voidLot(userId: string | null, body: unknown) {
     if (!lot || lot.manufacturerId !== manufacturer.id) throw badRequest("UNKNOWN_CODE", `Unknown lot ${lotCode}`);
     const check = canVoid(lot);
     if (!check.ok) throw badRequest(check.code, check.message);
-    const device = await manufacturerDevice(tx, manufacturer.id);
+    // A void can never be undone and its lot number is never reused, so the audit trail must say why.
+    const why = reason?.trim() ?? "";
+    if (!why) throw badRequest("REASON_REQUIRED", "Say why the lot is voided (for example: misprint, torn sticker, line stopped)");
+    const device = await printDevice(tx, manufacturer.id, deviceId);
     const at = nowIso();
     await setLotState(tx, lot, { status: "VOID" }, at);
     await tx.appendMovement({
@@ -86,7 +103,7 @@ export async function voidLot(userId: string | null, body: unknown) {
       userId: actor.user.id,
       deviceId: device.id,
       invoice: null,
-      note: reason?.trim() || null,
+      note: why,
     });
     return { ok: true, message: `Lot ${lotCode} voided; lot number ${formatLotNumber(lot.lotNumber)} will never be reused` };
   });
@@ -134,13 +151,14 @@ export async function sync(userId: string | null, body: unknown) {
     const actor = await loadActor(tx, userId);
     requireAction(actor, "sync");
     const manufacturer = requirePartner(actor);
-    const device = await manufacturerDevice(tx, manufacturer.id, deviceId);
+    const device = await printDevice(tx, manufacturer.id, deviceId);
     if (device.offline) throw badRequest("DEVICE_OFFLINE", `${device.name} is offline — switch it Online, then Sync`);
     const at = nowIso();
     const counts = await unsyncedCounts(tx, device.id);
-    for (const b of await tx.batches.list({ deviceId: device.id, synced: false })) await tx.batches.update(b.id, { synced: true });
-    for (const l of await tx.lots.list({ deviceId: device.id, synced: false })) await tx.lots.update(l.id, { synced: true, updatedAt: at });
-    for (const o of await tx.printOrders.list({ deviceId: device.id, synced: false })) await tx.printOrders.update(o.id, { synced: true });
+    // One statement per table (the lots' packs follow their lot's sync flag), not one per row.
+    await tx.batches.updateWhere({ deviceId: device.id, synced: false }, { synced: true });
+    await tx.lots.updateWhere({ deviceId: device.id, synced: false }, { synced: true, updatedAt: at });
+    await tx.printOrders.updateWhere({ deviceId: device.id, synced: false }, { synced: true });
     await tx.devices.update(device.id, { lastSyncAt: at });
     await tx.appendMovement({
       type: "SYNC",

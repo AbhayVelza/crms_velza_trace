@@ -16,8 +16,34 @@ export interface SqlDriver {
    * Run `fn` in one transaction: all its statements commit together or none do. `exec` runs several
    * statements at once inside it (the schema upgrade of a reset).
    */
-  transaction<T>(fn: (q: Query, exec: (sql: string) => Promise<void>) => Promise<T>): Promise<T>;
+  transaction<T>(fn: (q: Query, exec: (sql: string) => Promise<void>) => Promise<T>, opts?: { lockKey?: string }): Promise<T>;
   close(): Promise<void>;
+}
+
+/** How long a transaction waits for its allocation lock before answering "busy". */
+const LOCK_WAIT_MS = Number(process.env.VELZA_ALLOCATION_LOCK_WAIT_MS ?? 30_000);
+
+/** Raised when the allocation lock could not be taken in time; nothing was done, retrying is safe. */
+export class LockTimeoutError extends Error {
+  code = "55P03"; // lock_not_available
+  constructor(key: string) {
+    super(`Timed out after ${LOCK_WAIT_MS} ms waiting for the allocation lock "${key}"`);
+    this.name = "LockTimeoutError";
+  }
+}
+
+/**
+ * Statements of one transaction share one connection, so they must run one after another even when the
+ * caller starts several at once (Promise.all): pg@9 stops queueing them itself. Every query of a
+ * transaction goes through this.
+ */
+export function sequential(q: Query): Query {
+  let tail: Promise<unknown> = Promise.resolve();
+  return (sql, params) => {
+    const run = tail.then(() => q(sql, params));
+    tail = run.catch(() => undefined);
+    return run as never;
+  };
 }
 
 class Mutex {
@@ -55,14 +81,29 @@ export async function createPgDriver(url: string): Promise<SqlDriver> {
     async exec(sql) {
       await pool.query(sql);
     },
-    async transaction(fn) {
+    async transaction(fn, opts) {
       for (let attempt = 1; ; attempt++) {
         const client = await pool.connect();
+        let locked = false;
+        let broken = false;
         try {
+          if (opts?.lockKey) {
+            // A session advisory lock taken BEFORE BEGIN: transactions with the same key (code allocation
+            // of one manufacturer) wait for each other, across every app process, and each starts with a
+            // fresh snapshot — so they queue instead of failing with serialization errors.
+            const deadline = Date.now() + LOCK_WAIT_MS;
+            for (;;) {
+              const [row] = (await client.query("SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS ok", [opts.lockKey])).rows;
+              if (row?.ok) break;
+              if (Date.now() > deadline) throw new LockTimeoutError(opts.lockKey);
+              await new Promise((r) => setTimeout(r, 15 + Math.random() * 20));
+            }
+            locked = true;
+          }
           // Serializable: concurrent scans of the same code can't both succeed (as with the JSON file's lock).
           await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
           const result = await fn(
-            async (sql, params) => (await client.query(sql, params as unknown[])).rows,
+            sequential(async (sql, params) => (await client.query(sql, params as unknown[])).rows),
             async (sql) => {
               await client.query(sql); // no parameters: the simple protocol, which takes several statements
             },
@@ -75,7 +116,13 @@ export async function createPgDriver(url: string): Promise<SqlDriver> {
           if (!code || !RETRYABLE.has(code) || attempt >= MAX_ATTEMPTS) throw e;
           await new Promise((r) => setTimeout(r, 10 * attempt + Math.random() * 20));
         } finally {
-          client.release();
+          if (locked) {
+            // Never return a connection to the pool still holding the lock: drop it if unlocking fails.
+            await client.query("SELECT pg_advisory_unlock(hashtextextended($1, 0))", [opts!.lockKey]).catch(() => {
+              broken = true;
+            });
+          }
+          client.release(broken);
         }
       }
     },
@@ -99,9 +146,10 @@ export async function createPgliteDriver(dir?: string): Promise<SqlDriver> {
     },
     transaction: (fn) =>
       lock.run(async () => {
+        // One connection and one transaction at a time: the allocation lock key is already satisfied.
         await db.exec("BEGIN");
         try {
-          const result = await fn(query, async (sql) => {
+          const result = await fn(sequential(query), async (sql) => {
             await db.exec(sql);
           });
           await db.exec("COMMIT");

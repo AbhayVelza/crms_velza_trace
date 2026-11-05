@@ -37,6 +37,8 @@ const LABELS: Record<string, string> = {
   poolRefillBelow: "Refill pool below",
   publicBaseUrl: "Public URL",
   defaultCountry: "Default country",
+  publicCloneScanThreshold: "Suspect-clone scans",
+  publicCloneWindowHours: "Suspect-clone window (hours)",
 };
 
 /** Picked from a list, so "Choose a …" reads better than "… is required". */

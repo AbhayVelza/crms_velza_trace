@@ -47,10 +47,18 @@ export default function PrintOrdersPage() {
               </Td>
               <Td>{o.synced ? "yes" : <Pill tone="warn">no</Pill>}</Td>
               <Td className="whitespace-nowrap">
-                <Link className="inline-flex min-h-11 items-center gap-1 rounded px-1 font-semibold text-foreground underline-offset-4 hover:underline" href={`/print/${o.id}`}>
-                  <IconPrinter size={16} />
-                  {o.status === "PRINTED" ? "Print view" : "Finish printing"}
-                </Link>
+                {o.status === "PRINTED" ? (
+                  // Printed orders are not printed again from here: damaged stickers go through Reprint.
+                  <Link className="inline-flex min-h-11 items-center gap-1 rounded px-1 font-semibold text-foreground underline-offset-4 hover:underline" href="/operator/reprint">
+                    <IconPrinter size={16} />
+                    Reprint a sticker
+                  </Link>
+                ) : (
+                  <Link className="inline-flex min-h-11 items-center gap-1 rounded px-1 font-semibold text-foreground underline-offset-4 hover:underline" href={`/print/${o.id}`}>
+                    <IconPrinter size={16} />
+                    Finish printing
+                  </Link>
+                )}
                 <span className="text-line-strong"> · </span>
                 <Link className="inline-flex min-h-11 items-center gap-1 rounded px-1 font-semibold text-foreground underline-offset-4 hover:underline" href={`/operator/orders/${o.id}`}>
                   <IconListChecks size={16} />

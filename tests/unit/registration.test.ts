@@ -4,7 +4,7 @@
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { getStore } from "@/lib/store";
 import { bootstrap, createEntity, deleteEntity, listEntity, updateEntity } from "@/lib/services/admin";
 import { changePassword, devDefaultUserId, devLogin, devUsers, login, me, sessionUserId } from "@/lib/services/auth";
@@ -114,6 +114,18 @@ describe("registration form", () => {
     await expect(register({ address: "" })).rejects.toThrow();
   });
 
+  it("the same phone with or without +91 or a leading 0 counts as one number", async () => {
+    const first = await register({ name: "Phone Check Distributors", phone: "+91 98765 11111" });
+    const taken = new RegExp(`already used by Phone Check Distributors \\(${first.partner.id}\\)`);
+    for (const variant of ["9876511111", "098765 11111", "919876511111", "+91-98765-11111"]) await expect(register({ phone: variant }), variant).rejects.toThrow(taken);
+    // The other way round: a bare number first, then with +91. Numbers are stored as typed.
+    const r = await register({ phone: "9876522222" });
+    expect(await store().partners.get(r.partner.id)).toMatchObject({ phone: "9876522222" });
+    await expect(register({ phone: "+91 98765 22222" })).rejects.toThrow(new RegExp(`already used by .*\\(${r.partner.id}\\)`));
+    // A different number is fine.
+    await expect(register({ phone: "+91 98765 33333" })).resolves.toMatchObject({ partner: { phone: "+91 98765 33333" } });
+  });
+
   it("the tier and a sign-in's role are part of the ID and can't change", async () => {
     await expect(updateEntity("AD0001", "partners", "DB0001", { type: "SS" })).rejects.toThrow(/tier is part of its ID/);
     await expect(updateEntity("AD0001", "users", "DB0001", { role: "SS" })).rejects.toThrow(/tied to its role and partner/);
@@ -131,6 +143,17 @@ describe("registration form", () => {
     await expect(createEntity("AD0001", "users", { name: "x", role: "SS", partnerId: "SS0001", password: "Again2026pass" })).rejects.toThrow(/SS0001 already exists/);
     expect(((await listEntity("AD0001", "users")) as Record<string, unknown>[]).some((u) => "passwordHash" in u)).toBe(false);
   });
+
+  it("a Velza staff sign-in with a partner is refused (not silently stripped), and no staff number is used up", async () => {
+    const before = (await store().users.list({ role: "ADMIN" })).length;
+    await expect(createEntity("AD0001", "users", { name: "x", role: "ADMIN", partnerId: "SS0001", password: "Admin2026pass" })).rejects.toMatchObject({
+      code: "BAD_PARTNER",
+      message: expect.stringMatching(/Velza staff and has no partner/),
+    });
+    expect((await store().users.list({ role: "ADMIN" })).length).toBe(before);
+    // The next staff sign-in still gets the next number in sequence.
+    expect(await createEntity("AD0001", "users", { name: "Third Admin", role: "ADMIN", partnerId: null, password: "Admin2026pass" })).toMatchObject({ id: "AD0003" });
+  });
 });
 
 describe("sign-in", () => {
@@ -146,6 +169,58 @@ describe("sign-in", () => {
   it("locks a sign-in ID for a few minutes after 5 wrong passwords", async () => {
     for (let i = 0; i < 5; i++) await expect(login({ loginId: "RT0003", password: "nope-nope1" })).rejects.toMatchObject({ status: 401 });
     await expect(login({ loginId: "RT0003", password: SAMPLE_PASSWORD })).rejects.toMatchObject({ status: 429, code: "LOCKED" });
+  });
+
+  it("the lock is per sign-in ID and client IP: wrong guesses from one place don't lock the real person out elsewhere", async () => {
+    for (let i = 0; i < 5; i++) await expect(login({ loginId: "AD0001", password: "nope-nope1" }, "198.51.100.7")).rejects.toMatchObject({ status: 401 });
+    await expect(login({ loginId: "AD0001", password: SAMPLE_PASSWORD }, "198.51.100.7")).rejects.toMatchObject({ status: 429, code: "LOCKED" });
+    // The Admin at the office signs in normally.
+    expect((await login({ loginId: "AD0001", password: SAMPLE_PASSWORD }, "203.0.113.20")).user.user.id).toBe("AD0001");
+  });
+
+  it("without a trusted client-IP header, a fake IP per guess still hits the per-ID backstop (20 from any IP)", async () => {
+    vi.stubEnv("CLIENT_IP_HEADER", "");
+    try {
+      for (let i = 0; i < 20; i++) {
+        await expect(login({ loginId: "AD0999", password: "nope-nope1" }, `198.51.100.${100 + i}`)).rejects.toMatchObject({ status: 401 });
+      }
+      // A brand-new fake IP no longer helps: the ID itself is locked for the lock period.
+      await expect(login({ loginId: "AD0999", password: "nope-nope1" }, "203.0.113.250")).rejects.toMatchObject({ status: 429, code: "LOCKED" });
+      // Other sign-ins are untouched.
+      await expect(login({ loginId: "AD0998", password: "nope-nope1" }, "203.0.113.250")).rejects.toMatchObject({ status: 401 });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("behind a trusted client-IP header, guesses from other IPs never lock the real person out", async () => {
+    vi.stubEnv("CLIENT_IP_HEADER", "x-real-ip");
+    try {
+      for (let i = 0; i < 25; i++) {
+        await expect(login({ loginId: "HQ0001", password: "nope-nope1" }, `198.51.100.${150 + i}`)).rejects.toMatchObject({ status: 401 });
+      }
+      expect((await login({ loginId: "HQ0001", password: SAMPLE_PASSWORD }, "203.0.113.21")).user.user.id).toBe("HQ0001");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("after the lock runs out the count starts again (one more wrong password is 401, not an instant re-lock)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const ip = "198.51.100.8";
+      for (let i = 0; i < 5; i++) await expect(login({ loginId: "DB0002", password: "nope-nope1" }, ip)).rejects.toMatchObject({ status: 401 });
+      await expect(login({ loginId: "DB0002", password: "nope-nope1" }, ip)).rejects.toMatchObject({ status: 429 });
+      vi.setSystemTime(Date.now() + 5 * 60_000 + 1000);
+      await expect(login({ loginId: "DB0002", password: "nope-nope1" }, ip)).rejects.toMatchObject({ status: 401, code: "BAD_CREDENTIALS" });
+      for (let i = 0; i < 3; i++) await expect(login({ loginId: "DB0002", password: "nope-nope1" }, ip)).rejects.toMatchObject({ status: 401 });
+      // A success clears the count: four more wrong ones are still 401, not locked.
+      await login({ loginId: "DB0002", password: SAMPLE_PASSWORD }, ip);
+      for (let i = 0; i < 4; i++) await expect(login({ loginId: "DB0002", password: "nope-nope1" }, ip)).rejects.toMatchObject({ status: 401 });
+      await login({ loginId: "DB0002", password: SAMPLE_PASSWORD }, ip);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("a person changes only their own password; their other sessions are signed out", async () => {
@@ -186,6 +261,9 @@ describe("sign-in", () => {
     expect((await bootstrap("MF0001-OP")).devices).toHaveLength(1);
     expect((await bootstrap("DB0002")).devices).toHaveLength(0);
     expect((await bootstrap("HQ0001")).partners.length).toBeGreaterThan(10);
+    // Settings are Admin configuration: only the Admin's bootstrap carries them.
+    for (const who of ["DB0001", "MF0001-OP", "HQ0001"]) expect(await bootstrap(who)).not.toHaveProperty("settings");
+    expect(await bootstrap("AD0001")).toMatchObject({ settings: { publicBaseUrl: expect.any(String) } });
     await expect(bootstrap(null)).rejects.toMatchObject({ status: 401, code: "NOT_SIGNED_IN" });
   });
 });

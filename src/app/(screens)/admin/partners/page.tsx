@@ -44,6 +44,11 @@ function RegisterForm({ partners }: { partners: Partner[] }) {
   const ssStates = new Map(partners.filter((p) => p.type === "SS").map((p) => [p.state, p]));
 
   async function submit() {
+    // Same wording as the server's BAD_PHONE (the server stays authoritative).
+    if (f.phone.trim() && !/^\+?[0-9][0-9 ()-]{6,18}$/.test(f.phone.trim())) {
+      setMsg({ tone: "error", text: "Phone: digits only, e.g. +91 98765 43210" });
+      return;
+    }
     setBusy(true);
     setMsg(null);
     try {
@@ -258,7 +263,7 @@ export default function PartnersPage() {
                 const tiers = ASSIGNED_TO[row.type as PartnerType] ?? [];
                 return tiers.flatMap((t) =>
                   partners
-                    .filter((p) => p.type === t)
+                    .filter((p) => p.type === t && (p.active || p.id === row.parentId))
                     .sort(byName)
                     .map((p) => ({ value: p.id, label: `${p.id} · ${p.name}${tiers.length > 1 ? ` (${PARTNER_TYPE_LABELS[t]})` : ""}` })),
                 );

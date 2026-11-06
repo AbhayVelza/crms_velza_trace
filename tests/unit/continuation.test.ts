@@ -449,63 +449,21 @@ describe("existing workflows on continued lots", () => {
   });
 });
 
-describe("switching flavour on a continued batch", () => {
-  it("prints the new lots in the chosen flavour from the same counter; the batch keeps its first flavour", async () => {
+describe("one batch, one flavour", () => {
+  it("continued lots keep the batch's flavour; another flavour is refused without allocating", async () => {
     const b = await newBatch(); // OR lot 00001
-    const pv = await continueBatch(operator, { batchCode: b.code, flavour: "GA", cases: 1, trays: 1, preview: true });
-    if (!pv.preview) throw new Error("expected a preview");
-    expect(pv).toMatchObject({ ok: true, flavour: { code: "GA", name: "Green Apple", changed: true }, expectedFirstLotHex: "00002", expectedLastLotHex: "00003" });
-
-    const r = await created(cont(operator, b.code, 1, 1, { flavour: "GA" }));
-    expect(r).toMatchObject({ flavour: "GA", flavourName: "Green Apple", firstLotHex: "00002", lastLotHex: "00003" });
-    expect(r.printOrder.lotCodes.map((c) => c.slice(8, 10))).toEqual(["GA", "GA"]);
-    expect(r.printOrder.lotCodes.every((c) => parseCode(c).ok)).toBe(true);
-    const lots = await store().lots.list({ printOrderId: r.printOrder.id });
-    expect(lots.map((l) => l.flavour)).toEqual(["GA", "GA"]);
-    const packs = await store().packs.list({ lotCode: r.printOrder.lotCodes });
-    expect(packs.every((p) => p.packCode.slice(8, 10) === "GA")).toBe(true);
-
-    // back to the batch's own flavour (no flavour sent = the batch's): the counter just carries on
-    const back = await created(cont(operator, b.code, 1, 0));
-    expect(back).toMatchObject({ flavour: "OR", firstLotHex: "00004" });
-    expect((await batchOf(b.code)).flavour).toBe("OR");
-
-    const sheet = await stickersForOrder(operator, r.printOrder.id);
-    expect(sheet.stickers.some((s) => JSON.stringify(s).toUpperCase().includes("GREEN APPLE"))).toBe(true);
-    const orders = await listPrintOrders(operator);
-    expect(orders.find((o) => o.id === r.printOrder.id)!.batches).toEqual([{ code: b.code, flavour: "GA", synced: true, cases: 1, trays: 1 }]);
-    expect((await listBatches(operator)).find((x) => x.code === b.code)!.flavourName).toBe("Original, Green Apple");
-    expect(await publicLookup(r.printOrder.lotCodes[0])).toMatchObject({ registered: true, flavour: "Green Apple" });
-  });
-
-  it("refuses an unknown or inactive flavour without allocating", async () => {
-    const b = await newBatch();
     const before = await counts(b.code);
-    const mn = (await store().flavours.findOne({ code: "MN" }))!;
-    await store().flavours.update(mn.id, { active: false });
-    try {
-      for (const flavour of ["ZZ", "MN"]) {
-        await expect(cont(operator, b.code, 1, 0, { flavour })).rejects.toMatchObject({ status: 400, code: "INVALID_FLAVOUR" });
-        const pv = await continueBatch(operator, { batchCode: b.code, flavour, cases: 1, trays: 0, preview: true });
-        expect(pv).toMatchObject({ ok: false, problem: { code: "INVALID_FLAVOUR" } });
-      }
-      await expect(cont(operator, b.code, 1, 0, { flavour: "ga" })).rejects.toThrow();
-    } finally {
-      await store().flavours.update(mn.id, { active: true });
+    for (const flavour of ["GA", "ZZ"]) {
+      await expect(cont(operator, b.code, 1, 0, { flavour })).rejects.toMatchObject({ status: 400, code: "FLAVOUR_CHANGE_NOT_ALLOWED" });
+      await expect(continueBatch(operator, { batchCode: b.code, flavour, cases: 1, trays: 0, preview: true })).rejects.toMatchObject({ code: "FLAVOUR_CHANGE_NOT_ALLOWED" });
     }
     expect(await counts(b.code)).toEqual(before);
-  });
 
-  it("the same key with a different flavour is a conflict; with the same flavour it replays", async () => {
-    const b = await newBatch();
-    const k = key();
-    const first = await created(continueBatch(operator, { batchCode: b.code, flavour: "GA", cases: 1, trays: 0, idempotencyKey: k }));
-    const before = await counts(b.code);
-    await expect(continueBatch(operator, { batchCode: b.code, cases: 1, trays: 0, idempotencyKey: k })).rejects.toMatchObject({ status: 409, code: "IDEMPOTENCY_KEY_CONFLICT" });
-    await expect(continueBatch(operator, { batchCode: b.code, flavour: "NS", cases: 1, trays: 0, idempotencyKey: k })).rejects.toMatchObject({ status: 409, code: "IDEMPOTENCY_KEY_CONFLICT" });
-    const again = await created(continueBatch(operator, { batchCode: b.code, flavour: "GA", cases: 1, trays: 0, idempotencyKey: k }));
-    expect(again).toMatchObject({ replayed: true, flavour: "GA", firstLotHex: first.firstLotHex });
-    expect(await counts(b.code)).toEqual(before);
+    // The batch's own flavour (sent or not) is fine.
+    const same = await created(cont(operator, b.code, 1, 0, { flavour: "OR" }));
+    const plain = await created(cont(operator, b.code, 0, 1));
+    expect([...same.printOrder.lotCodes, ...plain.printOrder.lotCodes].map((c) => c.slice(8, 10))).toEqual(["OR", "OR"]);
+    expect((await batchOf(b.code)).flavour).toBe("OR");
   });
 });
 

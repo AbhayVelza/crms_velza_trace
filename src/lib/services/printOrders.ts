@@ -178,13 +178,11 @@ export async function createPrintOrder(userId: string | null, body: unknown) {
 // atomic tx.nextLotNumber as above). The batch row keeps its device, dates, first print order and
 // creation history; only next_lot moves. Online devices only, so the central counter is the one authority.
 // The idempotency key is the new print order's id, so it is stored in the same transaction as the lots.
-// The order may switch flavour (e.g. Original -> Green Apple): the flavour is part of each lot code and is
-// stored per lot, and the counter is per batch, so codes stay unique. The batch row keeps its first flavour.
 
 export const continueSchema = z.object({
   batchCode: z.string().regex(/^[A-Z0-9]{6}$/, "Batch code must be 6 characters A–Z / 0–9"),
-  /** Flavour of the new lots; defaults to the batch's own flavour. */
-  flavour: z.string().regex(/^[A-Z]{2}$/, "Flavour code must be 2 letters A–Z").optional(),
+  /** One batch, one flavour: if sent, it must be the batch's own flavour (400 FLAVOUR_CHANGE_NOT_ALLOWED otherwise). */
+  flavour: z.string().optional(),
   cases: z.number().int().min(0),
   trays: z.number().int().min(0),
   deviceId: z.string().optional(),
@@ -223,12 +221,11 @@ function batchProblem(batch: Batch, counter: BatchCounter): Problem | null {
   return null;
 }
 
-/** Device, batch, flavour and quantity checks, in order. Every one is enforced here, on the server. */
-function continuationProblem(device: Device, batch: Batch, counter: BatchCounter, flavour: ChosenFlavour, cases: number, trays: number): Problem | null {
+/** Device, batch and quantity checks, in order. Every one is enforced here, on the server. */
+function continuationProblem(device: Device, batch: Batch, counter: BatchCounter, cases: number, trays: number): Problem | null {
   if (device.offline) return problem(409, "DEVICE_OFFLINE", `${device.name} is offline. Continuing a batch needs the central lot counter — go online first.`);
   const blocked = batchProblem(batch, counter);
   if (blocked) return blocked;
-  if (!flavour.active) return problem(400, "INVALID_FLAVOUR", `Flavour ${flavour.code} is not an active flavour — choose another`);
   const total = cases + trays;
   const max = continueMaxLots();
   if (total < 1) return problem(400, "INVALID_QUANTITY", "Enter at least one case or tray");
@@ -265,30 +262,23 @@ function batchView(batch: Batch, flavourName: (code: string) => string) {
 
 const lotHexOf = (lotCode: string) => lotCode.slice(10, 15);
 
-interface ChosenFlavour {
-  code: string;
-  name: string;
-  active: boolean;
-  /** Differs from the batch's own flavour. */
-  changed: boolean;
-}
-
 async function continueContext(tx: StoreTx, userId: string | null, input: z.infer<typeof continueSchema>) {
   const { actor, manufacturer, device } = await operatorContext(tx, userId, input.deviceId);
   const batch = await tx.batches.findOne({ code: input.batchCode });
   // Another manufacturer's batch looks the same as no batch.
   if (!batch || batch.manufacturerId !== manufacturer.id) throw notFound(`Batch ${input.batchCode}`);
-  const code = input.flavour ?? batch.flavour;
-  const row = await tx.flavours.findOne({ code });
-  const flavour: ChosenFlavour = { code, name: row?.name ?? code, active: !!row?.active, changed: code !== batch.flavour };
-  return { actor, manufacturer, device, batch, flavour };
+  // One batch, one flavour: continued lots always keep the batch's flavour. For another flavour, create a new batch.
+  if (input.flavour !== undefined && input.flavour !== batch.flavour) {
+    throw new ServiceError(400, "FLAVOUR_CHANGE_NOT_ALLOWED", `Batch ${batch.code} is ${batch.flavour}; a batch carries one flavour only — create a new batch for another flavour`);
+  }
+  return { actor, manufacturer, device, batch };
 }
 
 /**
  * The order already stored under this key. A replay must match the manufacturer, batch, cases, trays
  * and device; otherwise 409, which says nothing about the stored order.
  */
-async function replay(tx: StoreTx, existing: PrintOrder, manufacturerId: string, deviceId: string, input: z.infer<typeof continueSchema>, flavour: ChosenFlavour) {
+async function replay(tx: StoreTx, existing: PrintOrder, manufacturerId: string, deviceId: string, input: z.infer<typeof continueSchema>) {
   const total = input.cases + input.trays;
   const same =
     existing.manufacturerId === manufacturerId &&
@@ -297,9 +287,7 @@ async function replay(tx: StoreTx, existing: PrintOrder, manufacturerId: string,
     existing.batchCodes[0] === input.batchCode &&
     existing.lotCodes.length === total &&
     // with the lot total fixed, 5 × cases + 7 × trays pins down cases and trays
-    existing.stickerCount === stickerCount(input.cases, input.trays) &&
-    // the flavour is inside every lot code (characters 9–10)
-    existing.lotCodes.every((c) => c.slice(8, 10) === flavour.code);
+    existing.stickerCount === stickerCount(input.cases, input.trays);
   if (!same) throw new ServiceError(409, "IDEMPOTENCY_KEY_CONFLICT", "This request key was already used for a different request — start the order again");
   const batch = await tx.batches.findOne({ code: input.batchCode });
   return {
@@ -307,8 +295,6 @@ async function replay(tx: StoreTx, existing: PrintOrder, manufacturerId: string,
     replayed: true,
     printOrder: existing,
     batchCode: input.batchCode,
-    flavour: flavour.code,
-    flavourName: flavour.name,
     firstLotHex: lotHexOf(existing.lotCodes[0]),
     lastLotHex: lotHexOf(existing.lotCodes[existing.lotCodes.length - 1]),
     totalLots: existing.lotCodes.length,
@@ -336,9 +322,9 @@ export async function continueBatch(userId: string | null, body: unknown) {
   const store = getStore();
 
   if (input.preview) {
-    const { device, batch, flavour } = await continueContext(store, userId, input);
+    const { device, batch } = await continueContext(store, userId, input);
     const counter = batchCounter(batch);
-    const p = continuationProblem(device, batch, counter, flavour, input.cases, input.trays);
+    const p = continuationProblem(device, batch, counter, input.cases, input.trays);
     const total = input.cases + input.trays;
     const first = batch.nextLot;
     return {
@@ -347,7 +333,6 @@ export async function continueBatch(userId: string | null, body: unknown) {
       problem: p ? { code: p.code, message: p.message } : null,
       batch: batchView(batch, await flavourNames(store)),
       device: { name: device.name, offline: device.offline },
-      flavour: { code: flavour.code, name: flavour.name, changed: flavour.changed },
       cases: input.cases,
       trays: input.trays,
       totalLots: total,
@@ -365,12 +350,12 @@ export async function continueBatch(userId: string | null, body: unknown) {
 
   try {
     return await store.transaction(async (tx) => {
-      const { actor, manufacturer, device, batch, flavour } = await continueContext(tx, userId, input);
+      const { actor, manufacturer, device, batch } = await continueContext(tx, userId, input);
       // Before the batch checks: a request that used the batch's last lots must still replay.
       const existing = await tx.printOrders.get(key);
-      if (existing) return replay(tx, existing, manufacturer.id, device.id, input, flavour);
+      if (existing) return replay(tx, existing, manufacturer.id, device.id, input);
 
-      const p = continuationProblem(device, batch, batchCounter(batch), flavour, input.cases, input.trays);
+      const p = continuationProblem(device, batch, batchCounter(batch), input.cases, input.trays);
       if (p) throw toError(p);
 
       const total = input.cases + input.trays;
@@ -381,7 +366,7 @@ export async function continueBatch(userId: string | null, body: unknown) {
         if (e instanceof RangeError) throw new ServiceError(409, "INSUFFICIENT_CAPACITY", `Not enough lots left in batch ${batch.code}: ${e.message}`);
         throw e;
       }
-      const { lots } = allocateLots({ ...batch, flavour: flavour.code, nextLot: first }, input.cases, input.trays);
+      const { lots } = allocateLots({ ...batch, nextLot: first }, input.cases, input.trays);
       const at = nowIso();
       const lotRows: Lot[] = [];
       const packRows: Pack[] = [];
@@ -390,7 +375,7 @@ export async function continueBatch(userId: string | null, body: unknown) {
           id: l.lotCode,
           lotCode: l.lotCode,
           batchCode: batch.code,
-          flavour: flavour.code,
+          flavour: batch.flavour,
           lotType: l.lotType,
           packSize: l.packSize,
           lotNumber: l.lotNumber,
@@ -458,7 +443,7 @@ export async function continueBatch(userId: string | null, body: unknown) {
           userId: actor.user.id,
           deviceId: device.id,
           invoice: null,
-          note: `Print order ${key.slice(0, 8)} · continues batch ${batch.code} from ${firstLotHex}${flavour.changed ? ` · flavour ${flavour.name}` : ""}`,
+          note: `Print order ${key.slice(0, 8)} · continues batch ${batch.code} from ${firstLotHex}`,
         });
       }
       return {
@@ -466,8 +451,6 @@ export async function continueBatch(userId: string | null, body: unknown) {
         replayed: false,
         printOrder: order,
         batchCode: batch.code,
-        flavour: flavour.code,
-        flavourName: flavour.name,
         firstLotHex,
         lastLotHex,
         totalLots: lotRows.length,
@@ -479,9 +462,9 @@ export async function continueBatch(userId: string | null, body: unknown) {
     const pg = e as { code?: string; constraint?: string };
     // Same key committed by a concurrent request: answer with that order (or a conflict).
     if (pg.code === "23505" && pg.constraint === "print_orders_pkey") {
-      const { manufacturer, device, flavour } = await continueContext(store, userId, input);
+      const { manufacturer, device } = await continueContext(store, userId, input);
       const existing = await store.printOrders.get(key);
-      if (existing) return replay(store, existing, manufacturer.id, device.id, input, flavour);
+      if (existing) return replay(store, existing, manufacturer.id, device.id, input);
     }
     if (pg.code === "23505") throw new ServiceError(409, "DUPLICATE_ALLOCATION", "These lot codes already exist — nothing was allocated. Try again.");
     // Serialization retries used up under heavy contention: nothing was committed, so retrying with the same key is safe.
@@ -513,7 +496,7 @@ export async function listPrintOrders(userId: string | null) {
           const bl = lots.filter((l) => l.batchCode === b.code && l.printOrderId === o.id);
           return {
             code: b.code,
-            // A continuation order may use another flavour than the batch's first one.
+            // Lots continued before 6 Nov 2026 may carry another flavour than the batch's first one.
             flavour: bl[0]?.flavour ?? b.flavour,
             synced: b.synced,
             cases: bl.filter((l) => l.lotType === "CASE").length,

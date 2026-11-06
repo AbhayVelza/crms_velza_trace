@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Role } from "@/lib/core/types";
 import { getStore } from "@/lib/store";
 import { damagePhoto, listDamaged, reportDamaged } from "@/lib/services/damage";
-import { MAX_PHOTO_BYTES } from "@/lib/services/damagePhotos";
+import { MAX_EXTRA_PHOTO_BYTES, MAX_PHOTO_BYTES } from "@/lib/services/damagePhotos";
 import { dispatch, myPartners, openLot, receive } from "@/lib/services/movement";
 import { createPrintOrder, markPrinted } from "@/lib/services/printOrders";
 import { alerts, dashboard, lookup, myStock, publicLookup } from "@/lib/services/trace";
@@ -210,11 +210,11 @@ describe("photo of the damaged item, showing its barcode", () => {
     expect(r).toMatchObject({ ok: true, reportId: expect.any(String) });
     const reportId = (r as { reportId: string }).reportId;
     const files = await fs.readdir(path.join(dir, "uploads", "damage"));
-    expect(files).toContain(`${reportId}.jpg`);
+    expect(files).toEqual(expect.arrayContaining([`${reportId}.jpg`, `${reportId}.1.jpg`]));
     expect(files.filter((f) => f.endsWith(".tmp"))).toEqual([]);
 
     const item = (await listDamaged(ids.operator)).items.find((i) => i.code === code)!;
-    expect(item.photoUrl).toBe(`/api/damaged/photo/${reportId}`);
+    expect(item.photoUrls).toEqual([`/api/damaged/photo/${reportId}`, `/api/damaged/photo/${reportId}?n=1`]);
     for (const who of [ids.operator, ids.hq]) {
       const res = await damagePhoto(who, reportId);
       expect(res.headers.get("content-type")).toBe("image/jpeg");
@@ -224,12 +224,37 @@ describe("photo of the damaged item, showing its barcode", () => {
     await expect(damagePhoto(ids.qc, reportId)).rejects.toMatchObject({ status: 403 });
     await expect(damagePhoto(ids.hq, "../../db")).rejects.toMatchObject({ status: 404 });
     const alert = (await alerts(ids.hq)).find((a) => a.type === "DAMAGED" && a.code === code)!;
-    expect(alert.photoUrl).toBe(`/api/damaged/photo/${reportId}`);
+    expect(alert.photoUrls).toEqual([`/api/damaged/photo/${reportId}`, `/api/damaged/photo/${reportId}?n=1`]);
     // a report from before photos were required (simulated: its file removed) shows none and serves 404
     const older = (await alerts(ids.hq)).find((a) => a.type === "DAMAGED" && a.code !== code)!;
     await fs.rm(path.join(dir, "uploads", "damage", `${older.id.slice(3)}.jpg`));
-    expect((await alerts(ids.hq)).find((a) => a.id === older.id)!.photoUrl).toBeNull();
+    expect((await alerts(ids.hq)).find((a) => a.id === older.id)!.photoUrls).toEqual([]);
     await expect(damagePhoto(ids.hq, older.id.slice(3))).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("1 to 4 photos of the damage are required and kept with it, after the barcode photo", async () => {
+    const code = plant[2];
+    const png = `data:image/png;base64,${Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(300, 1)]).toString("base64")}`;
+    const report = (damagePhotos: unknown) => reportDamaged(ids.operator, { code, reason: "Leaking", ...photoOf(code), damagePhotos });
+    for (const none of [undefined, null, [], ["  "]]) await expect(report(none)).rejects.toMatchObject({ status: 400, code: "DAMAGE_PHOTO_REQUIRED" });
+    await expect(report([png, png, png, png, png])).rejects.toMatchObject({ status: 400, code: "TOO_MANY_PHOTOS" });
+    await expect(report([png, jpeg(Buffer.from("<svg/>".repeat(40)))])).rejects.toMatchObject({ code: "PHOTO_INVALID", message: expect.stringContaining("Damage photo 2") });
+    const big = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(MAX_EXTRA_PHOTO_BYTES)]);
+    await expect(report([jpeg(big)])).rejects.toMatchObject({ code: "PHOTO_TOO_LARGE" });
+    await unchanged(code);
+
+    const r = (await report([png, photoOf(code).photo])) as { ok: boolean; reportId: string; photos: number };
+    expect(r).toMatchObject({ ok: true, photos: 3 });
+    const files = await fs.readdir(path.join(dir, "uploads", "damage"));
+    expect(files).toEqual(expect.arrayContaining([`${r.reportId}.jpg`, `${r.reportId}.1.png`, `${r.reportId}.2.jpg`]));
+    const urls = [`/api/damaged/photo/${r.reportId}`, `/api/damaged/photo/${r.reportId}?n=1`, `/api/damaged/photo/${r.reportId}?n=2`];
+    expect((await listDamaged(ids.operator)).items.find((i) => i.code === code)!.photoUrls).toEqual(urls);
+    expect((await alerts(ids.hq)).find((a) => a.type === "DAMAGED" && a.code === code)!.photoUrls).toEqual(urls);
+    expect((await damagePhoto(ids.hq, r.reportId, 1)).headers.get("content-type")).toBe("image/png");
+    expect((await damagePhoto(ids.operator, r.reportId, 2)).headers.get("content-type")).toBe("image/jpeg");
+    await expect(damagePhoto(ids.hq, r.reportId, 3)).rejects.toMatchObject({ status: 404 });
+    await expect(damagePhoto(ids.hq, r.reportId, 1.5)).rejects.toMatchObject({ status: 404 });
+    await expect(damagePhoto(ids.ss1, r.reportId, 1)).rejects.toMatchObject({ status: 404 });
   });
 
   it("if the photo can't be stored, the report is not saved either", async () => {

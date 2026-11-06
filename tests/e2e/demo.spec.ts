@@ -404,7 +404,7 @@ test.describe.serial("Velza demo script (9.1)", () => {
     await page.locator("#scan-input").fill(offlineLot);
     await page.locator("#scan-input").press("Enter");
     await expect(page.getByTestId("damage-code")).toContainText(offlineLot);
-    const reportButton = page.getByRole("button", { name: "4. Report damaged" });
+    const reportButton = page.getByRole("button", { name: "5. Report damaged" });
     await expect(reportButton).toBeDisabled(); // no photo yet
     // A photo of another item's barcode is refused in the page.
     await page.locator("#damage-photo").setInputFiles({ name: "wrong.png", mimeType: "image/png", buffer: await stickerPhoto(lots[0], "code128") });
@@ -413,22 +413,32 @@ test.describe.serial("Velza demo script (9.1)", () => {
     // The item's own QR (the public lookup URL) matches.
     await page.locator("#damage-photo").setInputFiles({ name: "damaged.png", mimeType: "image/png", buffer: await stickerPhoto(offlineLot, "qr") });
     await expect(page.getByTestId("damage-photo-check")).toContainText(`Barcode in the photo matches ${offlineLot}`);
+    await expect(reportButton).toBeDisabled(); // no photo of the damage itself yet
+    // Photos of the damage (no barcode needed, at least one): two added, one removed again.
+    const extra = { mimeType: "image/png", buffer: await stickerPhoto(offlineLot, "code128") };
+    await page.locator("#damage-extra-photos").setInputFiles([{ name: "side.png", ...extra }, { name: "top.png", ...extra }]);
+    await expect(page.getByTestId("damage-extra-photos").locator("img")).toHaveCount(2);
+    await page.getByRole("button", { name: "Remove damage photo 2" }).click();
+    await expect(page.getByTestId("damage-extra-photos").locator("img")).toHaveCount(1);
     const items = page.getByTestId("scan-log").locator("li");
     await reportButton.click();
     await expect(items).toHaveCount(1);
     expect(await items.first().getAttribute("data-ok"), await items.first().innerText()).toBe("true");
     await expect(page.getByTestId("damage-code")).toHaveCount(0); // ready for the next item
     await expect(page.getByTestId("damaged-row")).toHaveCount(1);
-    const photo = page.getByTestId("damaged-photo").locator("img");
-    await expect(photo).toBeVisible();
-    expect(await photo.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
+    const photos = page.getByTestId("damaged-photo").locator("img");
+    await expect(photos).toHaveCount(2); // the barcode photo and one photo of the damage
+    for (const photo of await photos.all()) {
+      await expect(photo).toBeVisible();
+      expect(await photo.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
+    }
     await expect(page.getByTestId("damaged-row")).toContainText("Crushed / dented");
     await expect(page.getByTestId("damaged-counts")).toContainText(/1s*Cases/);
 
     await as(page, "TRACE_OWNER", null, "/hq/alerts");
     const alert = page.getByTestId("alert-row").filter({ hasText: "DAMAGED" }).filter({ hasText: offlineLot });
     await expect(alert).toHaveCount(1);
-    await expect(alert.getByTestId("alert-photo").locator("img")).toBeVisible();
+    await expect(alert.getByTestId("alert-photo").locator("img")).toHaveCount(2);
     await page.goto("/hq");
     await expect(page.getByRole("row", { name: /^Super Stockist SS-1/ })).toContainText("1 case");
   });

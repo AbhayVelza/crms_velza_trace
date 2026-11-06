@@ -1,7 +1,8 @@
 "use client";
 
-// Report damage in four steps: what is wrong → scan the damaged item → photo of it showing its barcode
-// → report. The barcode read from the photo must be the scanned code; the server checks that again.
+// Report damage in five steps: what is wrong → scan the damaged item → photo of it showing its barcode
+// → 1 to 4 photos of the damage itself → report. The barcode read from the photo must be the scanned code;
+// the server checks that again.
 
 import { useRef, useState } from "react";
 import { IconCamera, IconCircleCheck, IconCircleX } from "@/components/icons";
@@ -9,7 +10,7 @@ import { ScanInput, ScanLog, type ScanLogEntry } from "@/components/ScanInput";
 import { Button, Card, Code, Empty, Field, fmtTime, Input, Notice, PageTitle, Table, Td } from "@/components/ui";
 import { useApi } from "@/components/useApi";
 import { api, errorText } from "@/lib/client";
-import { preparePhoto, type PreparedPhoto } from "@/lib/damagePhotoClient";
+import { prepareExtraPhoto, preparePhoto, type PreparedPhoto } from "@/lib/damagePhotoClient";
 import { notifyDataChanged } from "@/lib/events";
 
 interface DamagedItem {
@@ -23,8 +24,12 @@ interface DamagedItem {
   reason: string | null;
   reportedAt: string | null;
   reportedBy: string | null;
-  photoUrl: string | null;
+  /** The barcode photo first, then the extra photos of the damage. */
+  photoUrls: string[];
 }
+
+/** Photos of the damage per report, at least one (the server checks the same). */
+const MAX_EXTRA_PHOTOS = 4;
 
 const QUICK_REASONS = ["Crushed / dented", "Leaking", "Torn or wet packaging", "Broken cans"];
 
@@ -41,18 +46,46 @@ export default function DamagedPage() {
   const [reason, setReason] = useState("");
   const [code, setCode] = useState<string | null>(null);
   const [photo, setPhoto] = useState<PhotoState | null>(null);
+  const [extras, setExtras] = useState<{ id: number; dataUrl: string; bytes: number }[]>([]);
+  const [extraBusy, setExtraBusy] = useState(false);
+  const [extraError, setExtraError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<ScanLogEntry[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
+  const extraRef = useRef<HTMLInputElement>(null);
 
   const ready = photo?.status === "ready" ? photo.photo : null;
   const matches = !!ready && !!code && ready.code === code;
-  const canReport = !!reason.trim() && !!code && matches && !busy;
+  const canReport = !!reason.trim() && !!code && matches && extras.length > 0 && !busy && !extraBusy;
   const canPhoto = !!code && !busy;
 
   function clearPhoto() {
     setPhoto(null);
     if (fileRef.current) fileRef.current.value = "";
+  }
+
+  function clearExtras() {
+    setExtras([]);
+    setExtraError(null);
+    if (extraRef.current) extraRef.current.value = "";
+  }
+
+  async function onExtraPhotos(files: FileList | null) {
+    const chosen = [...(files ?? [])];
+    if (extraRef.current) extraRef.current.value = ""; // the same file can be chosen again
+    if (!chosen.length) return;
+    const room = MAX_EXTRA_PHOTOS - extras.length;
+    setExtraError(chosen.length > room ? `Only ${MAX_EXTRA_PHOTOS} photos of the damage can be added — ${chosen.length - Math.max(room, 0)} left out` : null);
+    setExtraBusy(true);
+    try {
+      const added: { id: number; dataUrl: string; bytes: number }[] = [];
+      for (const f of chosen.slice(0, Math.max(room, 0))) added.push({ id: ++seq, ...(await prepareExtraPhoto(f)) });
+      setExtras((x) => [...x, ...added].slice(0, MAX_EXTRA_PHOTOS));
+    } catch (e) {
+      setExtraError(errorText(e));
+    } finally {
+      setExtraBusy(false);
+    }
   }
 
   function onScan(scanned: string) {
@@ -77,7 +110,7 @@ export default function DamagedPage() {
     let ok = false;
     let message: string;
     try {
-      const r = await api<{ ok: boolean; code?: string; message: string }>("/api/damaged", { body: { code, reason, photo: ready.dataUrl, photoCode: ready.code } });
+      const r = await api<{ ok: boolean; code?: string; message: string }>("/api/damaged", { body: { code, reason, photo: ready.dataUrl, photoCode: ready.code, damagePhotos: extras.map((x) => x.dataUrl) } });
       ok = r.ok;
       message = r.ok ? r.message : `${r.code}: ${r.message}`;
     } catch (e) {
@@ -89,6 +122,7 @@ export default function DamagedPage() {
     if (ok) {
       setCode(null);
       clearPhoto();
+      clearExtras();
       notifyDataChanged();
       list.reload();
     }
@@ -127,6 +161,7 @@ export default function DamagedPage() {
                   onClick={() => {
                     setCode(null);
                     clearPhoto();
+                    clearExtras();
                   }}
                 >
                   change
@@ -195,11 +230,59 @@ export default function DamagedPage() {
             )}
           </div>
 
+          <div className="mt-4">
+            <Field label="4. Photos of the damage" hint={`At least 1, up to ${MAX_EXTRA_PHOTOS}: close-ups of the dent, leak or tear, other sides. No barcode needed.`}>
+              <input
+                ref={extraRef}
+                id="damage-extra-photos"
+                type="file"
+                accept="image/*"
+                multiple
+                className="sr-only"
+                aria-label="More photos of the damage"
+                disabled={!canPhoto || extraBusy || extras.length >= MAX_EXTRA_PHOTOS}
+                onChange={(e) => onExtraPhotos(e.target.files)}
+              />
+              <label
+                htmlFor="damage-extra-photos"
+                aria-disabled={!canPhoto || extraBusy || extras.length >= MAX_EXTRA_PHOTOS}
+                className={canPhoto && !extraBusy && extras.length < MAX_EXTRA_PHOTOS ? PHOTO_BUTTON_ON : PHOTO_BUTTON_OFF}
+              >
+                <IconCamera size={17} />
+                {extras.length >= MAX_EXTRA_PHOTOS ? `${MAX_EXTRA_PHOTOS} photos added` : extras.length ? "Add more photos" : "Add photos of the damage"}
+              </label>
+            </Field>
+            {extraBusy && <p className="mt-2 text-sm text-muted-foreground">Preparing photos…</p>}
+            {extraError && (
+              <Notice tone="error" className="mt-2">
+                {extraError}
+              </Notice>
+            )}
+            {!!extras.length && (
+              <ul className="mt-3 flex flex-wrap gap-2" data-testid="damage-extra-photos">
+                {extras.map((x, i) => (
+                  <li key={x.id} className="relative">
+                    {/* eslint-disable-next-line @next/next/no-img-element -- local preview of a photo being uploaded */}
+                    <img src={x.dataUrl} alt={`Damage photo ${i + 1}`} className="h-20 w-20 rounded-md border border-line object-cover" />
+                    <button
+                      type="button"
+                      aria-label={`Remove damage photo ${i + 1}`}
+                      className="absolute -right-1.5 -top-1.5 grid h-6 w-6 place-items-center rounded-full border border-line-strong bg-surface text-foreground shadow-sm hover:bg-muted"
+                      onClick={() => setExtras((list) => list.filter((y) => y.id !== x.id))}
+                    >
+                      <IconCircleX size={15} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
           <div className="mt-5 border-t border-line pt-4">
             <Button onClick={report} loading={busy} disabled={!canReport}>
-              4. Report damaged
+              5. Report damaged
             </Button>
-            {!canReport && !busy && <p className="mt-2 text-xs text-muted-foreground">Needs a reason, the scanned code and a photo whose barcode matches it.</p>}
+            {!canReport && !busy && <p className="mt-2 text-xs text-muted-foreground">Needs a reason, the scanned code, a photo whose barcode matches it and at least one photo of the damage.</p>}
           </div>
           <div className="mt-4">
             <ScanLog entries={log} />
@@ -234,11 +317,20 @@ export default function DamagedPage() {
                 </Td>
                 <Td>{d.reason ?? "—"}</Td>
                 <Td>
-                  {d.photoUrl ? (
-                    <a href={d.photoUrl} target="_blank" rel="noreferrer" data-testid="damaged-photo">
-                      {/* eslint-disable-next-line @next/next/no-img-element -- private photo from our own API */}
-                      <img src={d.photoUrl} alt={`Photo of damaged ${d.code}`} className="h-14 w-14 rounded-md border border-line object-cover" loading="lazy" />
-                    </a>
+                  {d.photoUrls.length ? (
+                    <div className="flex max-w-[11rem] flex-wrap gap-1">
+                      {d.photoUrls.map((url, i) => (
+                        <a key={url} href={url} target="_blank" rel="noreferrer" data-testid="damaged-photo">
+                          {/* eslint-disable-next-line @next/next/no-img-element -- private photo from our own API */}
+                          <img
+                            src={url}
+                            alt={i ? `Damage photo ${i} of ${d.code}` : `Photo of damaged ${d.code} with its barcode`}
+                            className={i ? "h-10 w-10 rounded-md border border-line object-cover" : "h-14 w-14 rounded-md border border-line object-cover"}
+                            loading="lazy"
+                          />
+                        </a>
+                      ))}
+                    </div>
                   ) : (
                     <span className="text-xs text-muted-foreground">—</span>
                   )}

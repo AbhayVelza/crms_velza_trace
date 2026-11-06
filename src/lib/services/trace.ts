@@ -7,7 +7,7 @@ import { publicStatus, recallPatch } from "@/lib/core/rules";
 import { ITEM_STATUSES, PARTNER_TYPE_LABELS, type ItemStatus, type Lot, type Movement, type Pack, type Partner } from "@/lib/core/types";
 import { getStore, type StoreTx } from "@/lib/store";
 import { damagedCounts, damagedUnits } from "./damage";
-import { reportsWithPhoto } from "./damagePhotos";
+import { damagePhotoUrls } from "./damagePhotos";
 import { badRequest, findItem, isVisible, loadActor, logScan, notFound, nowIso, partnerName, requireAction, requirePartner } from "./common";
 import { batchDisplayStatus } from "./printOrders";
 
@@ -191,12 +191,13 @@ const visibleDamage = (damaged: Movement[], lotByCode: Map<string, Lot>) => dama
 async function namedAlerts(tx: StoreTx, input: Omit<ComputeAlertsInput, "now">) {
   const list = computeAlerts({ ...input, now: new Date() });
   const n = await names(tx, { partners: list.map((a) => a.partnerId), users: list.map((a) => a.userId), devices: [] });
-  // A damage alert's id is "DM-<report id>"; its photo is served by /api/damaged/photo/<report id>.
+  // A damage alert's id is "DM-<report id>"; its photos are served by /api/damaged/photo/<report id>.
   const reportId = (a: { id: string; type: string }) => (a.type === "DAMAGED" ? a.id.slice(3) : null);
-  const withPhoto = await reportsWithPhoto(list.flatMap((a) => reportId(a) ?? []));
+  const photos = await damagePhotoUrls(list.flatMap((a) => reportId(a) ?? []));
   return list.map((a) => {
     const id = reportId(a);
-    return { ...a, partner: n.partner(a.partnerId), user: n.user(a.userId), photoUrl: id && withPhoto.has(id) ? `/api/damaged/photo/${id}` : null };
+    // Damage alerts: the barcode photo first, then the extra photos of the damage.
+    return { ...a, partner: n.partner(a.partnerId), user: n.user(a.userId), photoUrls: (id && photos.get(id)) || [] };
   });
 }
 

@@ -1,6 +1,8 @@
 // Photos of damaged stock. Every damage report needs one photo that shows the damage and the code's
-// barcode or QR. The file is stored on disk, named after the report (its DAMAGED movement's id), so
-// no table changes: <upload dir>/damage/<movement id>.<jpg|png|webp>.
+// barcode or QR, plus 1 to MAX_EXTRA_PHOTOS photos of the damage itself (other angles, close-ups).
+// Files are stored on disk, named after the report (its DAMAGED movement's id), so no table changes:
+// <upload dir>/damage/<movement id>.<jpg|png|webp> for the barcode photo, <movement id>.<n>.<ext> for
+// extra photo n (1…MAX_EXTRA_PHOTOS).
 //
 // Upload dir: VELZA_UPLOAD_DIR, else "uploads" next to the JSON data file, else data/uploads.
 // The barcode itself is read from the photo in the browser (zxing); the server checks that what was
@@ -14,8 +16,12 @@ import { ServiceError } from "./common";
 
 /** Largest accepted photo (decoded). The page shrinks photos to about 1600 px before sending. */
 export const MAX_PHOTO_BYTES = 2 * 1024 * 1024;
-/** JSON body limit of the damage report route: the photo travels base64-encoded (4/3 of its size). */
-export const MAX_DAMAGE_BODY_BYTES = Math.ceil((MAX_PHOTO_BYTES * 4) / 3) + 64 * 1024;
+/** Photos of the damage per report (at least one), besides the barcode photo. */
+export const MAX_EXTRA_PHOTOS = 4;
+/** Largest accepted extra photo (decoded). The page shrinks them to about 1280 px before sending. */
+export const MAX_EXTRA_PHOTO_BYTES = 1024 * 1024;
+/** JSON body limit of the damage report route: the photos travel base64-encoded (4/3 of their size). */
+export const MAX_DAMAGE_BODY_BYTES = Math.ceil(((MAX_PHOTO_BYTES + MAX_EXTRA_PHOTOS * MAX_EXTRA_PHOTO_BYTES) * 4) / 3) + 64 * 1024;
 
 const TYPES = { jpg: "image/jpeg", png: "image/png", webp: "image/webp" } as const;
 type Ext = keyof typeof TYPES;
@@ -44,47 +50,76 @@ function sniff(b: Buffer): Ext | null {
   return null;
 }
 
+/** A photo from the request (a data URL or bare base64): a real JPEG/PNG/WebP image of at most `maxBytes`. */
+function decodePhoto(raw: string, maxBytes: number, which: string): DamagePhoto {
+  const base64 = raw.startsWith("data:") ? raw.slice(raw.indexOf(",") + 1) : raw;
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) throw photoError("PHOTO_INVALID", `${which} could not be read — take it again`);
+  const bytes = Buffer.from(base64, "base64");
+  if (bytes.length > maxBytes) throw photoError("PHOTO_TOO_LARGE", `${which} is larger than ${maxBytes / 1024 / 1024} MB — take it again`);
+  const ext = sniff(bytes);
+  if (!ext || bytes.length < 100) throw photoError("PHOTO_INVALID", `${which} must be a JPEG, PNG or WebP image`);
+  return { bytes, ext, contentType: TYPES[ext] };
+}
+
 /**
- * The photo from the request (a data URL or bare base64), checked: present, a real JPEG/PNG/WebP image,
- * at most MAX_PHOTO_BYTES, and the code read from its barcode is the code being reported.
+ * The photo from the request, checked: present, a real JPEG/PNG/WebP image, at most MAX_PHOTO_BYTES, and the
+ * code read from its barcode is the code being reported.
  */
 export function checkDamagePhoto(input: { photo?: string | null; photoCode?: string | null; code: string }): DamagePhoto {
   const raw = input.photo?.trim();
   if (!raw) throw photoError("PHOTO_REQUIRED", "Add a photo of the damaged case, tray or pack that shows its barcode");
-  const base64 = raw.startsWith("data:") ? raw.slice(raw.indexOf(",") + 1) : raw;
-  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) throw photoError("PHOTO_INVALID", "The photo could not be read — take it again");
-  const bytes = Buffer.from(base64, "base64");
-  if (bytes.length > MAX_PHOTO_BYTES) throw photoError("PHOTO_TOO_LARGE", `The photo is larger than ${MAX_PHOTO_BYTES / 1024 / 1024} MB — take it again`);
-  const ext = sniff(bytes);
-  if (!ext || bytes.length < 100) throw photoError("PHOTO_INVALID", "The photo must be a JPEG, PNG or WebP image");
+  const photo = decodePhoto(raw, MAX_PHOTO_BYTES, "The photo");
 
   const read = extractScannedCode(input.photoCode ?? "");
   if (!read) throw photoError("PHOTO_NO_BARCODE", "No barcode or QR code was found in the photo — retake it with the code label clear and in focus");
   if (read !== extractScannedCode(input.code)) {
     throw photoError("PHOTO_BARCODE_MISMATCH", `The photo shows code ${read}, but ${input.code} is being reported — photograph the damaged item itself`);
   }
-  return { bytes, ext, contentType: TYPES[ext] };
+  return photo;
+}
+
+/** The photos of the damage, checked: 1 to MAX_EXTRA_PHOTOS, each a real image of at most MAX_EXTRA_PHOTO_BYTES. */
+export function checkExtraPhotos(list: string[] | null | undefined): DamagePhoto[] {
+  const photos = (list ?? []).map((p) => p.trim()).filter(Boolean);
+  if (!photos.length) throw photoError("DAMAGE_PHOTO_REQUIRED", "Add at least one photo of the damage itself (the dent, leak or tear)");
+  if (photos.length > MAX_EXTRA_PHOTOS) throw photoError("TOO_MANY_PHOTOS", `Add at most ${MAX_EXTRA_PHOTOS} photos of the damage`);
+  return photos.map((raw, i) => decodePhoto(raw, MAX_EXTRA_PHOTO_BYTES, `Damage photo ${i + 1}`));
 }
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,100}$/;
 
-/** Store the photo of a damage report. Called last inside the report's transaction: if it fails, nothing is saved. */
-export async function saveDamagePhoto(reportId: string, photo: DamagePhoto): Promise<void> {
+/** File name (without extension) of photo `n` of a report: 0 = the barcode photo, 1… = extra photos. */
+const baseName = (reportId: string, n: number) => (n ? `${reportId}.${n}` : reportId);
+
+/**
+ * Store the photos of a damage report: the barcode photo, then the extra photos 1…n. Called last inside the
+ * report's transaction: if any can't be stored, the ones already written are removed and nothing is saved.
+ */
+export async function saveDamagePhotos(reportId: string, photo: DamagePhoto, extras: DamagePhoto[] = []): Promise<void> {
   if (!SAFE_ID.test(reportId)) throw new Error(`Unsafe report id for a file name: ${reportId}`);
   const dir = damageDir();
   await fs.mkdir(dir, { recursive: true });
-  const final = path.join(dir, `${reportId}.${photo.ext}`);
-  const tmp = `${final}.${process.pid}.tmp`;
-  await fs.writeFile(tmp, photo.bytes);
-  await fs.rename(tmp, final);
+  const written: string[] = [];
+  try {
+    for (const [n, p] of [photo, ...extras].entries()) {
+      const final = path.join(dir, `${baseName(reportId, n)}.${p.ext}`);
+      const tmp = `${final}.${process.pid}.tmp`;
+      await fs.writeFile(tmp, p.bytes);
+      await fs.rename(tmp, final);
+      written.push(final);
+    }
+  } catch (e) {
+    await Promise.all(written.map((f) => fs.rm(f, { force: true })));
+    throw e;
+  }
 }
 
-/** The stored photo of a damage report, or null (reports made before photos were required have none). */
-export async function readDamagePhoto(reportId: string): Promise<{ bytes: Buffer; contentType: string } | null> {
-  if (!SAFE_ID.test(reportId)) return null;
+/** Photo `n` of a damage report (0 = the barcode photo), or null (reports made before photos were required have none). */
+export async function readDamagePhoto(reportId: string, n = 0): Promise<{ bytes: Buffer; contentType: string } | null> {
+  if (!SAFE_ID.test(reportId) || !Number.isInteger(n) || n < 0 || n > MAX_EXTRA_PHOTOS) return null;
   for (const ext of Object.keys(TYPES) as Ext[]) {
     try {
-      return { bytes: await fs.readFile(path.join(damageDir(), `${reportId}.${ext}`)), contentType: TYPES[ext] };
+      return { bytes: await fs.readFile(path.join(damageDir(), `${baseName(reportId, n)}.${ext}`)), contentType: TYPES[ext] };
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
     }
@@ -92,16 +127,29 @@ export async function readDamagePhoto(reportId: string): Promise<{ bytes: Buffer
   return null;
 }
 
-/** Which of these reports have a photo (one directory read). */
-export async function reportsWithPhoto(reportIds: string[]): Promise<Set<string>> {
-  if (!reportIds.length) return new Set();
+/** URL of photo `n` of a damage report (0 = the barcode photo). */
+export const damagePhotoUrl = (reportId: string, n = 0) => `/api/damaged/photo/${reportId}${n ? `?n=${n}` : ""}`;
+
+/**
+ * The photo URLs of these reports (one directory read): the barcode photo first, then the extra photos.
+ * Reports without photos are left out.
+ */
+export async function damagePhotoUrls(reportIds: string[]): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  if (!reportIds.length) return out;
   let names: string[];
   try {
     names = await fs.readdir(damageDir());
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return new Set();
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return out;
     throw e;
   }
   const have = new Set(names.filter((n) => !n.endsWith(".tmp")).map((n) => n.slice(0, n.lastIndexOf("."))));
-  return new Set(reportIds.filter((id) => have.has(id)));
+  for (const id of new Set(reportIds)) {
+    if (!have.has(id)) continue;
+    const urls = [damagePhotoUrl(id)];
+    for (let n = 1; n <= MAX_EXTRA_PHOTOS && have.has(baseName(id, n)); n++) urls.push(damagePhotoUrl(id, n));
+    out.set(id, urls);
+  }
+  return out;
 }

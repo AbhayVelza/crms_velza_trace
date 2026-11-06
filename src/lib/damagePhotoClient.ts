@@ -4,10 +4,10 @@
 import type { DecodeHintType as Hint } from "@zxing/library";
 import { extractScannedCode } from "@/lib/core/codes";
 
-/** Longest side of the uploaded photo, in pixels. */
-const UPLOAD_SIDE = 1600;
-/** Stay under the server's 2 MB limit with room to spare. */
-const UPLOAD_MAX_BYTES = 1.8 * 1024 * 1024;
+/** Barcode photo: longest side in pixels, and under the server's 2 MB limit with room to spare. */
+const UPLOAD = { side: 1600, maxBytes: 1.8 * 1024 * 1024 };
+/** Extra photos of the damage: smaller, under the server's 1 MB limit for each. */
+const EXTRA_UPLOAD = { side: 1280, maxBytes: 0.9 * 1024 * 1024 };
 
 export interface PreparedPhoto {
   /** JPEG data URL to send. */
@@ -77,26 +77,34 @@ async function readCode(img: HTMLImageElement): Promise<string | null> {
   return null;
 }
 
-function toJpeg(img: HTMLImageElement): { dataUrl: string; bytes: number } {
-  const canvas = canvasOf(img, UPLOAD_SIDE);
+function toJpeg(img: HTMLImageElement, { side, maxBytes }: { side: number; maxBytes: number }): { dataUrl: string; bytes: number } {
+  const canvas = canvasOf(img, side);
   let out = { dataUrl: "", bytes: Infinity };
   for (const quality of [0.85, 0.7, 0.55, 0.4]) {
     const dataUrl = canvas.toDataURL("image/jpeg", quality);
     out = { dataUrl, bytes: Math.floor(((dataUrl.length - dataUrl.indexOf(",") - 1) * 3) / 4) };
-    if (out.bytes <= UPLOAD_MAX_BYTES) break;
+    if (out.bytes <= maxBytes) break;
   }
   return out;
 }
 
+async function openPhoto(file: File): Promise<HTMLImageElement> {
+  if (!file.type.startsWith("image/")) throw new Error(`${file.name || "This file"} is not a photo (an image file)`);
+  try {
+    return await loadImage(file);
+  } catch {
+    throw new Error(`${file.name || "This photo"} could not be opened — take it again or choose a JPEG or PNG`);
+  }
+}
+
 /** Read the code in the photo and prepare the upload. Throws if the file is not an image the browser can open. */
 export async function preparePhoto(file: File): Promise<PreparedPhoto> {
-  if (!file.type.startsWith("image/")) throw new Error("Choose a photo (an image file)");
-  let img: HTMLImageElement;
-  try {
-    img = await loadImage(file);
-  } catch {
-    throw new Error("This photo could not be opened — take it again or choose a JPEG or PNG");
-  }
+  const img = await openPhoto(file);
   const code = await readCode(img);
-  return { ...toJpeg(img), code };
+  return { ...toJpeg(img, UPLOAD), code };
+}
+
+/** An extra photo of the damage (no barcode needed): shrunk to a JPEG for upload. */
+export async function prepareExtraPhoto(file: File): Promise<{ dataUrl: string; bytes: number }> {
+  return toJpeg(await openPhoto(file), EXTRA_UPLOAD);
 }

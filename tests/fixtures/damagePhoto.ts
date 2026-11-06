@@ -3,5 +3,7 @@
 
 const FAKE_JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(400, 7), Buffer.from([0xff, 0xd9])]);
 
-/** Photo fields of a damage report whose photo shows `code`. */
-export const photoOf = (code: string) => ({ photo: `data:image/jpeg;base64,${FAKE_JPEG.toString("base64")}`, photoCode: code });
+const FAKE_JPEG_URL = `data:image/jpeg;base64,${FAKE_JPEG.toString("base64")}`;
+
+/** Photo fields of a damage report: a barcode photo showing `code` and one photo of the damage. */
+export const photoOf = (code: string) => ({ photo: FAKE_JPEG_URL, photoCode: code, damagePhotos: [FAKE_JPEG_URL] });

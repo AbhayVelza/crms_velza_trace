@@ -1,6 +1,7 @@
 // Damaged stock: any partner holding cases, trays or packs reports damage; the units stop moving,
 // leave the partner's stock and are listed in its Damaged section. HQ sees each report as an alert.
-// Every report needs a photo of the damaged item showing its barcode (see damagePhotos.ts).
+// Every report needs a photo of the damaged item showing its barcode, plus 1 to 4 photos of the damage
+// itself (see damagePhotos.ts).
 
 import { z } from "zod";
 import { AT_STATUS, canReportDamaged, type RuleResult } from "@/lib/core/rules";
@@ -8,7 +9,7 @@ import type { Lot, Movement, Pack, Partner } from "@/lib/core/types";
 import { getStore } from "@/lib/store";
 import { can } from "@/lib/core/permissions";
 import { findItem, loadActor, logScan, manufacturerDevice, notFound, nowIso, requireAction, requirePartner, setLotState, type FoundItem } from "./common";
-import { checkDamagePhoto, readDamagePhoto, reportsWithPhoto, saveDamagePhoto } from "./damagePhotos";
+import { checkDamagePhoto, checkExtraPhotos, damagePhotoUrls, readDamagePhoto, saveDamagePhotos } from "./damagePhotos";
 
 export const damageSchema = z.object({
   code: z.string().max(200),
@@ -17,18 +18,21 @@ export const damageSchema = z.object({
   photo: z.string().nullish(),
   /** The code read from the barcode / QR in the photo (read in the browser); must be the reported code. */
   photoCode: z.string().max(300).nullish(),
+  /** 1 to 4 photos of the damage itself (other angles, close-ups): data URLs of JPEG, PNG or WebP images. */
+  damagePhotos: z.array(z.string()).nullish(),
 });
 
 const inStockAt = (p: Pack, partner: Partner) => p.locationId === partner.id && p.status === AT_STATUS[partner.type];
 
 export async function reportDamaged(userId: string | null, body: unknown) {
-  const { code, reason, photo: photoInput, photoCode } = damageSchema.parse(body);
+  const { code, reason, photo: photoInput, photoCode, damagePhotos } = damageSchema.parse(body);
   return getStore().transaction(async (tx) => {
     const actor = await loadActor(tx, userId);
     requireAction(actor, "damage");
     const partner = requirePartner(actor);
-    // Before anything is written: no photo, a broken one, or one showing another code → 400.
+    // Before anything is written: no photo, a broken one, one showing another code, or no photo of the damage → 400.
     const photo = checkDamagePhoto({ photo: photoInput, photoCode, code });
+    const extras = checkExtraPhotos(damagePhotos);
     const deviceId = partner.type === "MANUFACTURER" ? (await manufacturerDevice(tx, partner.id)).id : null;
     const found = await findItem(tx, code, partner.id);
     // An opened case/tray is reported whole too: what is left of it here.
@@ -69,24 +73,24 @@ export async function reportDamaged(userId: string | null, body: unknown) {
       item.kind === "PACK" ? `Pack ${code}` : opened ? `Opened ${unit.toLowerCase()} ${code} (${openedHere.length} packs left here)` : `${unit} ${code} and its packs`;
     const message = `${what} reported damaged — removed from stock, HQ informed`;
     await logScan(tx, { context: "DAMAGE", code, actor, ok: true, result: "OK", message, deviceId });
-    // Last step of the transaction: if the photo can't be stored, the report is not saved either.
-    await saveDamagePhoto(report.id, photo);
-    return { ok: true, message, reportId: report.id };
+    // Last step of the transaction: if a photo can't be stored, the report is not saved either.
+    await saveDamagePhotos(report.id, photo, extras);
+    return { ok: true, message, reportId: report.id, photos: 1 + extras.length };
   });
 }
 
 /**
- * The photo of a damage report: for the partner that reported it and for Velza HQ. Anyone else, or a
- * report without a photo, gets 404 (so a report id reveals nothing).
+ * Photo `n` of a damage report (0 = the barcode photo, 1… = extra photos of the damage): for the partner that
+ * reported it and for Velza HQ. Anyone else, or a photo that doesn't exist, gets 404 (so a report id reveals nothing).
  */
-export async function damagePhoto(userId: string | null, reportId: string) {
+export async function damagePhoto(userId: string | null, reportId: string, n = 0) {
   const store = getStore();
   const actor = await loadActor(store, userId);
   const isHq = can(actor.role, "dashboard");
   if (!isHq) requireAction(actor, "damage");
   const [report] = await store.movements.list({ id: reportId, type: "DAMAGED" });
   if (!report || (!isHq && report.fromId !== actor.partner?.id)) throw notFound(`Damage photo ${reportId}`);
-  const file = await readDamagePhoto(report.id);
+  const file = await readDamagePhoto(report.id, n);
   if (!file) throw notFound(`Damage photo ${reportId}`);
   return new Response(new Uint8Array(file.bytes), {
     headers: { "content-type": file.contentType, "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" },
@@ -159,7 +163,7 @@ export async function listDamaged(userId: string | null) {
   const related = await store.lots.list({ lotCode: [...new Set([...moves.map((m) => m.itemCode.slice(0, 15)), ...packs.map((p) => p.lotCode)])] });
   const lots = [...new Map([...damagedLots, ...related].map((l) => [l.id, l])).values()];
   const units = damagedUnits(lots, packs, moves).filter((u) => u.partnerId === partner.id);
-  const withPhoto = await reportsWithPhoto(units.flatMap((u) => (u.report ? [u.report.id] : [])));
+  const photos = await damagePhotoUrls(units.flatMap((u) => (u.report ? [u.report.id] : [])));
   const items = units.map((u) => ({
     code: u.code,
     kind: u.kind,
@@ -171,7 +175,8 @@ export async function listDamaged(userId: string | null) {
     reason: u.report?.note ?? null,
     reportedAt: u.report?.at ?? null,
     reportedBy: users.find((x) => x.id === u.report?.userId)?.name ?? null,
-    photoUrl: u.report && withPhoto.has(u.report.id) ? `/api/damaged/photo/${u.report.id}` : null,
+    // The barcode photo first, then the extra photos of the damage.
+    photoUrls: (u.report && photos.get(u.report.id)) || [],
   }));
   return { partner, counts: damagedCounts(units), items: items.sort((a, b) => (b.reportedAt ?? "").localeCompare(a.reportedAt ?? "")) };
 }

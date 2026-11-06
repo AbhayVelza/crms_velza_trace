@@ -14,8 +14,8 @@ interface AlertRow {
   message: string;
   partner: string | null;
   user: string | null;
-  /** Damage alerts: the photo of the damaged item (with its barcode). */
-  photoUrl?: string | null;
+  /** Damage alerts: the photo of the damaged item with its barcode, then the extra photos of the damage. */
+  photoUrls?: string[];
 }
 
 const CHIP = "inline-flex items-center rounded-full border px-3 py-1 text-sm font-medium transition-colors duration-150";
@@ -60,11 +60,15 @@ export default function AlertsPage() {
               </Td>
               <Td>
                 {a.message}
-                {a.photoUrl && (
-                  <a href={a.photoUrl} target="_blank" rel="noreferrer" className="mt-1 block w-fit" data-testid="alert-photo">
-                    {/* eslint-disable-next-line @next/next/no-img-element -- private photo from our own API */}
-                    <img src={a.photoUrl} alt={`Photo of damaged ${a.code}`} className="h-16 w-16 rounded-md border border-line object-cover" loading="lazy" />
-                  </a>
+                {!!a.photoUrls?.length && (
+                  <div className="mt-1 flex flex-wrap gap-1.5">
+                    {a.photoUrls.map((url, i) => (
+                      <a key={url} href={url} target="_blank" rel="noreferrer" className="block w-fit" data-testid="alert-photo">
+                        {/* eslint-disable-next-line @next/next/no-img-element -- private photo from our own API */}
+                        <img src={url} alt={i ? `Damage photo ${i} of ${a.code}` : `Photo of damaged ${a.code} with its barcode`} className="h-16 w-16 rounded-md border border-line object-cover" loading="lazy" />
+                      </a>
+                    ))}
+                  </div>
                 )}
               </Td>
               <Td className="text-xs text-muted-foreground">

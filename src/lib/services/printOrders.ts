@@ -90,7 +90,8 @@ export async function createPrintOrder(userId: string | null, body: unknown) {
       await tx.batches.create(batch);
       batchCodes.push(batch.code);
 
-      const first = await tx.nextLotNumber(batch.code, b.cases + b.trays);
+      // A batch of 0 cases and 0 trays takes its code and no lot numbers; its lots come later by continuing it.
+      const first = b.cases + b.trays > 0 ? await tx.nextLotNumber(batch.code, b.cases + b.trays) : batch.nextLot;
       const { lots } = allocateLots({ ...batch, nextLot: first }, b.cases, b.trays);
       for (const l of lots) {
         lotRows.push({
@@ -228,7 +229,8 @@ function continuationProblem(device: Device, batch: Batch, counter: BatchCounter
   if (blocked) return blocked;
   const total = cases + trays;
   const max = continueMaxLots();
-  if (total < 1) return problem(400, "INVALID_QUANTITY", "Enter at least one case or tray");
+  // Either may be 0; with both 0 the order would print nothing.
+  if (total < 1) return problem(400, "INVALID_QUANTITY", "Nothing to print: enter cases or trays (either one may be 0)");
   if (total > max) {
     const why = storeKind() === "json" ? " on the JSON file store (use PostgreSQL for production volumes)" : "";
     return problem(400, "TOO_MANY_LOTS", `At most ${max.toLocaleString("en-IN")} lots per continuation order${why}; requested ${total.toLocaleString("en-IN")}`);

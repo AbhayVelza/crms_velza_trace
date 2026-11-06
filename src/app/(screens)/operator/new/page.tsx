@@ -43,7 +43,8 @@ function CountInput({ value, onChange, label }: { value: number; onChange: (n: n
         aria-label={label}
         className="w-28 text-center text-lg font-semibold tabular"
         value={Number.isNaN(value) ? "" : value}
-        onChange={(e) => onChange(e.target.value === "" ? NaN : Number(e.target.value))}
+        // 0 or a whole number, no minimum: an empty box counts as 0.
+        onChange={(e) => onChange(e.target.value === "" ? 0 : Number(e.target.value))}
       />
       <Button variant="secondary" aria-label={`Increase ${label}`} className="w-10 px-0" onClick={() => onChange((Number.isNaN(value) ? 0 : value) + 1)}>
         <IconPlus size={16} />
@@ -464,8 +465,8 @@ function ContinueBatchWizard() {
     setError(null);
     if (step === 0 && !selected?.continuable) return setError("Choose a batch that can be continued");
     if (step === 1) {
-      if (!Number.isInteger(cases) || !Number.isInteger(trays) || cases < 0 || trays < 0) return setError("Cases and trays must be whole numbers");
-      if (cases + trays < 1) return setError("Enter at least one case or tray");
+      if (!Number.isInteger(cases) || !Number.isInteger(trays) || cases < 0 || trays < 0) return setError("Cases and trays must be 0 or a whole number");
+      if (cases + trays < 1) return setError("Nothing to print: enter cases or trays (either one may be 0)");
       setPreview(null);
       await loadPreview();
     }

@@ -88,10 +88,10 @@ export function planPrintOrder({ batches, country, poolCodes, flavours, maxBatch
       errors.push({ batchIndex: i, field: "expiryDate", message: `${label}: expiry date must be after manufacture date` });
     }
     const countsOk = [b.cases, b.trays].every((n) => Number.isInteger(n) && n >= 0);
-    if (!countsOk) errors.push({ batchIndex: i, field: "cases", message: `${label}: cases and trays must be whole numbers ≥ 0` });
-    else if (b.cases + b.trays === 0) {
-      errors.push({ batchIndex: i, field: "cases", message: `${label}: enter at least 1 case or 1 tray (both are 0)` });
-    } else if (b.cases + b.trays > LOT_NUMBER_MAX) {
+    // Cases and trays are each 0 or a whole number, with no minimum: a batch may even be 0 + 0 (its code is taken
+    // now and lots are added later with "Continue an existing batch"). Only a whole order with nothing to print is refused.
+    if (!countsOk) errors.push({ batchIndex: i, field: "cases", message: `${label}: cases and trays must be 0 or a whole number` });
+    else if (b.cases + b.trays > LOT_NUMBER_MAX) {
       errors.push({ batchIndex: i, field: "cases", message: `${label}: at most ${LOT_NUMBER_MAX} lots per batch` });
     }
 
@@ -118,6 +118,11 @@ export function planPrintOrder({ batches, country, poolCodes, flavours, maxBatch
       stickerCount: countsOk ? stickerCount(b.cases, b.trays) : 0,
     };
   });
+
+  const allCounted = batches.every((b) => [b.cases, b.trays].every((n) => Number.isInteger(n) && n >= 0));
+  if (batches.length > 0 && allCounted && batches.every((b) => b.cases + b.trays === 0)) {
+    errors.push({ batchIndex: null, field: "cases", message: "Nothing to print: every batch has 0 cases and 0 trays — enter cases or trays for at least one batch" });
+  }
 
   return {
     ok: errors.length === 0,

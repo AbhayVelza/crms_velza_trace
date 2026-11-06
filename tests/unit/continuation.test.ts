@@ -449,6 +449,35 @@ describe("existing workflows on continued lots", () => {
   });
 });
 
+describe("a batch created with 0 cases and 0 trays", () => {
+  it("takes its batch code with no lots, and is continued later from lot 00001", async () => {
+    const r = await createPrintOrder(operator, {
+      batches: [
+        { flavour: "OR", mfgDate: "2026-10-01", expiryDate: "2027-10-01", cases: 1, trays: 0 },
+        { flavour: "GA", mfgDate: "2026-10-01", expiryDate: "2027-10-01", cases: 0, trays: 0 },
+      ],
+    });
+    if (r.preview) throw new Error("expected an order");
+    expect(r.printOrder).toMatchObject({ stickerCount: 5 });
+    expect(r.printOrder.batchCodes).toHaveLength(2);
+    expect(r.printOrder.lotCodes).toHaveLength(1);
+    const empty = r.printOrder.batchCodes[1];
+    expect(await batchOf(empty)).toMatchObject({ flavour: "GA", nextLot: 1, status: "ACTIVE" });
+    expect(await store().lots.list({ batchCode: empty })).toHaveLength(0);
+
+    const later = await created(cont(operator, empty, 0, 1));
+    expect(later).toMatchObject({ firstLotHex: "00001", lastLotHex: "00001" });
+  });
+
+  it("an order or continuation with nothing to print at all is refused", async () => {
+    await expect(createPrintOrder(operator, { batches: [{ flavour: "OR", mfgDate: "2026-10-01", expiryDate: "2027-10-01", cases: 0, trays: 0 }] })).rejects.toMatchObject({
+      code: "INVALID_ORDER",
+    });
+    const b = await newBatch();
+    await expect(cont(operator, b.code, 0, 0)).rejects.toMatchObject({ code: "INVALID_QUANTITY" });
+  });
+});
+
 describe("one batch, one flavour", () => {
   it("continued lots keep the batch's flavour; another flavour is refused without allocating", async () => {
     const b = await newBatch(); // OR lot 00001

@@ -625,10 +625,7 @@ export async function stickersForOrder(userId: string | null, printOrderId: stri
   const ordered = order.lotCodes.map((c) => lots.find((l) => l.lotCode === c)).filter((l): l is Lot => !!l);
   return {
     title: `Print order ${order.id.slice(0, 8)} · ${order.stickerCount} stickers`,
-    stickers: stickersForLots(
-      ordered.map((l) => ({ lotCode: l.lotCode, lotType: l.lotType, flavourName: name(l.flavour) })),
-      settings.publicBaseUrl,
-    ),
+    stickers: stickersForLots(ordered.map((l) => ({ lotCode: l.lotCode, lotType: l.lotType, flavourName: name(l.flavour) }))),
     lotSize: settings.lotSticker,
     packSize: settings.packSticker,
     printOrder: order,
@@ -642,7 +639,7 @@ export async function stickerForReprint(userId: string | null, code: string): Pr
   const lot = await store.lots.findOne({ lotCode: code.slice(0, 15) });
   if (!lot || lot.manufacturerId !== actor.partner?.id) throw notFound(`Code ${code}`);
   const [settings, name] = await Promise.all([store.getSettings(), flavourNames(store)]);
-  const sticker = stickerForCode(code, { lotCode: lot.lotCode, lotType: lot.lotType, flavourName: name(lot.flavour) }, settings.publicBaseUrl);
+  const sticker = stickerForCode(code, { lotCode: lot.lotCode, lotType: lot.lotType, flavourName: name(lot.flavour) });
   if (!sticker) throw notFound(`Code ${code}`);
   return { title: `Reprint ${code}`, stickers: [sticker], lotSize: settings.lotSticker, packSize: settings.packSticker, printOrder: null };
 }

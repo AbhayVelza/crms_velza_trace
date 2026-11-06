@@ -1,12 +1,11 @@
-// Scan-back check: render the same barcode/QR symbols with bwip-js and decode them with ZXing.
+// Scan-back check: render the same barcode symbols (and the QR of older lot stickers) with bwip-js and decode them with ZXing.
 
 import bwipjs from "bwip-js/node";
 import { BarcodeFormat, BinaryBitmap, DecodeHintType, HybridBinarizer, MultiFormatReader, RGBLuminanceSource } from "@zxing/library";
 import { PNG } from "pngjs";
 import { describe, expect, it } from "vitest";
 import { allocateLots } from "@/lib/core/codes";
-import { qrUrlFor } from "@/lib/core/stickers";
-import { code128Svg, CODE128_OPTIONS, QR_OPTIONS, qrSvg } from "./barcode";
+import { code128Svg, CODE128_OPTIONS, QR_OPTIONS } from "./barcode";
 import { lotStickerLayout, modulesFromSvg, packStickerLayout, SPEC } from "./stickerLayout";
 
 async function decodePng(buf: Buffer, format: BarcodeFormat): Promise<string> {
@@ -34,15 +33,14 @@ describe("barcodes scan back", () => {
     expect(await decodePng(png, BarcodeFormat.CODE_128)).toBe(code);
   });
 
-  it("QR encodes the public lookup URL", async () => {
-    const url = qrUrlFor("http://localhost:3000", lots[0].lotCode);
+  it("QR of an older lot sticker (public lookup URL) still decodes", async () => {
+    const url = `http://localhost:3000/t/${lots[0].lotCode}`;
     const png = await bwipjs.toBuffer({ ...QR_OPTIONS, text: url, scale: 4, paddingwidth: 8, paddingheight: 8, backgroundcolor: "FFFFFF" });
     expect(await decodePng(png, BarcodeFormat.QR_CODE)).toBe(url);
   });
 
   it("SVGs stretch to their container", () => {
     expect(code128Svg(codes[0])).toMatch(/preserveAspectRatio="none"/);
-    expect(qrSvg("x")).not.toMatch(/preserveAspectRatio/);
   });
 });
 
@@ -56,9 +54,17 @@ describe("sticker layout meets the print spec at default sizes", () => {
     expect(l.warnings).toEqual([]);
     expect(l.barcode.moduleMm).toBeGreaterThanOrEqual(SPEC.minModuleMm);
     expect(l.barcode.heightMm).toBeGreaterThanOrEqual(SPEC.minBarHeightMm);
-    expect(l.qrMm).toBeGreaterThanOrEqual(SPEC.minQrMm);
-    // bars + 2 quiet zones + QR + gaps fit in the width
-    expect(l.barcode.widthMm + 2 * SPEC.quietZoneMm + l.qrMm! + 2 * SPEC.qrQuietMm + 2 + 2 * l.padMm).toBeLessThanOrEqual(100);
+    expect(l.barcode.widthMm + 2 * SPEC.quietZoneMm + 2 * l.padMm).toBeLessThanOrEqual(100);
+    expect(l).not.toHaveProperty("qrMm");
+  });
+
+  it("lot barcode is a little bigger than the pack barcode", () => {
+    const lot = lotStickerLayout({ widthMm: 100, heightMm: 50 }, lotModules).barcode;
+    const pack = packStickerLayout({ widthMm: 75, heightMm: 25 }, packModules).barcode;
+    for (const k of ["moduleMm", "widthMm", "heightMm"] as const) {
+      expect(lot[k]).toBeGreaterThan(pack[k]);
+      expect(lot[k]).toBeLessThanOrEqual(pack[k] * 1.4);
+    }
   });
 
   it("pack sticker 75×25 mm", () => {

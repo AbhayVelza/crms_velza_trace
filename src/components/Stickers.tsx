@@ -3,7 +3,7 @@
 // Lot and pack stickers drawn at real size (mm), plus the two print modes.
 
 import { useEffect, useMemo, useState } from "react";
-import { code128Svg, qrSvg } from "@/lib/barcode";
+import { code128Svg } from "@/lib/barcode";
 import type { LotSticker, PackSticker, Sticker } from "@/lib/core/stickers";
 import { lotStickerLayout, modulesFromSvg, packStickerLayout, SPEC, type Box } from "@/lib/stickerLayout";
 
@@ -49,27 +49,22 @@ function Svg({ svg, width, height, label }: { svg: string; width: number; height
   return <div role="img" aria-label={label} style={{ width: mm(width), height: mm(height) }} dangerouslySetInnerHTML={{ __html: svg }} />;
 }
 
+/** Lot (case/tray) sticker: barcode only, no QR code; its bars are a little bigger than a pack's. */
 function LotStickerView({ s, size, scannable }: { s: LotSticker; size: Box; scannable: boolean }) {
   const bars = useMemo(() => code128Svg(s.code), [s.code]);
-  const qr = useMemo(() => qrSvg(s.qrUrl), [s.qrUrl]);
   const layout = lotStickerLayout(size, modulesFromSvg(bars));
   const zoom = useScreenZoom(layout.barcode.moduleMm, scannable);
   return (
-    <div className="sticker sticker-lot" data-code={s.code} data-kind="LOT" style={{ width: mm(size.widthMm), height: mm(size.heightMm), padding: mm(layout.padMm), ...zoomStyle(zoom) }}>
-      <div className="truncate font-bold" style={{ height: mm(layout.headerMm), fontSize: mm(layout.headerFontMm), lineHeight: mm(layout.headerMm) }}>
+    <div className="sticker sticker-lot flex flex-col items-center" data-code={s.code} data-kind="LOT" style={{ width: mm(size.widthMm), height: mm(size.heightMm), padding: mm(layout.padMm), ...zoomStyle(zoom) }}>
+      <div className="w-full truncate text-center font-bold" style={{ height: mm(layout.headerMm), fontSize: mm(layout.headerFontMm), lineHeight: mm(layout.headerMm) }}>
         {s.header}
       </div>
-      <div className="flex items-center" style={{ gap: mm(2), height: mm(size.heightMm - 2 * layout.padMm - layout.headerMm) }}>
-        <div style={{ padding: mm(SPEC.qrQuietMm), background: "#fff" }}>
-          <Svg svg={qr} width={layout.qrMm!} height={layout.qrMm!} label={`QR ${s.qrUrl}`} />
+      <div className="flex flex-1 flex-col items-center justify-center">
+        <div style={{ padding: `0 ${mm(SPEC.quietZoneMm)}`, background: "#fff" }}>
+          <Svg svg={bars} width={layout.barcode.widthMm} height={layout.barcode.heightMm} label={`Barcode ${s.code}`} />
         </div>
-        <div className="flex flex-1 flex-col items-center justify-center">
-          <div style={{ padding: `0 ${mm(SPEC.quietZoneMm)}`, background: "#fff" }}>
-            <Svg svg={bars} width={layout.barcode.widthMm} height={layout.barcode.heightMm} label={`Barcode ${s.code}`} />
-          </div>
-          <div className="font-mono font-bold tracking-wider" style={{ fontSize: mm(layout.textFontMm), lineHeight: mm(layout.textMm) }}>
-            {s.code}
-          </div>
+        <div className="font-mono font-bold tracking-wider" style={{ fontSize: mm(layout.textFontMm), lineHeight: mm(layout.textMm) }}>
+          {s.code}
         </div>
       </div>
     </div>

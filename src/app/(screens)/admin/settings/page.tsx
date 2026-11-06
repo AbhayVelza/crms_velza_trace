@@ -72,8 +72,8 @@ export default function SettingsPage() {
             </Field>
           </div>
         </Card>
-        <Card title="QR code">
-          <Field label="Public base URL" hint={`QR encodes ${s.publicBaseUrl.replace(/\/+$/, "")}/t/<lot code>`}>
+        <Card title="Public page">
+          <Field label="Public base URL" hint={`Public product page: ${s.publicBaseUrl.replace(/\/+$/, "")}/t/<lot code>. Stickers no longer carry a QR code; older QR stickers still open this page.`}>
             <Input value={s.publicBaseUrl} onChange={(e) => setS({ ...s, publicBaseUrl: e.target.value })} />
           </Field>
         </Card>

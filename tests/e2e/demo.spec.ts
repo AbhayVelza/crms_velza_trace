@@ -212,7 +212,7 @@ test.describe.serial("Velza demo script (9.1)", () => {
     expect(lots.slice(1, 3).map((l) => l.slice(-5))).toEqual(["00002", "00003"]);
     expect(lots[3]).toMatch(/^91[A-Z0-9]{6}GA00001$/);
 
-    // Every printed barcode and QR decodes back to its code. A screenshot taken while the page is still
+    // Every printed barcode decodes back to its code. A screenshot taken while the page is still
     // scrolling or laying out can come back blurred, so each one gets up to 3 captures; a real misprint fails all 3.
     const decodeShot = async (target: ReturnType<Page["locator"]>, format: BarcodeFormat, what: string, scale?: "device") => {
       let lastError: unknown;
@@ -231,10 +231,7 @@ test.describe.serial("Velza demo script (9.1)", () => {
       const code = (await el.getAttribute("data-code"))!;
       const bars = el.locator('[aria-label^="Barcode"]').locator("xpath=..");
       expect(await decodeShot(bars, BarcodeFormat.CODE_128, `Barcode ${code}`, "device")).toBe(code);
-      if ((await el.getAttribute("data-kind")) === "LOT") {
-        const qr = el.locator('[aria-label^="QR"]').locator("xpath=..");
-        expect(await decodeShot(qr, BarcodeFormat.QR_CODE, `QR ${code}`, "device")).toMatch(new RegExp(`/t/${code}$`));
-      }
+      expect(await el.locator('[aria-label^="QR"]').count(), `no QR on ${code}`).toBe(0);
     }
     // Print only opens the browser dialog; printing, cancelling or closing it records nothing.
     await page.evaluate(() => {
@@ -410,7 +407,7 @@ test.describe.serial("Velza demo script (9.1)", () => {
     await page.locator("#damage-photo").setInputFiles({ name: "wrong.png", mimeType: "image/png", buffer: await stickerPhoto(lots[0], "code128") });
     await expect(page.getByTestId("damage-photo-check")).toContainText(`The photo shows ${lots[0]}, not the scanned ${offlineLot}`);
     await expect(reportButton).toBeDisabled();
-    // The item's own QR (the public lookup URL) matches.
+    // The item's own QR (an older lot sticker printed with the public lookup URL) still matches.
     await page.locator("#damage-photo").setInputFiles({ name: "damaged.png", mimeType: "image/png", buffer: await stickerPhoto(offlineLot, "qr") });
     await expect(page.getByTestId("damage-photo-check")).toContainText(`Barcode in the photo matches ${offlineLot}`);
     await expect(reportButton).toBeDisabled(); // no photo of the damage itself yet

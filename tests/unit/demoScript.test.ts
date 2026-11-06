@@ -224,7 +224,7 @@ describe("demo script 9.1", () => {
     const r = await reprint(ids.operator, { code, reason: "Sticker torn while pasting" });
     expect(r.reprint).toMatchObject({ code, reason: "Sticker torn while pasting", itemKind: "PACK" });
     const sheet = await stickerForReprint(ids.operator, code);
-    expect(sheet.stickers).toEqual([{ kind: "PACK", code, header: "PACK 3 of 6 | 4 CANS" }]);
+    expect(sheet.stickers).toEqual([{ kind: "PACK", lotType: "TRAY", code, header: "PACK 3 of 6 | 4 CANS" }]);
     expect((await store().movements.list({ type: "REPRINTED" }))[0]).toMatchObject({ itemCode: code, note: "Sticker torn while pasting" });
     // no new codes were created
     expect((await store().lots.list()).length).toBe(5);

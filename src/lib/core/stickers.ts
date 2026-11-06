@@ -1,16 +1,19 @@
-// Sticker content and print order: lot sticker first, then its pack stickers, lot by lot.
+// Sticker content and print order: lot sticker first, then its pack stickers, lot by lot. Cases and trays are
+// printed as separate runs on separate label rolls, so every sticker carries its lot type.
 
 import { buildPackCodes, CANS_PER_LOT, PACK_SIZE, PACKS_PER_LOT } from "./codes";
 import type { LotType } from "./types";
 
 export interface LotSticker {
   kind: "LOT";
+  lotType: LotType;
   code: string;
   header: string;
 }
 
 export interface PackSticker {
   kind: "PACK";
+  lotType: LotType;
   code: string;
   header: string;
 }
@@ -33,12 +36,13 @@ export interface StickerLot {
 
 /** Lot (case or tray) sticker: barcode only, no QR code. */
 export function lotSticker(lot: StickerLot): LotSticker {
-  return { kind: "LOT", code: lot.lotCode, header: lotStickerHeader(lot.lotType, lot.flavourName) };
+  return { kind: "LOT", lotType: lot.lotType, code: lot.lotCode, header: lotStickerHeader(lot.lotType, lot.flavourName) };
 }
 
 export function stickersForLot(lot: StickerLot): Sticker[] {
   const packs: PackSticker[] = buildPackCodes(lot.lotCode, lot.lotType).map((code, i) => ({
     kind: "PACK",
+    lotType: lot.lotType,
     code,
     header: packStickerHeader(lot.lotType, i + 1),
   }));

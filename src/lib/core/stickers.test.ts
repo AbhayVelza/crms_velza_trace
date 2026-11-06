@@ -11,7 +11,7 @@ describe("stickers", () => {
 
   it("lot sticker carries no QR code", () => {
     const [lot] = stickersForLots([{ lotCode: "91ABC123OR00001", lotType: "CASE", flavourName: "Original" }]);
-    expect(Object.keys(lot).sort()).toEqual(["code", "header", "kind"]);
+    expect(Object.keys(lot).sort()).toEqual(["code", "header", "kind", "lotType"]);
   });
 
   it("orders lot sticker first then its packs; case = 5, tray = 7", () => {
@@ -25,6 +25,8 @@ describe("stickers", () => {
     expect(s.map((x) => x.kind).join(",")).toBe("LOT,PACK,PACK,PACK,PACK,LOT,PACK,PACK,PACK,PACK,PACK,PACK");
     expect(s[1].code).toBe("91ABC123OR0000161");
     expect(s[6].code).toBe("91ABC123OR0000241");
+    // every sticker knows its lot type, so cases and trays can be printed as separate runs
+    expect(s.map((x) => x.lotType).join(",")).toBe("CASE,CASE,CASE,CASE,CASE,TRAY,TRAY,TRAY,TRAY,TRAY,TRAY,TRAY");
   });
 
   it("reprint returns the same code", () => {

@@ -204,9 +204,18 @@ test.describe.serial("Velza demo script (9.1)", () => {
     await expect(page.getByText("PRINTING PENDING", { exact: true })).toBeVisible();
     await finish.click();
     await expect(page.getByText("PRINTING PENDING", { exact: true })).toBeVisible();
+    // Cases and trays are separate print runs (separate label rolls): the cases run comes first.
+    await expect(page.getByTestId("print-run-CASE")).toContainText("Cases · 2 lots, 10 stickers");
+    await expect(page.getByTestId("print-run-TRAY")).toContainText("Trays · 2 lots, 14 stickers");
+    await expect(page.getByTestId("print-run-CASE")).toHaveAttribute("aria-checked", "true");
     const stickers = page.locator(".sticker");
-    await expect(stickers).toHaveCount(24);
-    lots = await page.locator('.sticker[data-kind="LOT"]').evaluateAll((els) => els.map((e) => e.getAttribute("data-code")!));
+    const lotCodesShown = () => page.locator('.sticker[data-kind="LOT"]').evaluateAll((els) => els.map((e) => e.getAttribute("data-code")!));
+    await expect(stickers).toHaveCount(10);
+    const caseLots = await lotCodesShown();
+    await page.getByTestId("print-run-TRAY").click();
+    await expect(stickers).toHaveCount(14);
+    const trayLots = await lotCodesShown();
+    lots = [...caseLots, ...trayLots];
     expect(lots).toHaveLength(4);
     expect(lots[0]).toMatch(/^91[A-Z0-9]{6}OR00001$/);
     expect(lots.slice(1, 3).map((l) => l.slice(-5))).toEqual(["00002", "00003"]);
@@ -226,33 +235,54 @@ test.describe.serial("Velza demo script (9.1)", () => {
       }
       throw new Error(`${what} did not decode after 3 captures: ${lastError}`);
     };
-    for (let i = 0; i < 24; i++) {
-      const el = stickers.nth(i);
+    const decodeRun = async (lotType: "CASE" | "TRAY", count: number) => {
+      await page.getByTestId(`print-run-${lotType}`).click();
+      await expect(stickers).toHaveCount(count);
+      for (let i = 0; i < count; i++) {
+        const el = stickers.nth(i);
+        expect(await el.getAttribute("data-code")).toBeTruthy();
+        await decodeOne(el);
+      }
+    };
+    const decodeOne = async (el: ReturnType<Page["locator"]>) => {
       const code = (await el.getAttribute("data-code"))!;
       const bars = el.locator('[aria-label^="Barcode"]').locator("xpath=..");
       expect(await decodeShot(bars, BarcodeFormat.CODE_128, `Barcode ${code}`, "device")).toBe(code);
       expect(await el.locator('[aria-label^="QR"]').count(), `no QR on ${code}`).toBe(0);
-    }
+    };
+    await decodeRun("CASE", 10);
+    await decodeRun("TRAY", 14);
+    await page.getByTestId("print-run-CASE").click();
     // Print only opens the browser dialog; printing, cancelling or closing it records nothing.
     await page.evaluate(() => {
       const w = window as unknown as { print: () => void; printCalls: number };
       w.printCalls = 0;
       w.print = () => void w.printCalls++; // stands in for the dialog being opened and cancelled
     });
-    await page.getByRole("button", { name: /^Print 24 stickers/ }).click();
+    await page.getByRole("button", { name: /^Print 10 case stickers/ }).click();
     expect(await page.evaluate(() => (window as unknown as { printCalls: number }).printCalls)).toBe(1);
     await expect(page.getByText(/Nothing has been recorded yet/)).toBeVisible();
     await expect(page.getByText("PRINTING PENDING", { exact: true })).toBeVisible();
     expect(await orderStatus()).toMatchObject({ status: "CREATED", printedAt: null });
     expect(confirmations).toEqual([]);
 
-    // The explicit confirmation, double-clicked: one request, one transaction, status and time shown.
-    await page.getByRole("button", { name: "Mark as printed" }).dblclick();
-    await expect(page.getByText(/^4 lot\(s\) marked PRINTED at .+ — ready for QC verification$/)).toBeVisible();
+    // The explicit confirmation of the cases run, double-clicked: one request; the order waits for the trays.
+    await page.getByRole("button", { name: "Mark cases as printed" }).dblclick();
+    await expect(page.getByText(/^2 case lot\(s\) marked PRINTED at .+ — ready for QC verification\. Now print the other run\.$/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Mark cases as printed" })).toHaveCount(0);
+    await expect(page.getByTestId("print-run-CASE")).toContainText("Printed");
+    expect(confirmations).toHaveLength(1);
+    expect(await orderStatus()).toMatchObject({ status: "CREATED", printedAt: null });
+
+    // The trays run on its own roll, then its own confirmation: now the whole order is PRINTED.
+    await page.getByTestId("print-run-TRAY").click();
+    await page.getByRole("button", { name: /^Print 14 tray stickers/ }).click();
+    await page.getByRole("button", { name: "Mark trays as printed" }).click();
+    await expect(page.getByText(/^2 tray lot\(s\) marked PRINTED at .+ — ready for QC verification$/)).toBeVisible();
     await expect(page.getByText("PRINTED", { exact: true })).toBeVisible();
     await expect(page.getByText(/^Printed \S/)).toBeVisible();
-    await expect(page.getByRole("button", { name: "Mark as printed" })).toHaveCount(0);
-    expect(confirmations).toHaveLength(1);
+    await expect(page.getByRole("button", { name: /^Mark .* as printed$/ })).toHaveCount(0);
+    expect(confirmations).toHaveLength(2);
     expect(await orderStatus()).toMatchObject({ status: "PRINTED", printedAt: expect.any(String) });
   });
 
@@ -356,10 +386,10 @@ test.describe.serial("Velza demo script (9.1)", () => {
     await expect(page.getByText(/offline — unsynced/)).toBeVisible();
     await page.getByRole("button", { name: "Open print view" }).click();
     const lot = (offlineLot = (await page.locator(".sticker").first().getAttribute("data-code"))!);
-    await page.getByRole("button", { name: /^Print 5 stickers/ }).click();
+    await page.getByRole("button", { name: /^Print 5 case stickers/ }).click();
     await expect(page.getByText("PRINTING PENDING", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Mark as printed" }).click();
-    await expect(page.getByText(/^1 lot\(s\) marked PRINTED at /)).toBeVisible();
+    await page.getByRole("button", { name: "Mark cases as printed" }).click();
+    await expect(page.getByText(/^1 case lot\(s\) marked PRINTED at /)).toBeVisible();
     await verifyLot(page, lot, packsOf(lot, "CASE"));
 
     await as(page, "OPERATOR", null, "/dispatch");

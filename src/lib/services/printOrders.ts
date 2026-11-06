@@ -4,7 +4,7 @@ import { z } from "zod";
 import { allocateLots, batchCounter, CONTINUE_MAX_LOTS, JSON_CONTINUE_MAX_LOTS, stickerCount, type BatchCounter } from "@/lib/core/codes";
 import { planPrintOrder } from "@/lib/core/printOrder";
 import { stickerForCode, stickersForLots, type Sticker } from "@/lib/core/stickers";
-import type { Batch, Device, Lot, Pack, PrintOrder } from "@/lib/core/types";
+import { LOT_TYPES, type Batch, type Device, type Lot, type LotType, type Pack, type PrintOrder } from "@/lib/core/types";
 import { getStore, storeKind, type StoreTx } from "@/lib/store";
 import { badRequest, loadActor, manufacturerDevice, notFound, nowIso, requireAction, requirePartner, ServiceError, type Actor } from "./common";
 import { autoRefill, reservedCodes } from "./pool";
@@ -591,12 +591,31 @@ async function requireOwnOrder(tx: StoreTx, actor: Actor, id: string) {
   return order;
 }
 
+/** One print run: the cases or the trays of an order, printed on their own label roll and confirmed on their own. */
+export interface PrintRun {
+  lotType: LotType;
+  lots: number;
+  stickers: number;
+  /** Lots of this run still waiting for "Mark as printed" (GENERATED). */
+  pending: number;
+}
+
 export interface StickerSheet {
   title: string;
   stickers: Sticker[];
   lotSize: { widthMm: number; heightMm: number };
   packSize: { widthMm: number; heightMm: number };
   printOrder: PrintOrder | null;
+  /** Cases first, then trays; only the types the order has. Empty for a reprint. */
+  runs: PrintRun[];
+}
+
+function printRuns(lots: Lot[], stickers: Sticker[]): PrintRun[] {
+  return LOT_TYPES.flatMap((lotType) => {
+    const run = lots.filter((l) => l.lotType === lotType);
+    if (!run.length) return [];
+    return [{ lotType, lots: run.length, stickers: stickers.filter((s) => s.lotType === lotType).length, pending: run.filter((l) => l.status === "GENERATED").length }];
+  });
 }
 
 export async function stickersForOrder(userId: string | null, printOrderId: string): Promise<StickerSheet> {
@@ -606,12 +625,14 @@ export async function stickersForOrder(userId: string | null, printOrderId: stri
   const order = await requireOwnOrder(store, actor, printOrderId);
   const [settings, name, lots] = await Promise.all([store.getSettings(), flavourNames(store), store.lots.list({ printOrderId })]);
   const ordered = order.lotCodes.map((c) => lots.find((l) => l.lotCode === c)).filter((l): l is Lot => !!l);
+  const stickers = stickersForLots(ordered.map((l) => ({ lotCode: l.lotCode, lotType: l.lotType, flavourName: name(l.flavour) })));
   return {
     title: `Print order ${order.id.slice(0, 8)} · ${order.stickerCount} stickers`,
-    stickers: stickersForLots(ordered.map((l) => ({ lotCode: l.lotCode, lotType: l.lotType, flavourName: name(l.flavour) }))),
+    stickers,
     lotSize: settings.lotSticker,
     packSize: settings.packSticker,
     printOrder: order,
+    runs: printRuns(ordered, stickers),
   };
 }
 
@@ -624,27 +645,40 @@ export async function stickerForReprint(userId: string | null, code: string): Pr
   const [settings, name] = await Promise.all([store.getSettings(), flavourNames(store)]);
   const sticker = stickerForCode(code, { lotCode: lot.lotCode, lotType: lot.lotType, flavourName: name(lot.flavour) });
   if (!sticker) throw notFound(`Code ${code}`);
-  return { title: `Reprint ${code}`, stickers: [sticker], lotSize: settings.lotSticker, packSize: settings.packSticker, printOrder: null };
+  return { title: `Reprint ${code}`, stickers: [sticker], lotSize: settings.lotSticker, packSize: settings.packSticker, printOrder: null, runs: [] };
 }
 
 /**
  * The operator's explicit "Mark as printed" confirmation (never inferred from the print dialog, a CSV download or
  * navigation): GENERATED lots of the order and their packs become PRINTED, one PRINTED movement per lot, and the
  * order gets its printedAt — all in one transaction. Repeating it changes nothing.
+ *
+ * `{ lotType }` confirms one print run only (cases and trays are printed on separate label rolls): only that run's
+ * lots become PRINTED, and the order becomes PRINTED once no lot of any run is waiting. Without it, every run.
  */
-export async function markPrinted(userId: string | null, printOrderId: string) {
+export const markPrintedSchema = z.object({ lotType: z.enum(LOT_TYPES).optional() });
+
+const runLabel = (t: LotType) => (t === "CASE" ? "case" : "tray");
+
+export async function markPrinted(userId: string | null, printOrderId: string, body: unknown = {}) {
+  const { lotType } = markPrintedSchema.parse(body ?? {});
   return getStore().transaction(async (tx) => {
     const actor = await loadActor(tx, userId);
     requireAction(actor, "printOrder");
     const order = await requireOwnOrder(tx, actor, printOrderId);
     const at = nowIso();
     const lots = await tx.lots.list({ printOrderId });
-    if (order.status !== "PRINTED" && !lots.some((l) => l.status === "GENERATED")) {
+    const run = lotType ? lots.filter((l) => l.lotType === lotType) : lots;
+    if (lotType && !run.length) throw badRequest("NOTHING_TO_PRINT", `This print order has no ${runLabel(lotType)}s`);
+    if (order.status !== "PRINTED" && !run.some((l) => l.status === "GENERATED")) {
+      // This run was already confirmed: repeating it changes nothing.
+      if (lotType && run.some((l) => l.status !== "VOID")) return { printOrder: order, lotsPrinted: 0 };
       // Every lot was voided (or is otherwise no longer waiting for stickers): nothing to confirm.
-      throw badRequest("NOTHING_TO_PRINT", "No lot of this print order is waiting to be printed (voided lots cannot be marked as printed)");
+      const what = lotType ? `${runLabel(lotType)} lot` : "lot";
+      throw badRequest("NOTHING_TO_PRINT", `No ${what} of this print order is waiting to be printed (voided lots cannot be marked as printed)`);
     }
     let changed = 0;
-    for (const lot of lots.filter((l) => l.status === "GENERATED")) {
+    for (const lot of run.filter((l) => l.status === "GENERATED")) {
       await tx.lots.update(lot.id, { status: "PRINTED", updatedAt: at });
       for (const p of await tx.packs.list({ lotCode: lot.lotCode })) {
         if (p.status === "GENERATED") await tx.packs.update(p.id, { status: "PRINTED", updatedAt: at });
@@ -664,6 +698,8 @@ export async function markPrinted(userId: string | null, printOrderId: string) {
       });
       changed++;
     }
+    // Lots of the other run still waiting: the order stays pending until that run is confirmed too.
+    if (lots.some((l) => l.status === "GENERATED" && !run.includes(l))) return { printOrder: order, lotsPrinted: changed };
     const updated = await tx.printOrders.update(order.id, { status: "PRINTED", printedAt: order.printedAt ?? at });
     return { printOrder: updated, lotsPrinted: changed };
   });

@@ -21,6 +21,8 @@ const store = () => getStore();
 const lotOf = async (lotCode: string) => (await store().lots.findOne({ lotCode }))!;
 const packsOf = async (lotCode: string) => (await store().packs.list({ lotCode })).sort((a, b) => a.seq - b.seq);
 
+async function order(flavour: string, cases: number, trays = 0) {
+  const r = await createPrintOrder(ids.operator, { batches: [{ flavour, mfgDate: "2026-11-01", expiryDate: "2027-08-01", cases, trays }] });
 async function order(flavour: string, cases: number) {
   const r = await createPrintOrder(ids.operator, { idempotencyKey: crypto.randomUUID(), batches: [{ flavour, mfgDate: "2026-11-01", expiryDate: "2027-08-01", cases, trays: 0 }] });
   if (r.preview) throw new Error("expected an order");
@@ -129,6 +131,54 @@ describe("print confirmation and QC verify", () => {
   it("only QC may verify", async () => {
     const [orderMN] = (await store().printOrders.list()).filter((p) => p.lotCodes.length === 2);
     await expect(verify(ids.operator, { action: "scanLot", code: orderMN.lotCodes[0] })).rejects.toThrow();
+  });
+});
+
+describe("cases and trays are separate print runs", () => {
+  it("the sheet lists a cases run and a trays run, each with its own stickers", async () => {
+    const o = await order("OR", 2, 1);
+    const sheet = await stickersForOrder(ids.operator, o.id);
+    expect(sheet.runs).toEqual([
+      { lotType: "CASE", lots: 2, stickers: 10, pending: 2 },
+      { lotType: "TRAY", lots: 1, stickers: 7, pending: 1 },
+    ]);
+    expect(sheet.stickers.filter((s) => s.lotType === "CASE")).toHaveLength(10);
+    expect(sheet.stickers.filter((s) => s.lotType === "TRAY")).toHaveLength(7);
+    // a cases-only order has just the cases run
+    expect((await stickersForOrder(ids.operator, (await order("OR", 1)).id)).runs.map((r) => r.lotType)).toEqual(["CASE"]);
+  });
+
+  it("each run is confirmed on its own; the order is PRINTED only when both are", async () => {
+    const o = await order("GA", 1, 2);
+    const [caseLot, ...trayLots] = o.lotCodes;
+    const cases = await markPrinted(ids.operator, o.id, { lotType: "CASE" });
+    expect(cases.lotsPrinted).toBe(1);
+    expect(cases.printOrder).toMatchObject({ status: "CREATED", printedAt: null });
+    expect((await lotOf(caseLot)).status).toBe("PRINTED");
+    expect((await packsOf(caseLot)).every((p) => p.status === "PRINTED")).toBe(true);
+    for (const t of trayLots) expect((await lotOf(t)).status).toBe("GENERATED");
+    // QC can verify the printed cases while the trays are still being printed; the trays are refused.
+    expect(await verify(ids.qc, { action: "scanLot", code: caseLot })).toMatchObject({ ok: true });
+    expect(await verify(ids.qc, { action: "scanLot", code: trayLots[0] })).toMatchObject({ ok: false, code: "NOT_PRINTED" });
+    expect((await stickersForOrder(ids.operator, o.id)).runs.map((r) => r.pending)).toEqual([0, 2]);
+
+    // repeating the cases confirmation changes nothing
+    expect(await markPrinted(ids.operator, o.id, { lotType: "CASE" })).toMatchObject({ lotsPrinted: 0, printOrder: { status: "CREATED" } });
+
+    const trays = await markPrinted(ids.operator, o.id, { lotType: "TRAY" });
+    expect(trays.lotsPrinted).toBe(2);
+    expect(trays.printOrder).toMatchObject({ status: "PRINTED", printedAt: expect.any(String) });
+    for (const t of trayLots) expect((await lotOf(t)).status).toBe("PRINTED");
+    expect((await store().movements.list({ type: "PRINTED" })).filter((m) => o.lotCodes.includes(m.itemCode))).toHaveLength(3);
+  });
+
+  it("a run the order does not have, or a bad run name, is refused without changes", async () => {
+    const o = await order("NS", 1);
+    await expect(markPrinted(ids.operator, o.id, { lotType: "TRAY" })).rejects.toMatchObject({ code: "NOTHING_TO_PRINT" });
+    await expect(markPrinted(ids.operator, o.id, { lotType: "PALLET" })).rejects.toThrow();
+    expect((await lotOf(o.lotCodes[0])).status).toBe("GENERATED");
+    // without a run, the whole order is confirmed as before
+    expect(await markPrinted(ids.operator, o.id)).toMatchObject({ lotsPrinted: 1, printOrder: { status: "PRINTED" } });
   });
 });
 

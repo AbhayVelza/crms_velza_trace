@@ -224,6 +224,8 @@ describe("demo script 9.1", () => {
     await expect(reprint(ids.operator, { code, reason: " " })).rejects.toThrow(/reason/);
     const r = await reprint(ids.operator, { code, reason: "Sticker torn while pasting" });
     expect(r.reprint).toMatchObject({ code, reason: "Sticker torn while pasting", itemKind: "PACK" });
+    const sheet = await stickerForReprint(ids.operator, code);
+    expect(sheet.stickers).toEqual([{ kind: "PACK", lotType: "TRAY", code, header: "PACK 3 of 6 | 4 CANS" }]);
     const sheet = await serveReprint(ids.operator, r.reprint.id);
     expect(sheet.stickers).toEqual([{ kind: "PACK", code, header: "PACK 3 of 6 | 4 CANS" }]);
     // the logged reprint prints once

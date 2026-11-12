@@ -24,6 +24,8 @@ import { recallPatch } from "@/lib/core/rules";
 import { ITEM_STATUSES, PARTNER_TYPE_LABELS, type ItemStatus, type Lot, type Movement, type Pack, type Partner, type Scan, type Settings } from "@/lib/core/types";
 import { MAX_SCAN_INPUT, normalizeScannedCode } from "@/lib/scan/normalize";
 import { getStore, type StoreTx } from "@/lib/store";
+import { damagedCounts, damagedUnits } from "./damage";
+import { damagePhotoUrls } from "./damagePhotos";
 import { damagedCounts, damagedUnits, wasOpened } from "./damage";
 import { badRequest, findItem, isVisible, loadActor, logScan, notFound, nowIso, partnerName, requireAction, requirePartner } from "./common";
 import { batchDisplayStatus } from "./printOrders";
@@ -72,6 +74,12 @@ async function names(tx: StoreTx, only?: { partners: Ids; users: Ids; devices: I
   };
 }
 
+/** The batch's flavour first, then any other flavours its continued lots use: "Original, Green Apple". */
+function flavoursLabel(batch: { flavour: string }, lots: { flavour: string }[], name: (code: string) => string) {
+  return [...new Set([batch.flavour, ...lots.map((l) => l.flavour)])].map(name).join(", ");
+}
+
+function locationLabel(partners: Partner[], item: { status: ItemStatus; locationId: string; inTransitToId: string | null }) {
 function locationLabel(partners: Partner[], item: { status: ItemStatus; statusBeforeRecall?: ItemStatus | null; locationId: string; inTransitToId: string | null }) {
   const at = partnerName(partners, item.locationId);
   if (item.status === "IN_TRANSIT") return `In transit: ${at} → ${partnerName(partners, item.inTransitToId)}`;
@@ -146,7 +154,8 @@ export async function lookup(userId: string | null, rawCode: string) {
     quarantineReason: item.lot.quarantineReason,
     batch: batch && {
       code: batch.code,
-      flavour: n.flavour(batch.flavour),
+      // The lot's own flavour: a continued batch may hold lots of several flavours.
+      flavour: n.flavour(item.lot.flavour),
       mfgDate: batch.mfgDate,
       expiryDate: batch.expiryDate,
       status: batch.status,
@@ -201,6 +210,17 @@ function inTransitUnits(lots: Lot[], packs: Pack[], lotByCode: Map<string, Lot>)
 /** Only damage on synced (visible) lots; the code's first 15 characters are its lot code. */
 const visibleDamage = (damaged: Movement[], lotByCode: Map<string, Lot>) => damaged.filter((m) => lotByCode.has(m.itemCode.slice(0, 15)));
 
+async function namedAlerts(tx: StoreTx, input: Omit<ComputeAlertsInput, "now">) {
+  const list = computeAlerts({ ...input, now: new Date() });
+  const n = await names(tx, { partners: list.map((a) => a.partnerId), users: list.map((a) => a.userId), devices: [] });
+  // A damage alert's id is "DM-<report id>"; its photos are served by /api/damaged/photo/<report id>.
+  const reportId = (a: { id: string; type: string }) => (a.type === "DAMAGED" ? a.id.slice(3) : null);
+  const photos = await damagePhotoUrls(list.flatMap((a) => reportId(a) ?? []));
+  return list.map((a) => {
+    const id = reportId(a);
+    // Damage alerts: the barcode photo first, then the extra photos of the damage.
+    return { ...a, partner: n.partner(a.partnerId), user: n.user(a.userId), photoUrls: (id && photos.get(id)) || [] };
+  });
 type AlertSources = Omit<ComputeAlertsInput, "now" | "settings"> & {
   settings: Settings;
   /** Public-page scans that found a registered code (ok), for the copied-sticker check; failed ones are in `scans`. */
@@ -520,7 +540,7 @@ export async function listBatches(userId: string | null) {
       const bl = lotsOf.get(b.code) ?? [];
       return {
         ...b,
-        flavourName: n.flavour(b.flavour),
+        flavourName: flavoursLabel(b, bl, n.flavour),
         manufacturer: n.partner(b.manufacturerId),
         counter: batchCounter(b),
         displayStatus: batchDisplayStatus(b),
@@ -544,7 +564,7 @@ export async function batchReport(userId: string | null, batchCode: string) {
   const ever = (type: Movement["type"]) => new Set(movements.filter((m) => m.type === type).map((m) => m.itemCode)).size;
   const reprints = (await store.reprints.list()).filter((r) => lotCodes.has(r.code.slice(0, 15)));
   return {
-    batch: { ...batch, flavourName: n.flavour(batch.flavour), manufacturer: n.partner(batch.manufacturerId), counter: batchCounter(batch), displayStatus: batchDisplayStatus(batch) },
+    batch: { ...batch, flavourName: flavoursLabel(batch, lots, n.flavour), manufacturer: n.partner(batch.manufacturerId), counter: batchCounter(batch), displayStatus: batchDisplayStatus(batch) },
     summary: {
       lots: lots.length,
       cases: lots.filter((l) => l.lotType === "CASE").length,

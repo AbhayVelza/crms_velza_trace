@@ -18,6 +18,7 @@ import { createPrintOrder, markPrinted } from "@/lib/services/printOrders";
 import { alertPage, alerts, batchReport, dashboard, lookup, myStock, publicLookup, recall, recallReport, updateAlert } from "@/lib/services/trace";
 import { verify } from "@/lib/services/verify";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
+import { photoOf } from "../fixtures/damagePhoto";
 
 let dir: string;
 const ids: Record<string, string> = {};
@@ -103,7 +104,7 @@ describe("an opened case with no packs left (LOW-opened-empty-listed) and its ti
     await receive(ids.rt4, { code: lot });
     await openLot(ids.rt4, { lotCode: lot });
     expect((await myStock(ids.rt4)).counts).toMatchObject({ cases: 1, openedCases: 1, loosePacks: 4 });
-    for (const seq of [1, 2, 3, 4]) expect(await reportDamaged(ids.rt4, { code: `${lot}6${seq}`, reason: "Leaking" })).toMatchObject({ ok: true });
+    for (const seq of [1, 2, 3, 4]) expect(await reportDamaged(ids.rt4, { code: `${lot}6${seq}`, reason: "Leaking", ...photoOf(`${lot}6${seq}`) })).toMatchObject({ ok: true });
     const mine = await myStock(ids.rt4);
     expect(codesOf(mine.inStock).filter((c) => c.startsWith(lot))).toEqual([]);
     expect(mine.counts).toMatchObject({ cases: 0, openedCases: 0, loosePacks: 0 });
@@ -153,11 +154,11 @@ describe("recall after damage and after opening (REF-06, REF-07)", () => {
     lots = await printAndVerify(3);
     await dispatch(ids.operator, { action: "confirm", toPartnerId: ids.SS1, invoice: "INV-B1", codes: lots });
     for (const code of lots) await receive(ids.ss1, { code });
-    expect(await reportDamaged(ids.ss1, { code: lots[0], reason: "Crushed" })).toMatchObject({ ok: true });
+    expect(await reportDamaged(ids.ss1, { code: lots[0], reason: "Crushed", ...photoOf(lots[0]) })).toMatchObject({ ok: true });
     await dispatch(ids.ss1, { action: "confirm", toPartnerId: ids.RT4, invoice: "INV-B2", codes: [lots[1]] });
     await receive(ids.rt4, { code: lots[1] });
     await openLot(ids.rt4, { lotCode: lots[1] });
-    expect(await reportDamaged(ids.rt4, { code: `${lots[1]}62`, reason: "Leaking" })).toMatchObject({ ok: true });
+    expect(await reportDamaged(ids.rt4, { code: `${lots[1]}62`, reason: "Leaking", ...photoOf(`${lots[1]}62`) })).toMatchObject({ ok: true });
     expect((await myStock(ids.rt4)).counts).toMatchObject({ cases: 1, loosePacks: 3 });
     const d = await dashboard(ids.hq);
     damagedBefore = Object.fromEntries(d.stock.map((s) => [s.partnerId, s.damaged]));

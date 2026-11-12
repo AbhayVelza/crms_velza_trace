@@ -40,10 +40,22 @@ describe("planPrintOrder", () => {
     expect(plan.batches[0].trayRange).toEqual(["00033", "00046"]);
   });
 
-  it("flags 0 cases and 0 trays", () => {
-    const plan = planPrintOrder({ batches: [b({})], country: "91", poolCodes: ["AAA111"], flavours });
-    expect(plan.ok).toBe(false);
-    expect(plan.errors[0].message).toMatch(/both are 0/);
+  it("cases and trays may each be 0, even both in one batch, as long as the order prints something", () => {
+    const onlyTrays = planPrintOrder({ batches: [b({ cases: 0, trays: 2 })], country: "91", poolCodes: ["AAA111"], flavours });
+    expect(onlyTrays).toMatchObject({ ok: true, totalStickers: 14 });
+    const mixed = planPrintOrder({ batches: [b({ cases: 1 }), b({})], country: "91", poolCodes: ["AAA111", "BBB222"], flavours });
+    expect(mixed.ok).toBe(true);
+    expect(mixed.batches[1]).toMatchObject({ batchCode: "BBB222", lots: [], lotRange: null, stickerCount: 0 });
+  });
+
+  it("flags an order with nothing to print, and counts that are not 0 or a whole number", () => {
+    const empty = planPrintOrder({ batches: [b({}), b({})], country: "91", poolCodes: ["AAA111", "BBB222"], flavours });
+    expect(empty.ok).toBe(false);
+    expect(empty.errors.map((e) => e.message)).toEqual([expect.stringMatching(/Nothing to print/)]);
+    for (const bad of [-1, 1.5, NaN]) {
+      const p = planPrintOrder({ batches: [b({ cases: bad, trays: 1 })], country: "91", poolCodes: ["AAA111"], flavours });
+      expect(p.errors[0].message).toMatch(/0 or a whole number/);
+    }
   });
 
   it("flags an empty or short pool", () => {

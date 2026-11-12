@@ -384,6 +384,8 @@ async function referencesTo(tx: StoreTx, entity: AdminEntity, row: { id: string;
     const code = String(row.code);
     const batches = await tx.batches.list(entity === "countries" ? { country: code } : { flavour: code });
     add(batches.length, "batch(es)");
+    // A continued batch can print lots in another flavour than its own.
+    if (entity === "flavours" && !batches.length) add((await tx.lots.list({ flavour: code })).length, "lot(s) in continued batches");
     if (entity === "countries" && (await tx.getSettings()).defaultCountry === code) found.push("the default country setting");
   }
   return found;

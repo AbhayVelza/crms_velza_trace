@@ -16,6 +16,7 @@ import { createPrintOrder, markPrinted } from "@/lib/services/printOrders";
 import { myStock, recall } from "@/lib/services/trace";
 import { verify } from "@/lib/services/verify";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
+import { photoOf } from "../fixtures/damagePhoto";
 
 let dir: string;
 const ids: Record<string, string> = {};
@@ -220,7 +221,7 @@ describe("receive / dispatch: location before status (no status of stock held el
     await qcPass(d);
     await dispatch(ids.operator, { action: "confirm", toPartnerId: ids.SS1, invoice: "INV-DMG", codes: [d] });
     await receive(ids.ss1, { code: d });
-    expect(await reportDamaged(ids.ss1, { code: d, reason: "Crushed" })).toMatchObject({ ok: true });
+    expect(await reportDamaged(ids.ss1, { code: d, reason: "Crushed", ...photoOf(d) })).toMatchObject({ ok: true });
     const check = await dispatch(ids.db1, { action: "check", toPartnerId: ids.RT1, invoice: "INV-LEAK", code: d });
     expect(check).toMatchObject({ ok: false, code: "NOT_AT_LOCATION" });
     expect(check.message).not.toMatch(/DAMAGED/);

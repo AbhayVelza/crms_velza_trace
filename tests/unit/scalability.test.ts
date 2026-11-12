@@ -17,6 +17,7 @@ import { setDeviceOffline } from "@/lib/services/operator";
 import { codesForOrder, createPrintOrder, markPrinted } from "@/lib/services/printOrders";
 import { alerts, batchReport, dashboard, listBatches, lookup, myStock, recall, recallReport, stockCounts, timelineOrder } from "@/lib/services/trace";
 import { verify } from "@/lib/services/verify";
+import { photoOf } from "../fixtures/damagePhoto";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
 
 let dir: string;
@@ -112,6 +113,7 @@ async function reference() {
 beforeAll(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "velza-scale-"));
   process.env.VELZA_DB_PATH = path.join(dir, "db.json");
+  process.env.VELZA_UPLOAD_DIR = path.join(dir, "uploads");
   await store().reset(buildSampleSeed());
   for (const [k, role, tag] of [
     ["admin", "ADMIN"],
@@ -132,6 +134,7 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   delete process.env.VELZA_DB_PATH;
+  delete process.env.VELZA_UPLOAD_DIR;
   await fs.rm(dir, { recursive: true, force: true });
 });
 
@@ -168,9 +171,9 @@ describe("a network with stock at every tier", () => {
     await send("ss1", "DB1", [lots[1]], "db1");
     await send("db1", "RT1", [lots[1]], "rt1");
     await openLot(ids.rt1, { lotCode: lots[1] });
-    await reportDamaged(ids.rt1, { code: `${lots[1]}63`, reason: "Leaking" });
+    await reportDamaged(ids.rt1, { code: `${lots[1]}63`, reason: "Leaking", ...photoOf(`${lots[1]}63`) });
     await send("ss1", "RT4", [lots[2]]); // in transit to a retailer the SS supplies directly
-    await reportDamaged(ids.ss1, { code: lots[0], reason: "Crushed" });
+    await reportDamaged(ids.ss1, { code: lots[0], reason: "Crushed", ...photoOf(lots[0]) });
     // Failed scans that raise alerts: a code for someone else, and a code never generated.
     await receive(ids.rt1, { code: lots[2] });
     await receive(ids.rt1, { code: "91ZZZZZZOR00001" });
@@ -183,7 +186,7 @@ describe("a network with stock at every tier", () => {
     await setDeviceOffline(ids.operator, device.id, { offline: true });
     unsynced = (await printAndVerify(1)).lotCodes[0];
     expect((await store().lots.findOne({ lotCode: unsynced }))?.synced).toBe(false);
-    expect(await reportDamaged(ids.operator, { code: `${unsynced}`, reason: "Dropped at the plant" })).toMatchObject({ ok: true });
+    expect(await reportDamaged(ids.operator, { code: `${unsynced}`, reason: "Dropped at the plant", ...photoOf(`${unsynced}`) })).toMatchObject({ ok: true });
   });
 
   describe("exact code lookup (HQ trace)", () => {

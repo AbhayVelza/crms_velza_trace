@@ -1,17 +1,19 @@
-// Sticker content and print order: lot sticker first, then its pack stickers, lot by lot.
+// Sticker content and print order: lot sticker first, then its pack stickers, lot by lot. Cases and trays are
+// printed as separate runs on separate label rolls, so every sticker carries its lot type.
 
 import { buildPackCodes, CANS_PER_LOT, PACK_SIZE, PACKS_PER_LOT } from "./codes";
 import type { LotType } from "./types";
 
 export interface LotSticker {
   kind: "LOT";
+  lotType: LotType;
   code: string;
   header: string;
-  qrUrl: string;
 }
 
 export interface PackSticker {
   kind: "PACK";
+  lotType: LotType;
   code: string;
   header: string;
 }
@@ -26,34 +28,32 @@ export function packStickerHeader(lotType: LotType, seq: number): string {
   return `PACK ${seq} of ${PACKS_PER_LOT[lotType]} | ${PACK_SIZE[lotType]} CANS`;
 }
 
-export function qrUrlFor(publicBaseUrl: string, lotCode: string): string {
-  return `${publicBaseUrl.replace(/\/+$/, "")}/t/${lotCode}`;
-}
-
 export interface StickerLot {
   lotCode: string;
   lotType: LotType;
   flavourName: string;
 }
 
-export function lotSticker(lot: StickerLot, publicBaseUrl: string): LotSticker {
-  return { kind: "LOT", code: lot.lotCode, header: lotStickerHeader(lot.lotType, lot.flavourName), qrUrl: qrUrlFor(publicBaseUrl, lot.lotCode) };
+/** Lot (case or tray) sticker: barcode only, no QR code. */
+export function lotSticker(lot: StickerLot): LotSticker {
+  return { kind: "LOT", lotType: lot.lotType, code: lot.lotCode, header: lotStickerHeader(lot.lotType, lot.flavourName) };
 }
 
-export function stickersForLot(lot: StickerLot, publicBaseUrl: string): Sticker[] {
+export function stickersForLot(lot: StickerLot): Sticker[] {
   const packs: PackSticker[] = buildPackCodes(lot.lotCode, lot.lotType).map((code, i) => ({
     kind: "PACK",
+    lotType: lot.lotType,
     code,
     header: packStickerHeader(lot.lotType, i + 1),
   }));
-  return [lotSticker(lot, publicBaseUrl), ...packs];
+  return [lotSticker(lot), ...packs];
 }
 
-export function stickersForLots(lots: StickerLot[], publicBaseUrl: string): Sticker[] {
-  return lots.flatMap((l) => stickersForLot(l, publicBaseUrl));
+export function stickersForLots(lots: StickerLot[]): Sticker[] {
+  return lots.flatMap((l) => stickersForLot(l));
 }
 
 /** Single sticker for a reprint: same code, same content. */
-export function stickerForCode(code: string, lot: StickerLot, publicBaseUrl: string): Sticker | null {
-  return stickersForLot(lot, publicBaseUrl).find((s) => s.code === code) ?? null;
+export function stickerForCode(code: string, lot: StickerLot): Sticker | null {
+  return stickersForLot(lot).find((s) => s.code === code) ?? null;
 }

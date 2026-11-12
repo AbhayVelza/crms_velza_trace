@@ -231,7 +231,7 @@ describe("CameraSession (mocked camera)", () => {
     const v = video();
     const s = new CameraSession(v, decoder, env, (t) => seen.push(t));
     await s.start();
-    expect(calls[0]).toEqual({ audio: false, video: { facingMode: { ideal: "environment" } } });
+    expect(calls[0]).toEqual({ audio: false, video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } } });
     expect(s.state).toBe("running");
     d.emit(LOT);
     expect(seen).toEqual([LOT]);
@@ -250,7 +250,7 @@ describe("CameraSession (mocked camera)", () => {
     const a = new CameraSession(video(), decoder, env, () => {});
     await a.start();
     await a.start("front");
-    expect(calls[1]).toEqual({ audio: false, video: { deviceId: { exact: "front" } } });
+    expect(calls[1]).toEqual({ audio: false, video: { deviceId: { exact: "front" }, width: { ideal: 1920 }, height: { ideal: 1080 } } });
     expect(tracks.map((t) => t.readyState)).toEqual(["ended", "live"]);
     const b = new CameraSession(video(), decoder, env, () => {});
     await b.start();
@@ -304,7 +304,7 @@ describe("CameraSession (mocked camera)", () => {
     expect(b.torchSupported).toBe(true);
     expect(await b.setTorch(true)).toBe(true);
     expect(b.torchOn).toBe(true);
-    expect(lit.tracks[0].applied).toEqual([{ advanced: [{ torch: true }] }]);
+    expect(lit.tracks[0].applied).toEqual([{ advanced: [{ focusMode: "continuous" }] }, { advanced: [{ torch: true }] }]);
     b.stop();
     expect(b.torchOn).toBe(false);
   });

@@ -149,7 +149,7 @@ async function main() {
   const op = already;
   const today = new Date().toISOString().slice(0, 10);
   const expiry = `${Number(today.slice(0, 4)) + 1}${today.slice(4)}`;
-  const a = await op.must("/api/print-orders", { deviceId: pc1, batches: [{ flavour: "OR", mfgDate: today, expiryDate: expiry, cases: 4, trays: 2 }] }, "print order A");
+  const a = await op.must("/api/print-orders", { idempotencyKey: crypto.randomUUID(), deviceId: pc1, batches: [{ flavour: "OR", mfgDate: today, expiryDate: expiry, cases: 4, trays: 2 }] }, "print order A");
   const orderA = a.printOrder as { id: string; lotCodes: string[]; batchCodes: string[]; stickerCount: number; status: string };
   check("3 Operator: print order A", "Batch A (Original): 6 lots, 4×5 + 2×7 = 34 stickers, status CREATED", orderA.lotCodes.length === 6 && orderA.stickerCount === 34 && orderA.status === "CREATED", `${orderA.lotCodes.length} lots, ${orderA.stickerCount} stickers`);
   const view = await op.get(`/api/print-orders/${orderA.id}`);
@@ -164,7 +164,7 @@ async function main() {
   check("3 Operator: print order A", "Repeated confirmation changes nothing", again.lotsPrinted === 0);
 
   // ---------- 3b. Batch B (Green Apple), 2 cases + 1 tray, left PRINTING PENDING
-  const b = await op.must("/api/print-orders", { deviceId: pc1, batches: [{ flavour: "GA", mfgDate: today, expiryDate: expiry, cases: 2, trays: 1 }] }, "print order B");
+  const b = await op.must("/api/print-orders", { idempotencyKey: crypto.randomUUID(), deviceId: pc1, batches: [{ flavour: "GA", mfgDate: today, expiryDate: expiry, cases: 2, trays: 1 }] }, "print order B");
   const orderB = b.printOrder as { id: string; lotCodes: string[]; batchCodes: string[] };
   check("3 Operator: print order B", "Batch B (Green Apple): 3 lots, pending print", orderB.lotCodes.length === 3 && b.printOrder.status === "CREATED");
 

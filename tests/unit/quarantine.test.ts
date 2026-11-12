@@ -34,7 +34,7 @@ beforeAll(async () => {
     ids[k] = (await store().users.list({ role }))[0].id;
   }
   ids.SS1 = (await store().partners.list()).find((p) => p.name.startsWith("SS-1"))!.id;
-  const created = await createPrintOrder(ids.operator, { batches: [{ flavour: "OR", mfgDate: "2026-10-26", expiryDate: "2027-07-26", cases: 2, trays: 0 }] });
+  const created = await createPrintOrder(ids.operator, { idempotencyKey: crypto.randomUUID(), batches: [{ flavour: "OR", mfgDate: "2026-10-26", expiryDate: "2027-07-26", cases: 2, trays: 0 }] });
   if (created.preview) throw new Error("expected order");
   await markPrinted(ids.operator, created.printOrder.id);
   lots = created.printOrder.lotCodes;

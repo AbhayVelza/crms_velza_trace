@@ -12,7 +12,8 @@ export interface Bootstrap {
   flavours: Flavour[];
   partners: Partner[];
   devices: Device[];
-  settings: Settings;
+  /** Only Velza Admin receives settings; other roles get none (they never read them). */
+  settings?: Settings;
 }
 
 export interface Me {

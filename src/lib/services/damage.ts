@@ -6,6 +6,7 @@
 import { z } from "zod";
 import { AT_STATUS, canReportDamaged, type RuleResult } from "@/lib/core/rules";
 import type { Lot, Movement, Pack, Partner } from "@/lib/core/types";
+import { scannedCodeSchema } from "@/lib/scan/scannedCode";
 import { getStore } from "@/lib/store";
 import { can } from "@/lib/core/permissions";
 import { findItem, loadActor, logScan, manufacturerDevice, notFound, nowIso, requireAction, requirePartner, setLotState, type FoundItem } from "./common";
@@ -21,6 +22,8 @@ export const damageSchema = z.object({
   /** 1 to 4 photos of the damage itself (other angles, close-ups): data URLs of JPEG, PNG or WebP images. */
   damagePhotos: z.array(z.string()).nullish(),
 });
+// The code is cleaned like every scan screen does (QR link, lower case, spaces); see scan/scannedCode.ts.
+export const damageSchema = z.object({ code: scannedCodeSchema, reason: z.string().max(300) });
 
 const inStockAt = (p: Pack, partner: Partner) => p.locationId === partner.id && p.status === AT_STATUS[partner.type];
 
@@ -109,20 +112,27 @@ export interface DamagedUnit {
 
 type DamageReport = Pick<Movement, "itemKind" | "itemCode" | "fromId" | "at">;
 
+type WithRecall = Pick<Lot, "status" | "statusBeforeRecall">;
+/** Damaged, also after a recall (a recall keeps the damage classification in statusBeforeRecall). */
+export const isDamaged = (x: WithRecall) => x.status === "DAMAGED" || (x.status === "RECALLED" && x.statusBeforeRecall === "DAMAGED");
+/** Opened, also after a recall of the opened lot. */
+export const wasOpened = (l: WithRecall | undefined) => !!l && (l.status === "OPENED" || (l.status === "RECALLED" && l.statusBeforeRecall === "OPENED"));
+
 /**
  * Every damaged unit and where it is: sealed lots reported whole, opened lots reported whole
  * (lot stays OPENED, its packs at the reporter are DAMAGED), and single packs of opened lots.
+ * A recall does not change this: recalled damaged units stay damaged (isDamaged / wasOpened).
  */
 export function damagedUnits<M extends DamageReport>(lots: Lot[], packs: Pack[], reports: M[]) {
   const lotByCode = new Map(lots.map((l) => [l.lotCode, l]));
   const latest = (code: string) => reports.filter((m) => m.itemCode === code).sort((a, b) => b.at.localeCompare(a.at))[0];
-  const damagedPacks = packs.filter((p) => p.status === "DAMAGED");
+  const damagedPacks = packs.filter(isDamaged);
   const units: (Omit<DamagedUnit, "report"> & { report: M | undefined })[] = [];
-  for (const l of lots.filter((x) => x.status === "DAMAGED" && x.locationId)) {
+  for (const l of lots.filter((x) => isDamaged(x) && x.locationId)) {
     units.push({ partnerId: l.locationId!, kind: "LOT", code: l.lotCode, lot: l, opened: false, packs: damagedPacks.filter((p) => p.lotCode === l.lotCode).length, report: latest(l.lotCode) });
   }
   const wholeOpened = new Set<string>(); // `${partnerId}|${lotCode}`
-  for (const m of reports.filter((x) => x.itemKind === "LOT" && x.fromId && lotByCode.get(x.itemCode)?.status === "OPENED")) {
+  for (const m of reports.filter((x) => x.itemKind === "LOT" && x.fromId && wasOpened(lotByCode.get(x.itemCode)))) {
     const key = `${m.fromId}|${m.itemCode}`;
     if (wholeOpened.has(key)) continue;
     wholeOpened.add(key);
@@ -131,7 +141,7 @@ export function damagedUnits<M extends DamageReport>(lots: Lot[], packs: Pack[],
   }
   for (const p of damagedPacks) {
     const lot = lotByCode.get(p.lotCode);
-    if (lot?.status !== "OPENED" || !p.locationId || wholeOpened.has(`${p.locationId}|${p.lotCode}`)) continue;
+    if (!wasOpened(lot) || !lot || !p.locationId || wholeOpened.has(`${p.locationId}|${p.lotCode}`)) continue;
     units.push({ partnerId: p.locationId, kind: "PACK", code: p.packCode, lot, opened: false, packs: 1, report: latest(p.packCode) });
   }
   return units;
@@ -153,15 +163,19 @@ export async function listDamaged(userId: string | null) {
   requireAction(actor, "damage");
   const partner = requirePartner(actor);
   // damagedUnits only looks at damaged lots and packs and at the lots of damage reports and damaged packs.
-  const [damagedLots, packs, moves, users, flavours] = await Promise.all([
+  // Damaged rows recalled later are read too (a recall keeps the damage in statusBeforeRecall), by filter only.
+  const [damagedLots, recalledDamagedLots, damagedPacks, recalledDamagedPacks, moves, users, flavours] = await Promise.all([
     store.lots.list({ status: "DAMAGED" }),
+    store.lots.list({ status: "RECALLED", statusBeforeRecall: "DAMAGED" }),
     store.packs.list({ status: "DAMAGED" }),
+    store.packs.list({ status: "RECALLED", statusBeforeRecall: "DAMAGED" }),
     store.movements.list({ type: "DAMAGED" }),
     store.users.list(),
     store.flavours.list(),
   ]);
+  const packs = [...damagedPacks, ...recalledDamagedPacks];
   const related = await store.lots.list({ lotCode: [...new Set([...moves.map((m) => m.itemCode.slice(0, 15)), ...packs.map((p) => p.lotCode)])] });
-  const lots = [...new Map([...damagedLots, ...related].map((l) => [l.id, l])).values()];
+  const lots = [...new Map([...damagedLots, ...recalledDamagedLots, ...related].map((l) => [l.id, l])).values()];
   const units = damagedUnits(lots, packs, moves).filter((u) => u.partnerId === partner.id);
   const photos = await damagePhotoUrls(units.flatMap((u) => (u.report ? [u.report.id] : [])));
   const items = units.map((u) => ({
@@ -170,6 +184,8 @@ export async function listDamaged(userId: string | null) {
     lotType: u.lot.lotType,
     opened: u.opened,
     packs: u.packs,
+    /** The batch was recalled after the damage report; the unit stays in the Damaged section. */
+    recalled: u.lot.status === "RECALLED",
     flavour: flavours.find((f) => f.code === u.lot.flavour)?.name ?? u.lot.flavour,
     batchCode: u.lot.batchCode,
     reason: u.report?.note ?? null,

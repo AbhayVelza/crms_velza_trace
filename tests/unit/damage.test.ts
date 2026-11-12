@@ -28,7 +28,7 @@ async function user(role: Role, partnerPrefix?: string) {
 const partner = async (prefix: string) => (await store().partners.list()).find((p) => p.name.startsWith(prefix))!.id;
 
 async function printAndVerify(cases: number) {
-  const created = await createPrintOrder(ids.operator, { batches: [{ flavour: "OR", mfgDate: "2026-10-26", expiryDate: "2027-07-26", cases, trays: 0 }] });
+  const created = await createPrintOrder(ids.operator, { idempotencyKey: crypto.randomUUID(), batches: [{ flavour: "OR", mfgDate: "2026-10-26", expiryDate: "2027-07-26", cases, trays: 0 }] });
   if (created.preview) throw new Error("expected order");
   await markPrinted(ids.operator, created.printOrder.id);
   for (const lotCode of created.printOrder.lotCodes) {

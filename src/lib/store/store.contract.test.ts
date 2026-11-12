@@ -238,6 +238,63 @@ describe.each(IMPLS)("Store contract: $name", (impl) => {
     await expect(store.sessions.delete("abc")).rejects.toThrow(/not found/);
   });
 
+  it("updateWhere patches only the matching rows in one call and returns their ids in insertion order", async () => {
+    await store.batches.create(batch("AAA111"));
+    const [a, b, c] = ["91AAA111OR00001", "91AAA111OR00002", "91AAA111OR00003"].map((code, i) => lot(code, { printOrderId: i < 2 ? "po-1" : "po-2" }));
+    await store.lots.createMany([a, b, c]);
+    await store.packs.createMany([...packs(a), ...packs(b), ...packs(c)]);
+    await store.lots.update(b.id, { status: "VOID" });
+    await store.packs.update(`${a.lotCode}62`, { status: "VOID" });
+
+    // Only GENERATED lots of po-1: a (not b, which is VOID, nor c, another order).
+    expect(await store.lots.updateWhere({ printOrderId: "po-1", status: "GENERATED" }, { status: "PRINTED", updatedAt: "2026-11-04T10:00:00.000Z" })).toEqual([a.id]);
+    expect((await store.lots.list()).map((l) => [l.id, l.status, l.updatedAt])).toEqual([
+      [a.id, "PRINTED", "2026-11-04T10:00:00.000Z"],
+      [b.id, "VOID", AT],
+      [c.id, "GENERATED", AT],
+    ]);
+    // Packs of a list of lots, by status: a's VOID pack and every other lot's packs stay as they are.
+    expect(await store.packs.updateWhere({ lotCode: [a.lotCode], status: "GENERATED" }, { status: "PRINTED" })).toEqual([`${a.lotCode}61`, `${a.lotCode}63`, `${a.lotCode}64`]);
+    expect((await store.packs.list({ status: "PRINTED" })).map((p) => p.id)).toEqual([`${a.lotCode}61`, `${a.lotCode}63`, `${a.lotCode}64`]);
+    expect((await store.packs.list({ lotCode: [b.lotCode, c.lotCode] })).every((p) => p.status === "GENERATED")).toBe(true);
+    // Lots and packs share one table in PostgreSQL: a lot update never touches pack rows, and the other way round.
+    expect(await store.packs.updateWhere({ lotCode: [a.lotCode] }, { locationId: "SS0001" })).toHaveLength(4);
+    expect((await store.lots.get(a.id))!.locationId).toBe("MF0001");
+    // Repeating changes nothing; an empty "any of" list matches nothing; an empty filter is refused.
+    expect(await store.lots.updateWhere({ printOrderId: "po-1", status: "GENERATED" }, { status: "PRINTED" })).toEqual([]);
+    expect(await store.packs.updateWhere({ lotCode: [] }, { status: "VOID" })).toEqual([]);
+    await expect(store.lots.updateWhere({}, { status: "VOID" })).rejects.toThrow(/needs a filter/);
+    expect((await store.lots.list({ status: "VOID" })).map((l) => l.id)).toEqual([b.id]);
+  });
+
+  it("updateWhere inside a transaction rolls back with it; a lot counter still cannot move backwards", async () => {
+    await store.batches.create(batch("AAA111", { nextLot: 5 }));
+    await store.lots.createMany([lot("91AAA111OR00001")]);
+    await expect(
+      store.transaction(async (tx) => {
+        await tx.lots.updateWhere({ batchCode: "AAA111" }, { status: "PRINTED" });
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+    expect((await store.lots.get("91AAA111OR00001"))!.status).toBe("GENERATED");
+    await expect(store.batches.updateWhere({ code: "AAA111" }, { nextLot: 2 })).rejects.toThrow(/backwards/);
+    expect((await store.batches.findOne({ code: "AAA111" }))!.nextLot).toBe(5);
+  });
+
+  it("appendMovements appends every movement, in order, with ids and times", async () => {
+    const m = (itemCode: string) => ({ type: "PRINTED" as const, itemKind: "LOT" as const, itemCode, fromId: "MF0001", toId: "MF0001", fromStatus: "GENERATED" as const, toStatus: "PRINTED" as const, userId: "AD0001", deviceId: null, invoice: null, note: null });
+    await store.appendMovement({ ...m("first"), type: "GENERATED" });
+    const codes = Array.from({ length: 1234 }, (_, i) => `91AAA111OR${(i + 1).toString(16).toUpperCase().padStart(5, "0")}`);
+    const rows = await store.appendMovements(codes.map(m));
+    expect(rows).toHaveLength(1234);
+    expect(new Set(rows.map((r) => r.id)).size).toBe(1234);
+    const listed = await store.movements.list({ type: "PRINTED" });
+    expect(listed.map((r) => r.itemCode)).toEqual(codes);
+    expect(listed[0]).toEqual(rows[0]);
+    expect((await store.movements.list()).map((r) => r.itemCode)[0]).toBe("first");
+    expect(await store.appendMovements([])).toEqual([]);
+  });
+
   it("rolls back a failed transaction", async () => {
     await expect(
       store.transaction(async (tx) => {
@@ -270,12 +327,12 @@ describe.each(IMPLS)("Store contract: $name", (impl) => {
   it("keeps movements, scans and reprints apart, in order", async () => {
     await store.appendMovement({ type: "GENERATED", itemKind: "LOT", itemCode: "91AAA111OR00001", fromId: null, toId: "MF0001", fromStatus: null, toStatus: "GENERATED", userId: "AD0001", deviceId: null, invoice: null, note: null });
     await store.appendScan({ context: "RECEIVE", code: "91ZZZZZZOR00001", ok: false, result: "UNKNOWN_CODE", message: "Unknown", userId: "AD0001", partnerId: "SS0001", deviceId: null });
-    await store.reprints.append({ id: "r1", at: AT, code: "91AAA111OR0000161", itemKind: "PACK", reason: "torn", userId: "AD0001", deviceId: null });
+    await store.reprints.append({ id: "r1", at: AT, code: "91AAA111OR0000161", itemKind: "PACK", reason: "torn", userId: "AD0001", deviceId: null, printOrderId: null });
     await store.appendMovement({ type: "DISPATCHED", itemKind: "LOT", itemCode: "91AAA111OR00001", fromId: "MF0001", toId: "SS0001", fromStatus: "PACKED", toStatus: "IN_TRANSIT", userId: "AD0001", deviceId: null, invoice: "INV-1", note: null });
     expect((await store.movements.list()).map((m) => m.type)).toEqual(["GENERATED", "DISPATCHED"]);
     expect(await store.movements.list({ type: "DISPATCHED" })).toEqual([expect.objectContaining({ invoice: "INV-1", fromId: "MF0001", toId: "SS0001" })]);
     expect(await store.scans.list({ partnerId: "SS0001" })).toEqual([expect.objectContaining({ ok: false, result: "UNKNOWN_CODE", code: "91ZZZZZZOR00001" })]);
-    expect(await store.reprints.list()).toEqual([{ id: "r1", at: AT, code: "91AAA111OR0000161", itemKind: "PACK", reason: "torn", userId: "AD0001", deviceId: null }]);
+    expect(await store.reprints.list()).toEqual([{ id: "r1", at: AT, code: "91AAA111OR0000161", itemKind: "PACK", reason: "torn", userId: "AD0001", deviceId: null, printOrderId: null }]);
   });
 
   it("settings fall back to defaults and can be updated", async () => {
@@ -341,6 +398,25 @@ describe("PostgreSQL only: the schema guards the data", () => {
     expect(await sql(`SELECT DISTINCT synced FROM codes`)).toEqual([{ synced: false }]);
     await store.lots.update(l.id, { synced: true });
     expect(await sql(`SELECT DISTINCT synced FROM codes`)).toEqual([{ synced: true }]);
+    // The same through a bulk update (Sync): the lots' packs follow, other lots' packs do not.
+    const m = lot("91AAA111OR00003", { synced: false, deviceId: "dev-2" });
+    const n = lot("91AAA111OR00004", { synced: false, deviceId: "dev-3" });
+    await store.lots.createMany([m, n]);
+    await store.packs.createMany([...packs(m), ...packs(n)]);
+    await sql(`UPDATE codes SET synced = false WHERE lot_code = ANY($1::text[])`, [[m.lotCode, n.lotCode]]);
+    expect(await store.lots.updateWhere({ deviceId: "dev-2", synced: false }, { synced: true })).toEqual([m.id]);
+    expect(await sql(`SELECT lot_code, bool_and(synced) AS synced FROM codes WHERE lot_code = ANY($1::text[]) GROUP BY lot_code ORDER BY lot_code`, [[m.lotCode, n.lotCode]])).toEqual([
+      { lot_code: m.lotCode, synced: true },
+      { lot_code: n.lotCode, synced: false },
+    ]);
+  });
+
+  it("has the v4 indexes for the plant's queries", async () => {
+    const names = (await sql(`SELECT indexname FROM pg_indexes WHERE schemaname = current_schema()`)).map((r) => (r as { indexname: string }).indexname);
+    expect(names).toEqual(
+      expect.arrayContaining(["codes_manufacturer", "codes_device_unsynced", "print_orders_manufacturer", "print_orders_device_unsynced", "batches_manufacturer", "batches_device_unsynced", "batch_code_pool_device"]),
+    );
+    expect(await sql(`SELECT version FROM schema_info`)).toEqual([{ version: 4 }]);
   });
 
   it("refuses a code that doesn't match its parts", async () => {

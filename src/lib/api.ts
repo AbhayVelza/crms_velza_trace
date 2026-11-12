@@ -4,7 +4,7 @@
 
 import { connection } from "next/server";
 import { ZodError } from "zod";
-import { NotFoundError } from "@/lib/store";
+import { ConcurrentWriteError, IntegrityError, JsonStoreLockedError, NotFoundError } from "@/lib/store";
 import { clientIp, isCrossSiteWrite, LIMITS, logSecurityEvent, MAX_JSON_BYTES, RateLimiter } from "@/lib/security";
 import { devDefaultUserId, sessionUserId } from "@/lib/services/auth";
 import { badRequest, forbidden, ServiceError } from "@/lib/services/common";
@@ -120,6 +120,17 @@ export function errorResponse(e: unknown): Response {
   }
   if (e instanceof RangeError) {
     return Response.json({ error: { code: "OUT_OF_RANGE", message: e.message } } satisfies ApiError, { status: 400 });
+  }
+  if (e instanceof IntegrityError) {
+    console.warn(`[velza] integrity guard: ${e.message}`);
+    return Response.json({ error: { code: e.code, message: e.message } } satisfies ApiError, { status: 409 });
+  }
+  if (e instanceof ConcurrentWriteError) {
+    return Response.json({ error: { code: "CONCURRENT_WRITE", message: e.message } } satisfies ApiError, { status: 409 });
+  }
+  if (e instanceof JsonStoreLockedError) {
+    console.error(`[velza] ${e.message}`);
+    return Response.json({ error: { code: "STORE_LOCKED", message: "The data file is in use by another process — see the server log" } } satisfies ApiError, { status: 503 });
   }
   console.error(e);
   return Response.json({ error: { code: "INTERNAL", message: "Unexpected server error — see the server log" } } satisfies ApiError, { status: 500 });

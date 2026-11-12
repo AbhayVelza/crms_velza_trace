@@ -432,7 +432,7 @@ async function main() {
     const exp = new Date(Date.now() + 365 * 86400_000).toISOString().slice(0, 10);
     const orderBody = { batches: [ { flavour: "OR", mfgDate: today, expiryDate: exp, cases: 1, trays: 0 }, { flavour: "GA", mfgDate: today, expiryDate: exp, cases: 0, trays: 1 } ] };
     const preview = await op.post("/api/print-orders", { ...orderBody, preview: true });
-    const created = await op.post("/api/print-orders", orderBody);
+    const created = await op.post("/api/print-orders", { ...orderBody, idempotencyKey: crypto.randomUUID() });
     const po = j(created)?.printOrder;
     record("Traceability", "Operator creates a print order (1 case Original + 1 tray Green Apple)", preview.status === 200 && created.status === 200 && po?.stickerCount === 12, "12 stickers (1+4, 1+6)", `${created.status} ${po?.stickerCount}`);
     const codes = j(await op.get(`/api/print-orders/${po.id}/codes`)).codes as { code: string; codeType: string; lotType: string; lotCode: string; batchCode: string; status: string }[];

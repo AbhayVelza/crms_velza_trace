@@ -1,9 +1,10 @@
 // Dev-only demo helper: click-to-scan codes relevant to each screen, so the demo runs without a scanner.
 
+import type { Action } from "@/lib/core/permissions";
 import { DESTINATION_TYPES } from "@/lib/core/rules";
 import type { Lot, Pack } from "@/lib/core/types";
 import { getStore } from "@/lib/store";
-import { isVisible, loadActor, partnerName } from "./common";
+import { isVisible, loadActor, partnerName, requireAction } from "./common";
 
 export const DEMO_SCREENS = ["verify", "dispatch", "receive", "open", "damage", "reprint", "void", "search"] as const;
 export type DemoScreen = (typeof DEMO_SCREENS)[number];
@@ -15,9 +16,22 @@ export interface DemoCode {
 
 const FAKE: DemoCode = { code: "91ZZZZZZOR00001", label: "made-up code" };
 
+/** Each screen's codes are only listed to a role that may use that screen (they show real codes and statuses). */
+export const DEMO_SCREEN_ACTION: Record<DemoScreen, Action> = {
+  verify: "verify",
+  dispatch: "dispatch",
+  receive: "receive",
+  open: "openLot",
+  damage: "damage",
+  reprint: "reprint",
+  void: "void",
+  search: "search",
+};
+
 export async function demoCodes(userId: string | null, screen: DemoScreen, lotCode?: string): Promise<DemoCode[]> {
   const store = getStore();
   const actor = await loadActor(store, userId);
+  requireAction(actor, DEMO_SCREEN_ACTION[screen]);
   const me = actor.partner?.id ?? null;
   const [allLots, allPacks, partners] = await Promise.all([store.lots.list(), store.packs.list(), store.partners.list()]);
   const lots = allLots.filter((l) => isVisible(l, me)).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.lotNumber - b.lotNumber);

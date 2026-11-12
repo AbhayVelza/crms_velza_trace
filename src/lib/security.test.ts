@@ -24,8 +24,14 @@ describe("clientIp", () => {
     const headers = h({ "x-forwarded-for": "6.6.6.6", "cf-connecting-ip": "203.0.113.9" });
     expect(clientIp(headers, "cf-connecting-ip")).toBe("203.0.113.9");
     expect(clientIp(headers, undefined)).toBe("6.6.6.6");
-    expect(clientIp(h({ "x-forwarded-for": "1.1.1.1, 10.0.0.1" }), undefined)).toBe("1.1.1.1");
     expect(clientIp(h({}), undefined)).toBe("unknown");
+  });
+
+  it("without a trusted header, uses the nearest hop (rightmost X-Forwarded-For), not the client-supplied leftmost", () => {
+    expect(clientIp(h({ "x-forwarded-for": "1.1.1.1, 10.0.0.1" }), undefined)).toBe("10.0.0.1");
+    expect(clientIp(h({ "x-forwarded-for": "1.1.1.1, 10.0.0.1, " }), undefined)).toBe("10.0.0.1");
+    expect(clientIp(h({ "x-forwarded-for": "1.1.1.1, 10.0.0.1", "x-real-ip": "203.0.113.5" }), "x-real-ip")).toBe("203.0.113.5");
+    expect(clientIp(h({ "x-forwarded-for": "" }), undefined)).toBe("unknown");
   });
 });
 

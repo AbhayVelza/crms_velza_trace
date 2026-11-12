@@ -13,7 +13,7 @@
 // v4 (4 Nov 2026): indexes for the plant's queries (print order list, reprint list, unsynced counts and sync,
 // reserved pool codes). Indexes only (CREATE INDEX IF NOT EXISTS); no table, column or data change.
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 // Checks whose values changed in v2. Each is named explicitly — with the name PostgreSQL gave it in
 // v1 — so the upgrade can replace it, and is written once here for both CREATE TABLE and the upgrade.
@@ -144,7 +144,7 @@ CREATE TABLE IF NOT EXISTS batch_code_pool (
 
 CREATE TABLE IF NOT EXISTS batches (
   id               text PRIMARY KEY,
-  batch_code       text NOT NULL UNIQUE CHECK (batch_code ~ '^[A-Z0-9]{6}$'),
+  batch_code       text NOT NULL CHECK (batch_code ~ '^[A-Z0-9]{6}$'),
   country_code     text NOT NULL,
   flavour          text NOT NULL,
   mfg_date         date NOT NULL,
@@ -184,7 +184,7 @@ CREATE TABLE IF NOT EXISTS codes (
   code                  text PRIMARY KEY,
   code_type             text NOT NULL CHECK (code_type IN ('LOT', 'PACK')),
   country_code          text NOT NULL CHECK (country_code ~ '^[0-9]{2}$'),
-  batch_code            text NOT NULL REFERENCES batches (batch_code) DEFERRABLE INITIALLY DEFERRED,
+  batch_code            text NOT NULL,
   flavour               text NOT NULL CHECK (flavour ~ '^[A-Z]{2}$'),
   hex_code              text NOT NULL CHECK (hex_code ~ '^[0-9A-F]{5}$'),
   lot_type              text NOT NULL CHECK (lot_type IN ('CASE', 'TRAY')),
@@ -314,6 +314,23 @@ ALTER TABLE print_orders
   DROP CONSTRAINT IF EXISTS print_orders_order_kind_check,
   ADD CONSTRAINT print_orders_order_kind_check CHECK (order_kind IS NULL OR order_kind IN ('NEW_BATCH', 'CONTINUATION'));
 ALTER TABLE code_history ADD COLUMN IF NOT EXISTS print_order_id text;
+
+-- ============================================================ v5: one batch row per batch code + flavour
+-- A batch code can carry several flavours, each with its own dates and lot counter, so a batch row is unique
+-- per (batch code, flavour) and a code row references the row of its own flavour.
+ALTER TABLE codes DROP CONSTRAINT IF EXISTS codes_batch_code_fkey;
+ALTER TABLE batches DROP CONSTRAINT IF EXISTS batches_batch_code_key;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'batches_code_flavour_key') THEN
+    ALTER TABLE batches ADD CONSTRAINT batches_code_flavour_key UNIQUE (batch_code, flavour);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'codes_batch_flavour_fkey') THEN
+    ALTER TABLE codes ADD CONSTRAINT codes_batch_flavour_fkey FOREIGN KEY (batch_code, flavour)
+      REFERENCES batches (batch_code, flavour) DEFERRABLE INITIALLY DEFERRED;
+  END IF;
+END
+$$;
 
 CREATE OR REPLACE FUNCTION batches_counter_forward_only() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN

@@ -8,9 +8,13 @@ import type { Role } from "@/lib/core/types";
 import { getStore } from "@/lib/store";
 import { dispatch } from "@/lib/services/movement";
 import { reprint, voidLot } from "@/lib/services/operator";
-import { createPrintOrder, markPrinted } from "@/lib/services/printOrders";
+import { createPrintOrder as createPrintOrderRaw, markPrinted } from "@/lib/services/printOrders";
 import { verify } from "@/lib/services/verify";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
+import { withBatchCode } from "../fixtures/batchCodes";
+
+// The operator picks a batch code from Velza Admin's list: each test order gets a fresh one.
+const createPrintOrder = withBatchCode(createPrintOrderRaw);
 
 let dir: string;
 const ids: Record<string, string> = {};

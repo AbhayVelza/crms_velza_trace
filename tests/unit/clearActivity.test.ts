@@ -7,9 +7,13 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { getStore, storeKind } from "@/lib/store";
-import { createPrintOrder } from "@/lib/services/printOrders";
+import { createPrintOrder as createPrintOrderRaw } from "@/lib/services/printOrders";
 import { ambiguousTarget, runClearActivity, type ClearActivityOptions } from "../../scripts/clearActivityGuard";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
+import { withBatchCode } from "../fixtures/batchCodes";
+
+// The operator picks a batch code from Velza Admin's list: each test order gets a fresh one.
+const createPrintOrder = withBatchCode(createPrintOrderRaw);
 
 const isJson = storeKind() === "json";
 let dir: string;

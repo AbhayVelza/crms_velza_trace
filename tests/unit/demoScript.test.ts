@@ -9,9 +9,13 @@ import { getStore } from "@/lib/store";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
 import { dispatch, openLot, receive } from "@/lib/services/movement";
 import { reprint, setDeviceOffline, sync, voidLot } from "@/lib/services/operator";
-import { createPrintOrder, markPrinted, serveReprint, stickersForOrder } from "@/lib/services/printOrders";
+import { createPrintOrder as createPrintOrderRaw, markPrinted, serveReprint, stickersForOrder } from "@/lib/services/printOrders";
 import { alerts, dashboard, lookup, myStock, publicLookup, recall } from "@/lib/services/trace";
 import { verify } from "@/lib/services/verify";
+import { withBatchCode } from "../fixtures/batchCodes";
+
+// The operator picks a batch code from Velza Admin's list: each test order gets a fresh one.
+const createPrintOrder = withBatchCode(createPrintOrderRaw);
 
 let dir: string;
 const ids: Record<string, string> = {};
@@ -76,24 +80,29 @@ describe("demo script 9.1", () => {
     expect(preview.plan.batches.map((b) => b.stickerCount)).toEqual([17, 7]);
     expect(preview.plan.totalStickers).toBe(24);
 
-    const created = await createPrintOrder(ids.operator, { idempotencyKey: crypto.randomUUID(), batches });
-    if (created.preview) throw new Error("expected created order");
+    // Original and Green Apple are created under their own batch codes here, so the recall in step 7 can take
+    // Green Apple alone (a recall covers every flavour of a batch code).
+    const created = await createPrintOrder(ids.operator, { idempotencyKey: crypto.randomUUID(), batches: [batches[0]] });
+    const createdGa = await createPrintOrder(ids.operator, { idempotencyKey: crypto.randomUUID(), batches: [batches[1]] });
+    if (created.preview || createdGa.preview) throw new Error("expected created orders");
     orderId = created.printOrder.id;
-    [orig, ga] = created.printOrder.batchCodes;
-    expect(created.printOrder.batchCodes).toEqual(preview.plan.batches.map((b) => b.batchCode));
-    lots = created.printOrder.lotCodes;
+    [orig] = created.printOrder.batchCodes;
+    [ga] = createdGa.printOrder.batchCodes;
+    lots = [...created.printOrder.lotCodes, ...createdGa.printOrder.lotCodes];
     expect(lots).toEqual([`91${orig}OR00001`, `91${orig}OR00002`, `91${orig}OR00003`, `91${ga}GA00001`]);
-    expect(created.printOrder.stickerCount).toBe(24);
+    expect(created.printOrder.stickerCount + createdGa.printOrder.stickerCount).toBe(24);
 
     const sheet = await stickersForOrder(ids.operator, orderId);
-    expect(sheet.stickers).toHaveLength(24);
+    expect(sheet.stickers).toHaveLength(17);
     expect(sheet.stickers[0]).toMatchObject({ kind: "LOT", header: "CASE | ORIGINAL | 4 x 6 = 24 CANS" });
     expect(sheet.stickers[1]).toMatchObject({ kind: "PACK", header: "PACK 1 of 4 | 6 CANS", code: `91${orig}OR0000161` });
-    expect(sheet.stickers[17]).toMatchObject({ kind: "LOT", header: "TRAY | GREEN APPLE | 6 x 4 = 24 CANS" });
+    const gaSheet = await stickersForOrder(ids.operator, createdGa.printOrder.id);
+    expect(gaSheet.stickers[0]).toMatchObject({ kind: "LOT", header: "TRAY | GREEN APPLE | 6 x 4 = 24 CANS" });
 
     // Not printed yet → cannot verify
     expect(await verify(ids.qc, { action: "scanLot", code: lots[0] })).toMatchObject({ ok: false, code: "NOT_PRINTED" });
-    expect((await markPrinted(ids.operator, orderId)).lotsPrinted).toBe(4);
+    expect((await markPrinted(ids.operator, orderId)).lotsPrinted).toBe(3);
+    expect((await markPrinted(ids.operator, createdGa.printOrder.id)).lotsPrinted).toBe(1);
   });
 
   it("2. supervisor verifies every lot; a pack from another lot is rejected", async () => {
@@ -195,12 +204,13 @@ describe("demo script 9.1", () => {
   it("8. device offline: create + verify a batch, dispatch blocked; sync → dispatch works", async () => {
     const device = (await store().devices.list())[0];
     await setDeviceOffline(ids.operator, device.id, { offline: true });
-    const poolBefore = (await store().batchCodePool.list({ status: "RESERVED" })).length;
+    const devicePool = async () => (await store().batchCodePool.list({ status: "RESERVED" })).filter((p) => p.deviceId !== "").length;
+    const poolBefore = await devicePool();
     const created = await createPrintOrder(ids.operator, { idempotencyKey: crypto.randomUUID(), batches: [{ flavour: "NS", mfgDate: today, expiryDate: expiry, cases: 1, trays: 0 }] });
     if (created.preview) throw new Error("expected order");
     const lot = created.printOrder.lotCodes[0];
     expect(created.printOrder.synced).toBe(false);
-    expect((await store().batchCodePool.list({ status: "RESERVED" })).length).toBe(poolBefore - 1); // no refill offline
+    expect(await devicePool()).toBe(poolBefore); // device pools are not used any more (batch codes come from Velza Admin's list)
     await markPrinted(ids.operator, created.printOrder.id);
     expect(await verifyLot(ids.qc, lot)).toMatchObject({ ok: true });
 

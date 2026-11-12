@@ -46,8 +46,15 @@ export interface PrintOrderPlan {
 export interface PlanInput {
   batches: BatchInput[];
   country: string;
-  /** RESERVED pool codes for the device, in issue order. */
+  /** RESERVED pool codes for the device, in issue order (automatic codes; not used while `batchCode` is given). */
   poolCodes: string[];
+  /**
+   * The batch code the operator picked from Velza Admin's list: every line of the order is one flavour of this
+   * batch. `null` = not picked yet. Leave undefined for the old one-pool-code-per-batch planning.
+   */
+  batchCode?: string | null;
+  /** Flavours this batch code already has (each flavour of a batch is created once; add lots with Continue). */
+  takenFlavours?: string[];
   /** Active flavour codes. */
   flavours: string[];
   maxBatches?: number;
@@ -75,13 +82,16 @@ function isValidDate(s: string): boolean {
 const addDays = (iso: string, days: number) => new Date(Date.parse(`${iso}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
 const addYears = (iso: string, years: number) => `${String(Number(iso.slice(0, 4)) + years).padStart(4, "0")}${iso.slice(4)}`;
 
-export function planPrintOrder({ batches, country, poolCodes, flavours, maxBatches = 20, maxLotsPerOrder, maxLotsNote = "", today }: PlanInput): PrintOrderPlan {
+export function planPrintOrder({ batches, country, poolCodes, batchCode: chosenCode, takenFlavours = [], flavours, maxBatches = 20, maxLotsPerOrder, maxLotsNote = "", today }: PlanInput): PrintOrderPlan {
   const errors: PlanError[] = [];
-  if (batches.length === 0) errors.push({ batchIndex: null, field: "batches", message: "Create at least one batch" });
+  const manual = chosenCode !== undefined;
+  if (batches.length === 0) errors.push({ batchIndex: null, field: "batches", message: manual ? "Add at least one flavour" : "Create at least one batch" });
   if (batches.length > maxBatches) {
-    errors.push({ batchIndex: null, field: "batches", message: `At most ${maxBatches} batches per print order` });
+    errors.push({ batchIndex: null, field: "batches", message: `At most ${maxBatches} ${manual ? "flavours" : "batches"} per print order` });
   }
-  if (poolCodes.length === 0 && batches.length > 0) {
+  if (manual) {
+    if (!chosenCode) errors.push({ batchIndex: null, field: "batchCode", message: "Choose a batch code" });
+  } else if (poolCodes.length === 0 && batches.length > 0) {
     errors.push({ batchIndex: null, field: "batchCode", message: "Batch code pool is empty — ask Velza Admin to issue codes" });
   } else if (poolCodes.length < batches.length) {
     errors.push({
@@ -104,8 +114,13 @@ export function planPrintOrder({ batches, country, poolCodes, flavours, maxBatch
   }
 
   const planned: PlannedBatch[] = batches.map((b, i) => {
-    const label = `Batch ${i + 1}`;
+    const label = manual ? `Flavour ${i + 1}` : `Batch ${i + 1}`;
     if (!flavours.includes(b.flavour)) errors.push({ batchIndex: i, field: "flavour", message: `${label}: choose a flavour` });
+    else if (manual && batches.findIndex((o) => o.flavour === b.flavour) !== i) {
+      errors.push({ batchIndex: i, field: "flavour", message: `${label}: ${b.flavour} is already in this order — one line per flavour` });
+    } else if (manual && chosenCode && takenFlavours.includes(b.flavour)) {
+      errors.push({ batchIndex: i, field: "flavour", message: `${label}: batch ${chosenCode} already has ${b.flavour} — add its lots with "Continue an existing batch"` });
+    }
     const mfgOk = isValidDate(b.mfgDate);
     const expOk = isValidDate(b.expiryDate);
     if (!mfgOk) errors.push({ batchIndex: i, field: "mfgDate", message: `${label}: manufacture date is missing or invalid` });
@@ -126,7 +141,7 @@ export function planPrintOrder({ batches, country, poolCodes, flavours, maxBatch
       errors.push({ batchIndex: i, field: "cases", message: `${label}: at most ${LOT_NUMBER_MAX} lots per batch` });
     }
 
-    const batchCode = poolCodes[i] ?? null;
+    const batchCode = manual ? (chosenCode ?? null) : (poolCodes[i] ?? null);
     let lots: AllocatedLot[] = [];
     const allocatable = countsOk && b.cases + b.trays > 0 && b.cases + b.trays <= LOT_NUMBER_MAX && flavours.includes(b.flavour);
     // Over the lot cap nothing is allocated, not even for the preview (ranges are worked out from the counts).

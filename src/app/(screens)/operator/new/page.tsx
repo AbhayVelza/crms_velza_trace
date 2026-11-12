@@ -18,7 +18,7 @@ import type { PrintOrder } from "@/lib/core/types";
 import { notifyDataChanged } from "@/lib/events";
 import { countLabel, lotRangeLabel } from "@/lib/format";
 
-const STEPS = ["How many batches?", "Flavour", "Dates", "Cases", "Trays", "Summary", "Print"] as const;
+const STEPS = ["Batch code", "Flavour", "Dates", "Cases", "Trays", "Summary", "Print"] as const;
 
 function isoDate(d: Date) {
   return d.toISOString().slice(0, 10);
@@ -128,6 +128,10 @@ function NewBatchesWizard() {
   // One request key per exact order: a retry of the same batches reuses it (the server returns the order it
   // already saved instead of allocating again); changed batches get a new key.
   const [request, setRequest] = useState<{ key: string; body: string } | null>(null);
+  // Batch codes come from Velza Admin's list; one batch code carries several flavours, each with its own lots.
+  const codes = useApi<{ codes: { code: string; flavours: string[] }[] }>("/api/print-orders/batch-codes", { refreshOnChange: true });
+  const [batchCode, setBatchCode] = useState("");
+  const takenFlavours = codes.data?.codes.find((c) => c.code === batchCode)?.flavours ?? [];
 
   const flavours = (data?.flavours ?? []).filter((f) => f.active);
   const update = (i: number, patch: Partial<BatchInput>) => setBatches((bs) => bs.map((b, j) => (j === i ? { ...b, ...patch } : b)));
@@ -136,7 +140,7 @@ function NewBatchesWizard() {
     setBusy(true);
     setError(null);
     try {
-      const r = await api<{ plan: PrintOrderPlanSummary; device: { offline: boolean }; maxLotsPerOrder: number }>("/api/print-orders", { body: { batches, preview: true, deviceId: thisPcId() } });
+      const r = await api<{ plan: PrintOrderPlanSummary; device: { offline: boolean }; maxLotsPerOrder: number }>("/api/print-orders", { body: { batchCode: batchCode || null, batches, preview: true, deviceId: thisPcId() } });
       setPlan(r.plan);
       setMaxLots(r.maxLotsPerOrder);
       setOffline(r.device.offline);
@@ -150,11 +154,13 @@ function NewBatchesWizard() {
   async function next() {
     setError(null);
     if (step === 0) {
+      if (!batchCode) return setError("Choose a batch code");
       const n = Math.floor(count);
-      if (!(n >= 1 && n <= 20)) return setError("Enter between 1 and 20 batches");
+      if (!(n >= 1 && n <= 20)) return setError("Enter between 1 and 20 flavours");
       setBatches((bs) => Array.from({ length: n }, (_, i) => bs[i] ?? newBatch()));
     }
-    if (step === 1 && batches.some((b) => !b.flavour)) return setError("Choose a flavour for every batch");
+    if (step === 1 && batches.some((b) => !b.flavour)) return setError("Choose a flavour for every line");
+    if (step === 1 && new Set(batches.map((b) => b.flavour)).size !== batches.length) return setError("Each flavour once: choose a different flavour for every line");
     if (step === 4) await loadPreview();
     setStep((s) => Math.min(s + 1, STEPS.length - 1));
   }
@@ -163,10 +169,10 @@ function NewBatchesWizard() {
     setBusy(true);
     setError(null);
     try {
-      const body = JSON.stringify(batches);
+      const body = JSON.stringify({ batchCode, batches });
       const idempotencyKey = request?.body === body ? request.key : crypto.randomUUID();
       setRequest({ key: idempotencyKey, body });
-      const r = await api<{ printOrder: PrintOrder }>("/api/print-orders", { body: { batches, idempotencyKey, deviceId: thisPcId() } });
+      const r = await api<{ printOrder: PrintOrder }>("/api/print-orders", { body: { batchCode, batches, idempotencyKey, deviceId: thisPcId() } });
       setCreated(r.printOrder);
       notifyDataChanged();
       setStep(6);
@@ -182,6 +188,7 @@ function NewBatchesWizard() {
     setRequest(null);
     setStep(0);
     setCount(1);
+    setBatchCode("");
     setBatches([newBatch()]);
     setPlan(null);
     setCreated(null);
@@ -193,7 +200,7 @@ function NewBatchesWizard() {
       {batches.map((b, i) => (
         <div key={i} className="rounded-md border border-line bg-surface-2 p-3 sm:p-4">
           <div className="mb-2.5 text-sm font-bold text-foreground">
-            Batch {i + 1}
+            {batchCode} · Flavour {i + 1}
             {b.flavour && <span className="font-normal text-muted-foreground"> · {flavourName(b.flavour)}</span>}
           </div>
           {render(b, i)}
@@ -208,9 +215,37 @@ function NewBatchesWizard() {
 
       <Card>
         {step === 0 && (
-          <Field label="How many batches do you want to create?" hint="One batch = one flavour with one manufacture date; it gets its own random batch code.">
-            <CountInput label="Number of batches" value={count} onChange={setCount} />
-          </Field>
+          <div className="space-y-4">
+            <Field label="Batch code" hint="Batch codes are created by Velza Admin. One batch code can carry several flavours.">
+              {codes.error ? (
+                <Notice tone="error">{codes.error}</Notice>
+              ) : !codes.data ? (
+                <Loading>Loading batch codes…</Loading>
+              ) : !codes.data.codes.length ? (
+                <Notice tone="warn">No batch codes yet — ask Velza Admin to add one under Batch codes.</Notice>
+              ) : (
+                <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Batch code">
+                  {codes.data.codes.map((c) => (
+                    <button
+                      key={c.code}
+                      type="button"
+                      role="radio"
+                      aria-checked={batchCode === c.code}
+                      data-testid={`batch-code-${c.code}`}
+                      onClick={() => setBatchCode(c.code)}
+                      className={batchCode === c.code ? "inline-flex min-h-10 items-center gap-2 rounded-full border-2 border-primary bg-primary px-4 font-mono font-semibold text-primary-foreground" : "inline-flex min-h-10 items-center gap-2 rounded-full border border-line-strong bg-surface px-4 font-mono text-foreground-2 hover:border-foreground hover:text-foreground"}
+                    >
+                      {c.code}
+                      {c.flavours.length > 0 && <span className="font-sans text-xs opacity-70">has {c.flavours.join(", ")}</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </Field>
+            <Field label="How many flavours in this batch?" hint="Each flavour gets its own manufacture and expiry dates, cases and trays, and its own lot numbers from 00001.">
+              <CountInput label="Number of flavours" value={count} onChange={setCount} />
+            </Field>
+          </div>
         )}
 
         {step === 1 && (
@@ -224,6 +259,8 @@ function NewBatchesWizard() {
                     type="button"
                     onClick={() => update(i, { flavour: f.code })}
                     aria-pressed={b.flavour === f.code}
+                    disabled={takenFlavours.includes(f.code)}
+                    title={takenFlavours.includes(f.code) ? `${batchCode} already has ${f.name} — add lots with Continue an existing batch` : undefined}
                     className={b.flavour === f.code ? "inline-flex min-h-10 items-center gap-2 rounded-full border-2 border-primary bg-primary px-4 font-semibold text-primary-foreground transition-colors duration-150 [&_span]:text-primary-foreground/70" : "inline-flex min-h-10 items-center gap-2 rounded-full border border-line-strong bg-surface px-4 text-foreground-2 transition-colors duration-150 hover:border-foreground hover:text-foreground"}
                   >
                     {f.name} <span className="font-mono text-xs text-muted-foreground">{f.code}</span>
@@ -240,10 +277,10 @@ function NewBatchesWizard() {
             {perBatch((b, i) => (
               <div className="grid gap-3 sm:grid-cols-2">
                 <Field label="Manufacture date">
-                  <Input type="date" aria-label={`Batch ${i + 1} manufacture date`} value={b.mfgDate} onChange={(e) => update(i, { mfgDate: e.target.value })} />
+                  <Input type="date" aria-label={`Flavour ${i + 1} manufacture date`} value={b.mfgDate} onChange={(e) => update(i, { mfgDate: e.target.value })} />
                 </Field>
                 <Field label="Expiry date">
-                  <Input type="date" aria-label={`Batch ${i + 1} expiry date`} value={b.expiryDate} onChange={(e) => update(i, { expiryDate: e.target.value })} />
+                  <Input type="date" aria-label={`Flavour ${i + 1} expiry date`} value={b.expiryDate} onChange={(e) => update(i, { expiryDate: e.target.value })} />
                 </Field>
               </div>
             ))}
@@ -254,7 +291,7 @@ function NewBatchesWizard() {
           <>
             <h2 className="mb-3 font-bold text-foreground">How many Cases (4 packs × 6 cans)?</h2>
             {perBatch((b, i) => (
-              <CountInput label={`Batch ${i + 1} cases`} value={b.cases} onChange={(n) => update(i, { cases: n })} />
+              <CountInput label={`Flavour ${i + 1} cases`} value={b.cases} onChange={(n) => update(i, { cases: n })} />
             ))}
           </>
         )}
@@ -263,7 +300,7 @@ function NewBatchesWizard() {
           <>
             <h2 className="mb-3 font-bold text-foreground">How many Trays (6 packs × 4 cans)?</h2>
             {perBatch((b, i) => (
-              <CountInput label={`Batch ${i + 1} trays`} value={b.trays} onChange={(n) => update(i, { trays: n })} />
+              <CountInput label={`Flavour ${i + 1} trays`} value={b.trays} onChange={(n) => update(i, { trays: n })} />
             ))}
           </>
         )}
@@ -273,17 +310,18 @@ function NewBatchesWizard() {
             <h2 className="mb-3 font-bold text-foreground">Summary</h2>
             {offline && (
               <Notice tone="warn" className="mb-3">
-                Device is offline: batch codes come from the reserved pool and the order will be saved unsynced (it can be printed and verified, but not dispatched until synced).
+                Device is offline: the order will be saved unsynced (it can be printed and verified, but not dispatched until synced).
               </Notice>
             )}
             {plan ? (
               <>
-                <Table head={["Batch", "Batch code", "Flavour", "Dates", "Cases", "Trays", "Lots (hex)", "Stickers"]}>
+                <Table head={["Flavour", "Batch code", "Dates", "Cases", "Trays", "Lot range", "Stickers"]}>
                   {plan.batches.map((b) => (
                     <tr key={b.index} data-testid={`summary-batch-${b.index + 1}`}>
-                      <Td>{b.index + 1}</Td>
+                      <Td>
+                        {flavourName(b.flavour) || "—"} <span className="font-mono text-xs text-muted-foreground">{b.flavour}</span>
+                      </Td>
                       <Td>{b.batchCode ? <Code>{b.batchCode}</Code> : <span className="text-danger">none</span>}</Td>
-                      <Td>{flavourName(b.flavour) || "—"}</Td>
                       <Td className="whitespace-nowrap text-xs">
                         {b.mfgDate} → {b.expiryDate}
                       </Td>
@@ -295,7 +333,9 @@ function NewBatchesWizard() {
                         {b.trays}
                         {b.trayRange && <div className="font-mono text-xs text-muted-foreground">{b.trayRange.join("–")}</div>}
                       </Td>
-                      <Td>{b.lotRange ? <Code>{b.lotRange[0] === b.lotRange[1] ? b.lotRange[0] : b.lotRange.join("–")}</Code> : "—"}</Td>
+                      <Td data-testid={`summary-range-${b.flavour}`}>
+                        {b.firstLotCode && b.lastLotCode ? <Code>{b.firstLotCode === b.lastLotCode ? b.firstLotCode : `${b.firstLotCode}–${b.lastLotCode.slice(10)}`}</Code> : "—"}
+                      </Td>
                       <Td>
                         <span data-testid={`summary-stickers-${b.index + 1}`}>{b.stickerCount}</span>
                         <div className="text-xs text-muted-foreground">
@@ -306,7 +346,6 @@ function NewBatchesWizard() {
                   ))}
                   <tr className="bg-surface-2 font-semibold">
                     <Td>Total</Td>
-                    <Td />
                     <Td />
                     <Td />
                     <Td>{plan.batches.reduce((s, b) => s + (b.cases || 0), 0)}</Td>
@@ -441,6 +480,7 @@ function ContinueBatchWizard() {
   const router = useRouter();
   const list = useApi<{ maxLotsPerOrder: number; batches: ContinuableBatch[] }>("/api/print-orders/continue", { refreshOnChange: true });
   const [step, setStep] = useState(0);
+  // The chosen batch row: batch code + flavour (8 characters), since each flavour of a batch has its own lot counter.
   const [batchCode, setBatchCode] = useState<string | null>(null);
   const [cases, setCases] = useState(0);
   const [trays, setTrays] = useState(0);
@@ -450,7 +490,8 @@ function ContinueBatchWizard() {
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<ContinueResult | null>(null);
 
-  const selected = list.data?.batches.find((b) => b.batchCode === batchCode) ?? null;
+  const selected = list.data?.batches.find((b) => b.batchCode + b.flavour === batchCode) ?? null;
+  const target = batchCode ? { batchCode: batchCode.slice(0, 6), flavour: batchCode.slice(6) } : null;
   // A different request needs a different key; the same request keeps its key across retries.
   const choose = (code: string) => {
     setBatchCode(code);
@@ -466,7 +507,7 @@ function ContinueBatchWizard() {
     setBusy(true);
     setError(null);
     try {
-      setPreview(await api<ContinuePreview>("/api/print-orders/continue", { body: { batchCode, cases, trays, preview: true, deviceId: thisPcId() } }));
+      setPreview(await api<ContinuePreview>("/api/print-orders/continue", { body: { ...target, cases, trays, preview: true, deviceId: thisPcId() } }));
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -493,7 +534,7 @@ function ContinueBatchWizard() {
     setBusy(true);
     setError(null);
     try {
-      const r = await api<ContinueResult>("/api/print-orders/continue", { body: { batchCode, cases, trays, idempotencyKey, deviceId: thisPcId() } });
+      const r = await api<ContinueResult>("/api/print-orders/continue", { body: { ...target, cases, trays, idempotencyKey, deviceId: thisPcId() } });
       setCreated(r);
       notifyDataChanged();
       setStep(3);
@@ -537,14 +578,14 @@ function ContinueBatchWizard() {
               >
                 {list.data.batches.map((b) => (
                   <tr
-                    key={b.batchCode}
-                    data-testid={`continue-batch-${b.batchCode}`}
+                    key={b.batchCode + b.flavour}
+                    data-testid={`continue-batch-${b.batchCode}-${b.flavour}`}
                     // The whole row selects the batch, not only the small radio (keyboard users still use the radio).
-                    onClick={() => b.continuable && batchCode !== b.batchCode && choose(b.batchCode)}
-                    className={cx(b.continuable ? "cursor-pointer hover:bg-surface-2" : "opacity-60", batchCode === b.batchCode && "bg-muted")}
+                    onClick={() => b.continuable && batchCode !== b.batchCode + b.flavour && choose(b.batchCode + b.flavour)}
+                    className={cx(b.continuable ? "cursor-pointer hover:bg-surface-2" : "opacity-60", batchCode === b.batchCode + b.flavour && "bg-muted")}
                   >
                     <Td>
-                      <input type="radio" name="continue-batch" aria-label={`Batch ${b.batchCode}`} className="h-4 w-4 cursor-pointer" checked={batchCode === b.batchCode} disabled={!b.continuable} onChange={() => choose(b.batchCode)} />
+                      <input type="radio" name="continue-batch" aria-label={`Batch ${b.batchCode} ${b.flavour}`} className="h-4 w-4 cursor-pointer" checked={batchCode === b.batchCode + b.flavour} disabled={!b.continuable} onChange={() => choose(b.batchCode + b.flavour)} />
                     </Td>
                     <Td>
                       <Code>{b.batchCode}</Code>

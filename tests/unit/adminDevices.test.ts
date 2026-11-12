@@ -8,8 +8,12 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getStore } from "@/lib/store";
 import { createEntity, deleteEntity, issuePoolCodes, registerPartner, updateEntity } from "@/lib/services/admin";
-import { createPrintOrder } from "@/lib/services/printOrders";
+import { createPrintOrder as createPrintOrderRaw } from "@/lib/services/printOrders";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
+import { withBatchCode } from "../fixtures/batchCodes";
+
+// The operator picks a batch code from Velza Admin's list: each test order gets a fresh one.
+const createPrintOrder = withBatchCode(createPrintOrderRaw);
 
 let dir: string;
 const store = () => getStore();
@@ -71,14 +75,14 @@ describe("device names", () => {
 });
 
 describe("deleting a device", () => {
-  it("returns its unused (RESERVED) pool codes; nothing is orphaned or reassigned", async () => {
+  it("a new device gets no automatic pool codes (switched off); deleting it orphans or reassigns nothing", async () => {
     const d = await addDevice(MF2, "Spare PC");
-    expect(await poolOf(d.id)).toEqual(Array(10).fill("RESERVED"));
+    expect(await poolOf(d.id)).toEqual([]);
     const otherDevices = await store().devices.list({ manufacturerId: MF2 });
     const otherBefore = await Promise.all(otherDevices.filter((x) => x.id !== d.id).map((x) => poolOf(x.id)));
     expect(await deleteEntity(ADMIN, "devices", d.id)).toMatchObject({ ok: true, message: "Deleted Spare PC" });
     expect(await store().devices.get(d.id)).toBeNull();
-    expect(await poolOf(d.id)).toEqual(Array(10).fill("RETURNED"));
+    expect(await poolOf(d.id)).toEqual([]);
     const otherAfter = await Promise.all(otherDevices.filter((x) => x.id !== d.id).map((x) => poolOf(x.id)));
     expect(otherAfter).toEqual(otherBefore);
   });
@@ -88,7 +92,6 @@ describe("deleting a device", () => {
     const operator = (await store().users.list({ role: "OPERATOR", partnerId: MF1 }))[0].id;
     await createPrintOrder(operator, { idempotencyKey: crypto.randomUUID(), deviceId: plantPc.id, batches: [{ flavour: "OR", mfgDate: "2026-10-01", expiryDate: "2027-10-01", cases: 1, trays: 0 }] });
     const before = (await store().batchCodePool.list({ deviceId: plantPc.id })).map((p) => `${p.code}:${p.status}`).sort();
-    expect(before.some((x) => x.endsWith(":USED"))).toBe(true);
     await expect(deleteEntity(ADMIN, "devices", plantPc.id)).rejects.toMatchObject({ code: "IN_USE" });
     expect(await store().devices.get(plantPc.id)).not.toBeNull();
     expect((await store().batchCodePool.list({ deviceId: plantPc.id })).map((p) => `${p.code}:${p.status}`).sort()).toEqual(before);
@@ -106,7 +109,7 @@ describe("a device stays with its plant (REF-17)", () => {
   it("moving a device to another plant is refused and its pool codes are untouched; renaming and Offline still work", async () => {
     const d = await addDevice(MF1, "Stay Put PC");
     const before = (await store().batchCodePool.list({ deviceId: d.id })).map((p) => `${p.code}:${p.status}`).sort();
-    expect(before.length).toBeGreaterThan(0);
+    expect(before).toEqual([]); // automatic pool codes are switched off
     await expect(updateEntity(ADMIN, "devices", d.id, { manufacturerId: MF2 })).rejects.toMatchObject({ status: 400, code: "PLANT_LOCKED" });
     expect((await store().devices.get(d.id))!.manufacturerId).toBe(MF1);
     expect((await store().batchCodePool.list({ deviceId: d.id })).map((p) => `${p.code}:${p.status}`).sort()).toEqual(before);
@@ -117,7 +120,7 @@ describe("a device stays with its plant (REF-17)", () => {
 });
 
 describe("an inactive plant", () => {
-  it("gets no new devices and no new pool codes; once active again it does", async () => {
+  it("gets no new devices and no new pool codes; once active again it gets devices (automatic codes stay off)", async () => {
     const d = await addDevice(MF2, "Before Pause PC");
     await updateEntity(ADMIN, "partners", MF2, { active: false });
     await expect(addDevice(MF2, "During Pause PC")).rejects.toMatchObject({ code: "BAD_PARTNER", message: expect.stringMatching(/is inactive/) });
@@ -128,7 +131,7 @@ describe("an inactive plant", () => {
     await expect(updateEntity(ADMIN, "devices", d.id, { offline: true })).resolves.toMatchObject({ offline: true });
     await updateEntity(ADMIN, "partners", MF2, { active: true });
     await updateEntity(ADMIN, "devices", d.id, { offline: false });
-    await expect(issuePoolCodes(ADMIN, d.id, 5)).resolves.toMatchObject({ issued: expect.anything() });
+    await expect(issuePoolCodes(ADMIN, d.id, 5)).rejects.toMatchObject({ status: 410, code: "AUTO_CODES_OFF" });
     await expect(addDevice(MF2, "During Pause PC")).resolves.toMatchObject({ manufacturerId: MF2 });
   });
 });

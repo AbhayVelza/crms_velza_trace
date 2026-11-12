@@ -20,7 +20,7 @@ export const MENU: Record<Role, MenuItem[]> = {
     { href: "/admin/users", label: "Sign-ins & passwords", description: "Sign-in IDs, new passwords, Velza staff sign-ins" },
     { href: "/admin/devices", label: "Devices", description: "Manufacturer PCs that generate codes" },
     { href: "/admin/reference", label: "Countries & flavours", description: "Code lists used inside every code" },
-    { href: "/admin/pools", label: "Batch code pools", description: "Issue random batch codes to devices" },
+    { href: "/admin/pools", label: "Batch codes", description: "Create, edit and delete batch codes" },
     { href: "/admin/settings", label: "Settings", description: "Alert threshold, sticker sizes, public URL" },
   ],
   OPERATOR: [

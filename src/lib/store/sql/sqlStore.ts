@@ -61,14 +61,15 @@ const parts = (code: string) => ({
 async function batchInfo(q: Query, batchCodes: string[]) {
   const unique = [...new Set(batchCodes)];
   const rows = unique.length
-    ? await q<{ batch_code: string; mfg_date: string; expiry_date: string; manufacturer_id: string; device_id: string; print_order_id: string; synced: boolean; created_by: string }>(
-        `SELECT batch_code, to_char(mfg_date, 'YYYY-MM-DD') AS mfg_date, to_char(expiry_date, 'YYYY-MM-DD') AS expiry_date,
+    ? await q<{ batch_code: string; flavour: string; mfg_date: string; expiry_date: string; manufacturer_id: string; device_id: string; print_order_id: string; synced: boolean; created_by: string }>(
+        `SELECT batch_code, flavour, to_char(mfg_date, 'YYYY-MM-DD') AS mfg_date, to_char(expiry_date, 'YYYY-MM-DD') AS expiry_date,
                 manufacturer_id, device_id, print_order_id, synced, created_by
            FROM batches WHERE batch_code = ANY($1::text[])`,
         [unique],
       )
     : [];
-  return new Map(rows.map((r) => [r.batch_code, r]));
+  // Keyed by batch code + flavour: one batch row per flavour, each with its own dates.
+  return new Map(rows.map((r) => [`${r.batch_code}${r.flavour}`, r]));
 }
 
 const LOT_COLS = T(
@@ -219,7 +220,7 @@ const SPECS = {
     async derive(rows, q) {
       const info = await batchInfo(q, rows.map((r) => String(r.batchCode)));
       return rows.map((r) => {
-        const b = info.get(String(r.batchCode));
+        const b = info.get(`${String(r.batchCode)}${String(r.flavour)}`);
         const code = String(r.lotCode ?? r.id);
         const { country_code, hex_code } = parts(code);
         return { country_code, hex_code, lot_code: code, pack_sequence: null, mfg_date: b?.mfg_date ?? null, expiry_date: b?.expiry_date ?? null, generated_by: b?.created_by ?? null };
@@ -237,7 +238,7 @@ const SPECS = {
       return rows.map((r) => {
         const code = String(r.packCode ?? r.id);
         const p = parts(code);
-        const b = info.get(p.batch_code);
+        const b = info.get(`${p.batch_code}${p.flavour}`);
         return {
           ...p,
           lot_type: Number(r.packSize) === 6 ? "CASE" : "TRAY",
@@ -496,14 +497,17 @@ function makeTx(q: Query): StoreTx {
     async appendScan(s: NewScan) {
       return tx.scans.append({ ...s, id: crypto.randomUUID(), at: s.at ?? new Date().toISOString() });
     },
-    async nextLotNumber(batchCode, count) {
+    async nextLotNumber(batchCode, count, flavour) {
       if (!Number.isInteger(count) || count < 1) throw new RangeError(`count must be ≥ 1 (got ${count})`);
+      // The counter is per batch code + flavour (one row each); without a flavour the batch must have one row.
       const rows = await q<{ first: number }>(
-        `UPDATE batches SET next_lot = next_lot + $2 WHERE batch_code = $1 AND next_lot + $2 - 1 <= $3 RETURNING next_lot - $2 AS first`,
-        [batchCode, count, LOT_NUMBER_MAX],
+        `UPDATE batches SET next_lot = next_lot + $2
+          WHERE batch_code = $1 AND ($4::text IS NULL OR flavour = $4) AND next_lot + $2 - 1 <= $3 RETURNING next_lot - $2 AS first`,
+        [batchCode, count, LOT_NUMBER_MAX, flavour ?? null],
       );
+      if (rows.length > 1) throw new RangeError(`Batch ${batchCode} has several flavours — name the flavour`);
       if (rows.length) return Number(rows[0].first);
-      if (!(await q(`SELECT 1 FROM batches WHERE batch_code = $1`, [batchCode])).length) throw new NotFoundError(`Batch ${batchCode}`);
+      if (!(await q(`SELECT 1 FROM batches WHERE batch_code = $1 AND ($2::text IS NULL OR flavour = $2)`, [batchCode, flavour ?? null])).length) throw new NotFoundError(`Batch ${batchCode}`);
       throw new RangeError(`Batch ${batchCode} has no room for ${count} more lots (max 1869F)`);
     },
     async nextSequence(name) {
@@ -699,8 +703,8 @@ export class SqlStore implements Store {
   appendScan(s: NewScan) {
     return this.transaction((tx) => tx.appendScan(s));
   }
-  nextLotNumber(batchCode: string, count: number) {
-    return this.transaction((tx) => tx.nextLotNumber(batchCode, count));
+  nextLotNumber(batchCode: string, count: number, flavour?: string) {
+    return this.transaction((tx) => tx.nextLotNumber(batchCode, count, flavour));
   }
   nextSequence(name: string) {
     return this.transaction((tx) => tx.nextSequence(name));

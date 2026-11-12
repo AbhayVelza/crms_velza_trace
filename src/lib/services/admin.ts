@@ -29,8 +29,8 @@ import {
 import { hashPassword } from "@/lib/passwords";
 import { isSafePublicUrl, PUBLIC_URL_RULE } from "@/lib/publicUrl";
 import { getStore, type StoreTx } from "@/lib/store";
-import { badRequest, loadActor, notFound, nowIso, publicUser, requireAction, type Actor } from "./common";
-import { autoRefill, issueCodes, reservedCodes } from "./pool";
+import { badRequest, loadActor, notFound, nowIso, publicUser, requireAction, ServiceError, type Actor } from "./common";
+import { ADMIN_CODE_DEVICE } from "./printOrders";
 
 const partnerFields = {
   type: z.enum(PARTNER_TYPES),
@@ -248,7 +248,7 @@ export async function createEntity(userId: string | null, entity: AdminEntity, b
     const row = { ...defaults, ...data, id: crypto.randomUUID() };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const created = await (tx[entity] as any).create(row);
-    if (entity === "devices") await autoRefill(tx, created.id);
+    // Automatic batch codes and pool refill are switched off: Velza Admin enters batch codes by hand.
     return created;
   });
 }
@@ -309,7 +309,7 @@ export async function updateEntity(userId: string | null, entity: AdminEntity, i
     if (patch.active === false && current.active) await guardDeactivate(tx, entity, current);
     await validateEntity(tx, entity, { ...current, ...patch }, id, current);
     const updated = await repo.update(id, patch);
-    if (entity === "devices" && current.offline && patch.offline === false) await autoRefill(tx, id);
+    // Automatic batch codes and pool refill are switched off: Velza Admin enters batch codes by hand.
     return updated;
   });
 }
@@ -465,9 +465,99 @@ export async function issuePoolCodes(userId: string | null, deviceId: string, co
     if (!device) throw notFound(`Device ${deviceId}`);
     const plant = await tx.partners.get(device.manufacturerId);
     if (!plant?.active) throw badRequest("BAD_PARTNER", `${plant?.name ?? device.manufacturerId} is inactive — no batch codes are issued to its devices`);
-    const settings = await tx.getSettings();
-    const issued = await issueCodes(tx, device, count ?? settings.poolIssueSize, actor.user.id);
-    return { issued, reserved: (await reservedCodes(tx, deviceId)).length };
+    // Automatic batch codes and pool refill are switched off: Velza Admin enters batch codes by hand.
+    void count;
+    throw new ServiceError(410, "AUTO_CODES_OFF", "Automatic batch codes are switched off — add batch codes by hand under Batch codes");
+  });
+}
+
+// ---------------------------------------------------------------- batch codes (entered by Velza Admin)
+//
+// A batch code is exactly 6 characters A–Z / 0–9 (upper case), unique. It has no fixed flavour: the operator adds
+// flavours to it when printing. A code that already has lots (printed or not) can't be edited or deleted: its lot
+// and pack codes contain it.
+
+const batchCodeInput = z.object({
+  code: z
+    .string()
+    .transform((c) => c.trim().toUpperCase())
+    .pipe(z.string().regex(/^[A-Z0-9]{6}$/, "A batch code is exactly 6 characters, A–Z or 0–9")),
+});
+
+async function batchCodeRow(tx: StoreTx, id: string) {
+  const row = await tx.batchCodePool.get(id);
+  if (!row || row.deviceId !== ADMIN_CODE_DEVICE) throw notFound(`Batch code ${id}`);
+  return row;
+}
+
+async function requireUniqueCode(tx: StoreTx, code: string, exceptId?: string) {
+  const [pool, batches] = await Promise.all([tx.batchCodePool.list({ code }), tx.batches.list({ code })]);
+  if (pool.some((p) => p.id !== exceptId) || batches.length) throw badRequest("DUPLICATE_BATCH_CODE", `Batch code ${code} already exists`);
+}
+
+/** Refused when the code already has lots: printed ones say so; unprinted ones belong to a print order. */
+async function requireUnused(tx: StoreTx, code: string, action: "edited" | "deleted") {
+  const lots = await tx.lots.list({ batchCode: code });
+  const printed = lots.filter((l) => l.status !== "GENERATED").length;
+  if (printed) {
+    throw new ServiceError(409, "BATCH_HAS_PRINTED_LOTS", `Batch ${code} already has ${printed} printed lot(s), so it can't be ${action}.`);
+  }
+  if (lots.length || (await tx.batches.list({ code })).length) {
+    throw new ServiceError(409, "BATCH_IN_USE", `Batch ${code} is already used by a print order (its lots are not printed yet), so it can't be ${action}.`);
+  }
+}
+
+export async function listBatchCodes(userId: string | null) {
+  const store = getStore();
+  requireAction(await loadActor(store, userId), "admin");
+  const [codes, batches, lots] = await Promise.all([store.batchCodePool.list({ deviceId: ADMIN_CODE_DEVICE }), store.batches.list(), store.lots.list()]);
+  return {
+    codes: codes
+      .sort((a, b) => a.code.localeCompare(b.code))
+      .map((c) => {
+        const own = lots.filter((l) => l.batchCode === c.code);
+        const printed = own.filter((l) => l.status !== "GENERATED").length;
+        return {
+          id: c.id,
+          code: c.code,
+          createdAt: c.issuedAt,
+          flavours: batches.filter((b) => b.code === c.code).map((b) => b.flavour),
+          lots: own.length,
+          printedLots: printed,
+          locked: own.length > 0 || batches.some((b) => b.code === c.code),
+        };
+      }),
+  };
+}
+
+export async function createBatchCode(userId: string | null, body: unknown) {
+  const { code } = batchCodeInput.parse(body);
+  return getStore().transaction(async (tx) => {
+    requireAction(await loadActor(tx, userId), "admin");
+    await requireUniqueCode(tx, code);
+    return tx.batchCodePool.create({ id: crypto.randomUUID(), code, deviceId: ADMIN_CODE_DEVICE, status: "RESERVED", issuedAt: nowIso(), usedAt: null });
+  });
+}
+
+export async function updateBatchCode(userId: string | null, id: string, body: unknown) {
+  const { code } = batchCodeInput.parse(body);
+  return getStore().transaction(async (tx) => {
+    requireAction(await loadActor(tx, userId), "admin");
+    const row = await batchCodeRow(tx, id);
+    if (row.code === code) return row;
+    await requireUnused(tx, row.code, "edited");
+    await requireUniqueCode(tx, code, id);
+    return tx.batchCodePool.update(id, { code });
+  });
+}
+
+export async function deleteBatchCode(userId: string | null, id: string) {
+  return getStore().transaction(async (tx) => {
+    requireAction(await loadActor(tx, userId), "admin");
+    const row = await batchCodeRow(tx, id);
+    await requireUnused(tx, row.code, "deleted");
+    await tx.batchCodePool.delete(id);
+    return { ok: true, message: `Deleted batch code ${row.code}` };
   });
 }
 

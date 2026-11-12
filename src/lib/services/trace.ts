@@ -106,7 +106,7 @@ export async function lookup(userId: string | null, rawCode: string) {
     return { found: false as const, code, result: found.code, message: found.message };
   }
   const { item } = found;
-  const batch = await store.batches.findOne({ code: item.lot.batchCode });
+  const batch = await store.batches.findOne({ code: item.lot.batchCode, flavour: item.lot.flavour });
   const codes = item.kind === "LOT" ? [item.lot.lotCode] : [item.lot.lotCode, item.pack!.packCode];
   // An opened lot's own history includes what happened to its packs since (single-pack damage, pack moves).
   const packs = await store.packs.list({ lotCode: item.lot.lotCode });
@@ -527,12 +527,13 @@ export async function listBatches(userId: string | null) {
   const [lots, reprints] = await Promise.all([store.lots.list({ batchCode: batches.map((b) => b.code) }), store.reprints.list()]);
   const n = await names(store, { partners: batches.map((b) => b.manufacturerId), users: [], devices: [] });
   // Grouped once: filtering every lot for each batch grew with batches × lots.
-  const lotsOf = Map.groupBy(lots, (l) => l.batchCode);
-  const reprintsOf = Map.groupBy(reprints, (r) => r.code.slice(2, 8));
+  // One batch row per batch code + flavour.
+  const lotsOf = Map.groupBy(lots, (l) => `${l.batchCode}${l.flavour}`);
+  const reprintsOf = Map.groupBy(reprints, (r) => r.code.slice(2, 10));
   return batches
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .map((b) => {
-      const bl = lotsOf.get(b.code) ?? [];
+      const bl = lotsOf.get(`${b.code}${b.flavour}`) ?? [];
       return {
         ...b,
         flavourName: flavoursLabel(b, bl, n.flavour),
@@ -541,7 +542,7 @@ export async function listBatches(userId: string | null) {
         displayStatus: batchDisplayStatus(b),
         lots: bl.length,
         statusCounts: bl.reduce<Record<string, number>>((acc, l) => ((acc[l.status] = (acc[l.status] ?? 0) + 1), acc), {}),
-        reprints: reprintsOf.get(b.code)?.length ?? 0,
+        reprints: reprintsOf.get(`${b.code}${b.flavour}`)?.length ?? 0,
       };
     });
 }
@@ -550,10 +551,11 @@ export async function batchReport(userId: string | null, batchCode: string) {
   const store = getStore();
   const actor = await loadActor(store, userId);
   requireAction(actor, "dashboard");
-  const batch = await store.batches.findOne({ code: batchCode });
+  // A batch code has one row per flavour; the report covers every flavour (the first row's counter is shown).
+  const batch = (await store.batches.list({ code: batchCode }))[0];
   if (!batch || !batch.synced) throw notFound(`Batch ${batchCode}`);
   const n = await names(store);
-  const lots = (await store.lots.list({ batchCode })).sort((a, b) => a.lotNumber - b.lotNumber);
+  const lots = (await store.lots.list({ batchCode })).sort((a, b) => a.flavour.localeCompare(b.flavour) || a.lotNumber - b.lotNumber);
   const lotCodes = new Set(lots.map((l) => l.lotCode));
   const movements = await store.movements.list({ itemCode: [...lotCodes] });
   const ever = (type: Movement["type"]) => new Set(movements.filter((m) => m.type === type).map((m) => m.itemCode)).size;
@@ -584,9 +586,10 @@ export async function recall(userId: string | null, body: unknown) {
     const actor = await loadActor(tx, userId);
     requireAction(actor, "recall");
     if (!reason.trim()) throw badRequest("REASON_REQUIRED", "A recall reason is required");
-    const batch = await tx.batches.findOne({ code: batchCode });
-    if (!batch || !batch.synced) throw notFound(`Batch ${batchCode}`);
-    if (batch.status === "RECALLED") throw badRequest("ALREADY_RECALLED", `Batch ${batchCode} is already recalled`);
+    // A batch code has one row per flavour: the recall covers every flavour of it.
+    const rows = await tx.batches.list({ code: batchCode });
+    if (!rows.length || rows.some((b) => !b.synced)) throw notFound(`Batch ${batchCode}`);
+    if (rows.every((b) => b.status === "RECALLED")) throw badRequest("ALREADY_RECALLED", `Batch ${batchCode} is already recalled`);
     const at = nowIso();
     const lots = await tx.lots.list({ batchCode });
     // Every pack of the batch in one read (not one query per lot).
@@ -602,7 +605,7 @@ export async function recall(userId: string | null, body: unknown) {
         if (pp) await tx.packs.update(pack.id, { ...pp, updatedAt: at });
       }
     }
-    await tx.batches.update(batch.id, { status: "RECALLED", recalledAt: at, recallReason: reason.trim() });
+    for (const batch of rows) await tx.batches.update(batch.id, { status: "RECALLED", recalledAt: at, recallReason: reason.trim() });
     await tx.appendMovement({ type: "RECALLED", itemKind: "BATCH", itemCode: batchCode, fromId: null, toId: null, fromStatus: null, toStatus: "RECALLED", userId: actor.user.id, deviceId: null, invoice: null, note: reason.trim() });
   });
   return recallReport(userId, batchCode);
@@ -613,7 +616,7 @@ export async function recallReport(userId: string | null, batchCode: string) {
   const store = getStore();
   const actor = await loadActor(store, userId);
   requireAction(actor, "dashboard");
-  const batch = await store.batches.findOne({ code: batchCode });
+  const batch = (await store.batches.list({ code: batchCode }))[0];
   if (!batch || !batch.synced) throw notFound(`Batch ${batchCode}`);
   if (batch.status !== "RECALLED") throw badRequest("NOT_RECALLED", `Batch ${batchCode} is not recalled; there is no recall report`);
   const n = await names(store);

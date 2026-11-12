@@ -10,11 +10,15 @@ import { getStore } from "@/lib/store";
 import { damagePhoto, listDamaged, reportDamaged } from "@/lib/services/damage";
 import { MAX_EXTRA_PHOTO_BYTES, MAX_PHOTO_BYTES } from "@/lib/services/damagePhotos";
 import { dispatch, myPartners, openLot, receive } from "@/lib/services/movement";
-import { createPrintOrder, markPrinted } from "@/lib/services/printOrders";
+import { createPrintOrder as createPrintOrderRaw, markPrinted } from "@/lib/services/printOrders";
 import { alerts, dashboard, lookup, myStock, publicLookup } from "@/lib/services/trace";
 import { verify } from "@/lib/services/verify";
 import { photoOf } from "../fixtures/damagePhoto";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
+import { withBatchCode } from "../fixtures/batchCodes";
+
+// The operator picks a batch code from Velza Admin's list: each test order gets a fresh one.
+const createPrintOrder = withBatchCode(createPrintOrderRaw);
 
 let dir: string;
 const ids: Record<string, string> = {};

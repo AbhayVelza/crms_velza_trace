@@ -6,7 +6,7 @@ import { canReprint, canVoid, lotStatusAfterReprint } from "@/lib/core/rules";
 import { scannedCodeSchema } from "@/lib/scan/scannedCode";
 import { getStore, type StoreTx } from "@/lib/store";
 import { badRequest, findItem, loadActor, notFound, nowIso, printDevice, requireAction, requirePartner, setLotState, unknownCodeMessage } from "./common";
-import { autoRefill, reservedCodes } from "./pool";
+import { reservedCodes } from "./pool";
 import { reprintServedId } from "./printOrders";
 
 // deviceId: the PC chosen as "This PC" in the device bar (required when the plant has several PCs).
@@ -140,7 +140,7 @@ export async function setDeviceOffline(userId: string | null, deviceId: string, 
     const device = await tx.devices.get(deviceId);
     if (!device || (actor.partner && device.manufacturerId !== actor.partner.id)) throw notFound(`Device ${deviceId}`);
     const updated = await tx.devices.update(deviceId, { offline });
-    if (!offline) await autoRefill(tx, deviceId);
+    // Automatic batch codes and pool refill are switched off: Velza Admin enters batch codes by hand.
     return { ...updated, unsynced: await unsyncedCounts(tx, deviceId), reservedCodes: (await reservedCodes(tx, deviceId)).length };
   });
 }
@@ -173,7 +173,7 @@ export async function sync(userId: string | null, body: unknown) {
       invoice: null,
       note: `Synced ${counts.batches} batch(es), ${counts.lots} lot(s), ${counts.printOrders} print order(s)`,
     });
-    const refilled = await autoRefill(tx, device.id);
-    return { ok: true, message: `Synced ${counts.batches} batch(es) and ${counts.lots} lot(s)`, synced: counts, refilled: refilled.length };
+    // Automatic batch codes and pool refill are switched off: Velza Admin enters batch codes by hand.
+    return { ok: true, message: `Synced ${counts.batches} batch(es) and ${counts.lots} lot(s)`, synced: counts, refilled: 0 };
   });
 }

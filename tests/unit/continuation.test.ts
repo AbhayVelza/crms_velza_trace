@@ -14,11 +14,13 @@ import { codesForOrder, continueBatch as continueBatchOn, continueMaxLots, creat
 import { listBatches, publicLookup } from "@/lib/services/trace";
 import { verify } from "@/lib/services/verify";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
+import { withBatchCode } from "../fixtures/batchCodes";
 
 const isJson = storeKind() === "json";
 // This plant has two PCs, so every print operation names its PC (as the screens do with "This PC"); Line-1 unless a test says otherwise.
 const onPc = (body: object) => ({ deviceId: device.id, ...body });
-const createPrintOrder = (user: string, body: object) => createPrintOrderOn(user, onPc(body));
+// The operator picks a batch code from Velza Admin's list: each test order gets a fresh one.
+const createPrintOrder = withBatchCode((user: string | null, body: object) => createPrintOrderOn(user, onPc(body)));
 const continueBatch = (user: string, body: object) => continueBatchOn(user, onPc(body));
 const reprint = (user: string, body: object) => reprintOn(user, onPc(body));
 const voidLot = (user: string, body: object) => voidLotOn(user, onPc(body));
@@ -460,8 +462,8 @@ describe("existing workflows on continued lots", () => {
   });
 });
 
-describe("a batch created with 0 cases and 0 trays", () => {
-  it("takes its batch code with no lots, and is continued later from lot 00001", async () => {
+describe("a flavour created with 0 cases and 0 trays", () => {
+  it("gets its batch row with no lots, and is continued later from lot 00001", async () => {
     const r = await createPrintOrder(operator, {
       idempotencyKey: crypto.randomUUID(),
       batches: [
@@ -471,13 +473,14 @@ describe("a batch created with 0 cases and 0 trays", () => {
     });
     if (r.preview) throw new Error("expected an order");
     expect(r.printOrder).toMatchObject({ stickerCount: 5 });
-    expect(r.printOrder.batchCodes).toHaveLength(2);
+    // One batch code, two flavours: one batch row per flavour.
+    expect(r.printOrder.batchCodes).toHaveLength(1);
     expect(r.printOrder.lotCodes).toHaveLength(1);
-    const empty = r.printOrder.batchCodes[1];
-    expect(await batchOf(empty)).toMatchObject({ flavour: "GA", nextLot: 1, status: "ACTIVE" });
-    expect(await store().lots.list({ batchCode: empty })).toHaveLength(0);
+    const code = r.printOrder.batchCodes[0];
+    expect(await store().batches.findOne({ code, flavour: "GA" })).toMatchObject({ flavour: "GA", nextLot: 1, status: "ACTIVE" });
+    expect((await store().lots.list({ batchCode: code })).map((l) => l.flavour)).toEqual(["OR"]);
 
-    const later = await created(cont(operator, empty, 0, 1));
+    const later = await created(cont(operator, code, 0, 1, { flavour: "GA" }));
     expect(later).toMatchObject({ firstLotHex: "00001", lastLotHex: "00001" });
   });
 
@@ -490,13 +493,37 @@ describe("a batch created with 0 cases and 0 trays", () => {
   });
 });
 
-describe("one batch, one flavour", () => {
-  it("continued lots keep the batch's flavour; another flavour is refused without allocating", async () => {
+describe("several flavours per batch code", () => {
+  it("each flavour has its own lot counter: OR and GA both start at 00001 and continue separately", async () => {
+    const r = await createPrintOrder(operator, {
+      idempotencyKey: key(),
+      batches: [
+        { flavour: "OR", mfgDate: "2026-10-01", expiryDate: "2027-10-01", cases: 2, trays: 0 },
+        { flavour: "GA", mfgDate: "2026-10-02", expiryDate: "2027-09-01", cases: 0, trays: 1 },
+      ],
+    });
+    if (r.preview) throw new Error("expected an order");
+    const code = r.printOrder.batchCodes[0];
+    expect(r.printOrder.batchCodes).toEqual([code]);
+    expect(r.printOrder.lotCodes).toEqual([`91${code}OR00001`, `91${code}OR00002`, `91${code}GA00001`]);
+    expect(await store().batches.findOne({ code, flavour: "GA" })).toMatchObject({ mfgDate: "2026-10-02", expiryDate: "2027-09-01", nextLot: 2 });
+    // Several flavours: the flavour to continue must be named.
+    await expect(cont(operator, code, 1, 0)).rejects.toMatchObject({ status: 400, code: "FLAVOUR_REQUIRED" });
+    expect((await created(cont(operator, code, 1, 0, { flavour: "GA" }))).firstLotHex).toBe("00002");
+    expect((await created(cont(operator, code, 1, 0, { flavour: "OR" }))).firstLotHex).toBe("00003");
+    // The same flavour twice in a batch code is refused (add its lots with Continue instead).
+    await expect(createPrintOrder(operator, { idempotencyKey: key(), batchCode: code, batches: [{ flavour: "OR", mfgDate: "2026-10-01", expiryDate: "2027-10-01", cases: 1, trays: 0 }] })).rejects.toMatchObject({
+      code: "INVALID_ORDER",
+      message: expect.stringMatching(/already has OR/),
+    });
+  });
+
+  it("continuing a flavour the batch doesn't have is refused without allocating", async () => {
     const b = await newBatch(); // OR lot 00001
     const before = await counts(b.code);
     for (const flavour of ["GA", "ZZ"]) {
-      await expect(cont(operator, b.code, 1, 0, { flavour })).rejects.toMatchObject({ status: 400, code: "FLAVOUR_CHANGE_NOT_ALLOWED" });
-      await expect(continueBatch(operator, { batchCode: b.code, flavour, cases: 1, trays: 0, preview: true })).rejects.toMatchObject({ code: "FLAVOUR_CHANGE_NOT_ALLOWED" });
+      await expect(cont(operator, b.code, 1, 0, { flavour })).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
+      await expect(continueBatch(operator, { batchCode: b.code, flavour, cases: 1, trays: 0, preview: true })).rejects.toMatchObject({ code: "NOT_FOUND" });
     }
     expect(await counts(b.code)).toEqual(before);
 

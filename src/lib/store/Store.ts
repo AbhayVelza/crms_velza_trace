@@ -77,10 +77,10 @@ export interface StoreTx {
   appendMovements(ms: NewMovement[]): Promise<Movement[]>;
   appendScan(s: NewScan): Promise<Scan>;
   /**
-   * Atomically reserve `count` consecutive lot numbers for a batch.
-   * Returns the first number and advances the batch's nextLot. Numbers are never reused.
+   * Atomically reserve `count` consecutive lot numbers for a batch + flavour (the counter is per batch code and
+   * flavour). Returns the first number and advances that row's nextLot. Numbers are never reused.
    */
-  nextLotNumber(batchCode: string, count: number): Promise<number>;
+  nextLotNumber(batchCode: string, count: number, flavour?: string): Promise<number>;
   /** Atomically issue the next number of a named ID sequence (1, 2, 3 …). Numbers are never reused. */
   nextSequence(name: string): Promise<number>;
   getSettings(): Promise<Settings>;

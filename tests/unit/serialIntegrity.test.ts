@@ -16,7 +16,7 @@ import { dispatch, receive } from "@/lib/services/movement";
 import { listReprints, reprint, voidLot } from "@/lib/services/operator";
 import {
   continueBatch,
-  createPrintOrder,
+  createPrintOrder as createPrintOrderRaw,
   markPrinted,
   reprintServedId,
   serveReprint,
@@ -26,6 +26,10 @@ import {
 import { recall } from "@/lib/services/trace";
 import { verify } from "@/lib/services/verify";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
+import { withBatchCode } from "../fixtures/batchCodes";
+
+// The operator picks a batch code from Velza Admin's list: each test order gets a fresh one.
+const createPrintOrder = withBatchCode(createPrintOrderRaw);
 
 const isJson = storeKind() === "json";
 const store = () => getStore();
@@ -113,17 +117,16 @@ describe("allocation", () => {
     expect(r.printOrder).toMatchObject({ id: expect.any(String), kind: "NEW_BATCH", requestFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/) });
   });
 
-  it("3. the same new-batch request repeated (in a row and at once) creates one order; the pool and counter move once", async () => {
+  it("3. the same new-batch request repeated (in a row and at once) creates one order; one batch row, the counter moves once", async () => {
     const k = key();
     const ordersBefore = (await store().printOrders.list()).length;
-    const poolBefore = (await store().batchCodePool.list({ status: "USED" })).length;
     const a = await created(createPrintOrder(ids.operator, { ...body(3), idempotencyKey: k }));
     const b = await created(createPrintOrder(ids.operator, { ...body(3), idempotencyKey: k }));
     const many = await Promise.all(Array.from({ length: 5 }, () => created(createPrintOrder(ids.operator, { ...body(3), idempotencyKey: k }))));
     expect(new Set([a, b, ...many].map((x) => x.printOrder.id))).toEqual(new Set([k]));
     expect([a.replayed, b.replayed, ...many.map((m) => m.replayed)]).toEqual([false, true, true, true, true, true, true]);
     expect((await store().printOrders.list()).length).toBe(ordersBefore + 1);
-    expect((await store().batchCodePool.list({ status: "USED" })).length).toBe(poolBefore + 1);
+    expect(await store().batches.list({ code: a.printOrder.batchCodes[0] })).toHaveLength(1);
     expect(await nextLotOf(a.printOrder.batchCodes[0])).toBe(4);
   });
 

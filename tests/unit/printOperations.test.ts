@@ -16,8 +16,12 @@ import type { Device, PrintOrder } from "@/lib/core/types";
 import { closeStores, getStore, storeKind } from "@/lib/store";
 import { reprint, sync, voidLot } from "@/lib/services/operator";
 import { issueCodes } from "@/lib/services/pool";
-import { continueMaxLots, createPrintOrder, markPrinted } from "@/lib/services/printOrders";
+import { continueMaxLots, createPrintOrder as createPrintOrderRaw, markPrinted } from "@/lib/services/printOrders";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
+import { withBatchCode } from "../fixtures/batchCodes";
+
+// The operator picks a batch code from Velza Admin's list: each test order gets a fresh one.
+const createPrintOrder = withBatchCode(createPrintOrderRaw);
 
 const isJson = storeKind() === "json";
 const store = () => getStore();
@@ -38,7 +42,8 @@ async function order(cases: number, extra: Record<string, unknown> = {}): Promis
 
 /** What a refused request must leave untouched. */
 const counts = async () => ({
-  reservedPool: (await store().batchCodePool.list({ status: "RESERVED" })).length,
+  // Device pools only (automatic codes, now switched off); Velza Admin's batch codes have no device.
+  reservedPool: (await store().batchCodePool.list({ status: "RESERVED" })).filter((p) => p.deviceId !== "").length,
   batches: (await store().batches.list()).length,
   orders: (await store().printOrders.list()).length,
   lots: (await store().lots.list()).length,
@@ -208,13 +213,15 @@ describe("a plant with two PCs: work is recorded on the PC that does it", () => 
     expect(await counts()).toEqual(before);
   });
 
-  it("an order from PC 2 uses PC 2's pool and carries PC 2 on the batch, order, lots and movements", async () => {
+  it("an order from PC 2 leaves the device pools alone and carries PC 2 on the batch, order, lots and movements", async () => {
     const pool1 = (await store().batchCodePool.list({ deviceId: pc1.id, status: "RESERVED" })).map((p) => p.code);
     const pool2 = (await store().batchCodePool.list({ deviceId: pc2.id, status: "RESERVED" })).map((p) => p.code);
     const o = await order(2, { deviceId: pc2.id });
     expect(o.deviceId).toBe(pc2.id);
-    expect(pool2).toContain(o.batchCodes[0]);
+    // The batch code comes from Velza Admin's list, not from a device pool.
+    expect(pool2).not.toContain(o.batchCodes[0]);
     expect((await store().batchCodePool.list({ deviceId: pc1.id, status: "RESERVED" })).map((p) => p.code)).toEqual(pool1);
+    expect((await store().batchCodePool.list({ deviceId: pc2.id, status: "RESERVED" })).map((p) => p.code)).toEqual(pool2);
     expect((await store().batches.findOne({ code: o.batchCodes[0] }))!.deviceId).toBe(pc2.id);
     expect((await store().lots.list({ printOrderId: o.id })).every((l) => l.deviceId === pc2.id)).toBe(true);
     const generated = (await store().movements.list({ type: "GENERATED" })).filter((m) => o.lotCodes.includes(m.itemCode));

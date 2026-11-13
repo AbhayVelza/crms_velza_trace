@@ -15,6 +15,7 @@ import {
   IconBuilding,
   IconCircleSlash,
   IconClipboardList,
+  IconContainer,
   IconCpu,
   IconDashboard,
   IconDatabase,
@@ -29,6 +30,7 @@ import {
   IconPanelLeft,
   IconRotateCcw,
   IconScan,
+  IconScanSearch,
   IconSearch,
   IconSliders,
   IconTruck,
@@ -65,6 +67,8 @@ export const MENU_ICONS: Record<string, ComponentType<IconProps>> = {
   "/stock": IconWarehouse,
   "/damaged": IconOctagonAlert,
   "/my-partners": IconUsers,
+  "/containers": IconContainer,
+  "/details": IconScanSearch,
 };
 
 /** Same rule the menu has always used to mark the current page. */

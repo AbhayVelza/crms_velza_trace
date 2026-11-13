@@ -9,13 +9,19 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { formatLotNumber, LOT_NUMBER_MAX, parseCode } from "@/lib/core/codes";
 import type { Batch, Device, Lot, User } from "@/lib/core/types";
 import { closeStores, getStore, storeKind } from "@/lib/store";
-import { reprint, voidLot } from "@/lib/services/operator";
-import { codesForOrder, continueBatch, continueMaxLots, createPrintOrder, listContinuableBatches, listPrintOrders, markPrinted, stickersForOrder } from "@/lib/services/printOrders";
+import { reprint as reprintOn, voidLot as voidLotOn } from "@/lib/services/operator";
+import { codesForOrder, continueBatch as continueBatchOn, continueMaxLots, createPrintOrder as createPrintOrderOn, listContinuableBatches, listPrintOrders, markPrinted, stickersForOrder } from "@/lib/services/printOrders";
 import { listBatches, publicLookup } from "@/lib/services/trace";
 import { verify } from "@/lib/services/verify";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
 
 const isJson = storeKind() === "json";
+// This plant has two PCs, so every print operation names its PC (as the screens do with "This PC"); Line-1 unless a test says otherwise.
+const onPc = (body: object) => ({ deviceId: device.id, ...body });
+const createPrintOrder = (user: string, body: object) => createPrintOrderOn(user, onPc(body));
+const continueBatch = (user: string, body: object) => continueBatchOn(user, onPc(body));
+const reprint = (user: string, body: object) => reprintOn(user, onPc(body));
+const voidLot = (user: string, body: object) => voidLotOn(user, onPc(body));
 const store = () => getStore();
 const key = () => crypto.randomUUID();
 let dir: string;
@@ -29,7 +35,7 @@ let otherDevice: Device;
 
 /** A fresh batch of the plant, made by the normal new-batch flow (1 case). */
 async function newBatch(): Promise<Batch> {
-  const r = await createPrintOrder(operator, { batches: [{ flavour: "OR", mfgDate: "2026-10-01", expiryDate: "2027-10-01", cases: 1, trays: 0 }] });
+  const r = await createPrintOrder(operator, { idempotencyKey: crypto.randomUUID(), batches: [{ flavour: "OR", mfgDate: "2026-10-01", expiryDate: "2027-10-01", cases: 1, trays: 0 }] });
   if (r.preview) throw new Error("expected an order");
   return (await store().batches.findOne({ code: r.printOrder.batchCodes[0] }))!;
 }
@@ -102,8 +108,10 @@ describe("continuation from the stored counter", () => {
   });
 
   it("store counter: 10,000 lots → next 02711; another 10,000 → next 04E21", async () => {
-    const b = await newBatch();
-    await store().batches.update(b.id, { nextLot: 1 }); // a counter-only batch: start from 00001
+    // A counter-only batch (no lots yet) starting from 00001. Counters never move backwards (schema v3),
+    // so it is a new batch row, not an existing batch rewound.
+    const src = await newBatch();
+    const b = await store().batches.create({ ...src, id: crypto.randomUUID(), code: `${src.code[0] === "Z" ? "Y" : "Z"}${src.code.slice(1)}`, nextLot: 1 });
     expect(formatLotNumber(await store().nextLotNumber(b.code, 10_000))).toBe("00001");
     expect(formatLotNumber((await batchOf(b.code)).nextLot)).toBe("02711");
     expect(formatLotNumber(await store().nextLotNumber(b.code, 10_000))).toBe("02711");
@@ -166,8 +174,11 @@ describe("capacity and exhaustion", () => {
   });
 
   it("an invalid stored counter is reported, never used or repaired", async () => {
-    const b = await newBatch();
-    await store().batches.update(b.id, { nextLot: 0 });
+    // Damaged data (e.g. a bad restore) arrives as a row with an invalid counter: no update may move a
+    // counter backwards (schema v3), so it is written as a new batch row.
+    const src = await newBatch();
+    const b = await store().batches.create({ ...src, id: crypto.randomUUID(), code: `${src.code[0] === "Y" ? "X" : "Y"}${src.code.slice(1)}`, nextLot: 0 });
+    await expect(store().batches.update(b.id, { nextLot: -5 })).rejects.toMatchObject({ code: "COUNTER_BACKWARDS" });
     await expect(cont(operator, b.code, 1, 0)).rejects.toMatchObject({ status: 409, code: "BATCH_COUNTER_INVALID" });
     expect((await batchOf(b.code)).nextLot).toBe(0);
     expect((await listContinuableBatches(operator)).batches.find((x) => x.batchCode === b.code)).toMatchObject({ status: "COUNTER_INVALID", continuable: false });
@@ -240,7 +251,7 @@ describe("devices", () => {
   it("offline new-batch orders still work (unchanged offline flow)", async () => {
     await store().devices.update(device.id, { offline: true });
     try {
-      const r = await createPrintOrder(operator, { batches: [{ flavour: "GA", mfgDate: "2026-10-01", expiryDate: "2027-10-01", cases: 1, trays: 0 }] });
+      const r = await createPrintOrder(operator, { idempotencyKey: crypto.randomUUID(), batches: [{ flavour: "GA", mfgDate: "2026-10-01", expiryDate: "2027-10-01", cases: 1, trays: 0 }] });
       expect(!r.preview && r.printOrder.synced).toBe(false);
     } finally {
       await store().devices.update(device.id, { offline: false });
@@ -452,6 +463,7 @@ describe("existing workflows on continued lots", () => {
 describe("a batch created with 0 cases and 0 trays", () => {
   it("takes its batch code with no lots, and is continued later from lot 00001", async () => {
     const r = await createPrintOrder(operator, {
+      idempotencyKey: crypto.randomUUID(),
       batches: [
         { flavour: "OR", mfgDate: "2026-10-01", expiryDate: "2027-10-01", cases: 1, trays: 0 },
         { flavour: "GA", mfgDate: "2026-10-01", expiryDate: "2027-10-01", cases: 0, trays: 0 },
@@ -470,7 +482,7 @@ describe("a batch created with 0 cases and 0 trays", () => {
   });
 
   it("an order or continuation with nothing to print at all is refused", async () => {
-    await expect(createPrintOrder(operator, { batches: [{ flavour: "OR", mfgDate: "2026-10-01", expiryDate: "2027-10-01", cases: 0, trays: 0 }] })).rejects.toMatchObject({
+    await expect(createPrintOrder(operator, { idempotencyKey: crypto.randomUUID(), batches: [{ flavour: "OR", mfgDate: "2026-10-01", expiryDate: "2027-10-01", cases: 0, trays: 0 }] })).rejects.toMatchObject({
       code: "INVALID_ORDER",
     });
     const b = await newBatch();

@@ -1,0 +1,55 @@
+{
+  "base": "http://127.0.0.1:3430",
+  "at": "2026-11-04T08:09:41.686Z",
+  "lots": 1000,
+  "createOrderMs": 166,
+  "markPrintedMs": 434,
+  "qcPackScanApi": {
+    "first10": {
+      "n": 10,
+      "p50": 59.6,
+      "p95": 89.5,
+      "max": 89,
+      "totalMs": 604
+    },
+    "first100": {
+      "n": 100,
+      "p50": 56.8,
+      "p95": 84.5,
+      "max": 107,
+      "totalMs": 6026
+    },
+    "all500": {
+      "n": 500,
+      "p50": 67.8,
+      "p95": 111.9,
+      "max": 168,
+      "totalMs": 36736
+    }
+  },
+  "qcConfirmApi": {
+    "n": 1000,
+    "p50": 82.6,
+    "p95": 121.5,
+    "max": 177,
+    "totalMs": 85432
+  },
+  "dispatchChecklistLoadMs": 1806,
+  "expectedShown": 1000,
+  "rowsInDom": 50,
+  "domNodes": 826,
+  "uiScanToScanned": {
+    "n": 100,
+    "p50": 247.1,
+    "p95": 270.4,
+    "max": 420,
+    "totalMs": 22096
+  },
+  "apiRequestsFor100Scans": 100,
+  "heapMB": {
+    "beforeScans": 4.7,
+    "after100Scans": 5.8
+  },
+  "domNodesAfter": 1194,
+  "filterAndSearchMs": 183
+}

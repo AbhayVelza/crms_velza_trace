@@ -55,6 +55,9 @@ Choices made where the spec was silent or ambiguous. Simplest reasonable option 
   append-only repos for `movements`, `scans`, `reprints`, plus `appendMovement`, `appendScan`,
   `nextLotNumber`, settings, and `transaction(fn)`. The JSON store runs each transaction on a draft copy
   and writes the file once (temp + rename), so multi-row actions are all-or-nothing, like a DB transaction.
+- The JSON store belongs to one process at a time (`<file>.lock`, taken on first use, removed on exit; a stale lock
+  of a dead process is taken over). It refuses a write if the file changed on disk since it was read. Several app
+  processes need PostgreSQL. Both stores refuse to move a lot counter backwards or delete an issued code (4 Nov 2026).
 - If `data/db.json` is missing, the store creates the base seed automatically on first use.
 - `data/db.json` is git-ignored (`npm run seed` recreates it). `VELZA_DB_PATH` overrides the file
   path (used by tests).

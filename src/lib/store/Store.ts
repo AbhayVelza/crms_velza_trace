@@ -38,6 +38,12 @@ export interface Repo<T extends Row> {
   create(row: T): Promise<T>;
   createMany(rows: T[]): Promise<void>;
   update(id: string, patch: Partial<Omit<T, "id">>): Promise<T>;
+  /**
+   * Apply one patch to every row matching `where`, in one statement (bulk status changes: mark printed, sync).
+   * Returns the ids of the changed rows, in insertion order. `where` must name at least one field (an empty
+   * filter is refused rather than updating the whole table); an empty "any of" list matches nothing.
+   */
+  updateWhere(where: Where<T>, patch: Partial<Omit<T, "id">>): Promise<string[]>;
   /** Hard delete. Callers check references first; ledger tables have no delete. */
   delete(id: string): Promise<void>;
 }
@@ -69,6 +75,8 @@ export interface StoreTx {
   sessions: Repo<Session>;
 
   appendMovement(m: NewMovement): Promise<Movement>;
+  /** Append several movements at once (multi-row inserts on PostgreSQL), in the given order. */
+  appendMovements(ms: NewMovement[]): Promise<Movement[]>;
   appendScan(s: NewScan): Promise<Scan>;
   /**
    * Atomically reserve `count` consecutive lot numbers for a batch.
@@ -121,13 +129,45 @@ export const COLLECTIONS = [
   "settings",
 ] as const satisfies readonly (keyof DbSnapshot)[];
 
+export interface TransactionOptions {
+  /**
+   * Transactions with the same key run one after another across every app process (PostgreSQL: a
+   * session advisory lock taken before BEGIN, so the transaction's snapshot is fresh). Used for code
+   * allocation so concurrent print orders wait instead of failing. The JSON file and PGlite stores
+   * already run one transaction at a time and ignore it.
+   */
+  lockKey?: string;
+}
+
 export interface Store extends StoreTx {
   /** Run `fn` atomically: all writes commit together or none do. */
-  transaction<R>(fn: (tx: StoreTx) => Promise<R>): Promise<R>;
+  transaction<R>(fn: (tx: StoreTx) => Promise<R>, opts?: TransactionOptions): Promise<R>;
   /** Replace all data (used by the seed script, the JSON → database import and the chain conversion). */
   reset(data: DbSnapshot): Promise<void>;
   /** Every row of every table (backups, clear-activity, the JSON → database import). */
   snapshot(): Promise<DbSnapshot>;
+}
+
+/**
+ * A write the storage layer refuses because it would break code integrity, whatever the caller:
+ * a batch's lot counter moving backwards, or deleting / renaming a code a print order issued.
+ */
+export class IntegrityError extends Error {
+  constructor(
+    public code: "COUNTER_BACKWARDS" | "ISSUED_CODE_PROTECTED",
+    message: string,
+  ) {
+    super(message);
+    this.name = "IntegrityError";
+  }
+}
+
+/** The JSON file changed on disk since this process read it (another process or an editor wrote it). */
+export class ConcurrentWriteError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ConcurrentWriteError";
+  }
 }
 
 export class NotFoundError extends Error {

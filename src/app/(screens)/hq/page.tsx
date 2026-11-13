@@ -11,14 +11,14 @@ interface Dashboard {
   lotCounts: Record<string, number>;
   packCounts: Record<string, number>;
   totals: { lots: number; packs: number; batches: number; unsyncedLots: number };
-  stock: { partnerId: string; partner: string; tier: string; tierLabel: string; cases: number; trays: number; openedCases: number; openedTrays: number; loosePacks: number; damaged: DamagedCounts }[];
+  stock: { partnerId: string; partner: string; tier: string; tierLabel: string; cases: number; trays: number; openedCases: number; openedTrays: number; loosePacks: number; damaged: DamagedCounts; recalled?: DamagedCounts; awaitingQc?: number; quarantined?: number }[];
   inTransit: { kind: string; code: string; from: string; to: string; dispatchedAt: string; age: string; overdue: boolean }[];
   alertCounts: Record<string, number>;
   recentAlerts: { id: string; type: string; at: string; code: string; message: string; partner: string | null }[];
   threshold: { label: string; demoMode: boolean };
 }
 
-const ALERT_TYPES = ["NOT_RECEIVED", "WRONG_RECEIVER", "UNKNOWN_CODE", "DUPLICATE_RECEIPT", "BLOCKED_CODE", "DAMAGED"];
+const ALERT_TYPES = ["NOT_RECEIVED", "WRONG_RECEIVER", "UNKNOWN_CODE", "DUPLICATE_RECEIPT", "BLOCKED_CODE", "DAMAGED", "SUSPECT_CLONE", "PUBLIC_UNKNOWN", "PUBLIC_BLOCKED"];
 
 export default function DashboardPage() {
   const { data: d, error, reload, refreshing } = useApi<Dashboard>("/api/dashboard", { refreshOnChange: true });
@@ -65,7 +65,7 @@ export default function DashboardPage() {
               </tr>
             ))}
           </Table>
-          <p className="mt-2 text-xs text-muted-foreground">Cases and trays include opened ones; loose packs are the packs of opened cases and trays still there.</p>
+          <p className="mt-2 text-xs text-muted-foreground">Cases and trays include opened ones; loose packs are the packs of opened cases and trays still there. Stock by location counts released stock only: recalled, damaged, quarantined and not-yet-verified units are shown apart.</p>
         </Card>
 
         <Card
@@ -100,13 +100,15 @@ export default function DashboardPage() {
         </Card>
 
         <Card title="Stock by location">
-          <Table head={["Tier", "Partner", "Cases", "Trays", "Loose packs", "Damaged"]} empty={d.stock.length ? null : <Empty>No stock</Empty>}>
+          <Table head={["Tier", "Partner", "Cases", "Trays", "Loose packs", "Damaged", "Recalled"]} empty={d.stock.length ? null : <Empty>No stock</Empty>}>
             {d.stock.map((s) => (
               <tr key={s.partnerId}>
                 <Td className="whitespace-nowrap text-xs font-semibold uppercase tracking-wide text-muted-foreground">{s.tierLabel}</Td>
                 <Td>{s.partner}</Td>
                 <Td>
                   <Opened total={s.cases} opened={s.openedCases} />
+                  {!!s.awaitingQc && <div className="whitespace-nowrap text-xs text-muted-foreground">{s.awaitingQc} lot(s) awaiting QC</div>}
+                  {!!s.quarantined && <div className="whitespace-nowrap text-xs text-warning">{s.quarantined} lot(s) quarantined</div>}
                 </Td>
                 <Td>
                   <Opened total={s.trays} opened={s.openedTrays} />
@@ -114,6 +116,9 @@ export default function DashboardPage() {
                 <Td>{s.loosePacks}</Td>
                 <Td className="whitespace-nowrap text-xs">
                   <DamagedSummary counts={s.damaged} />
+                </Td>
+                <Td className="whitespace-nowrap text-xs">
+                  <DamagedSummary counts={s.recalled ?? { cases: 0, trays: 0, packs: 0 }} />
                 </Td>
               </tr>
             ))}

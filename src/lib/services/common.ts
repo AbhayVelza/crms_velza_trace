@@ -56,6 +56,26 @@ export async function manufacturerDevice(tx: StoreTx, manufacturerId: string, de
   return device;
 }
 
+/**
+ * The plant PC a print operation (print order, continuation, reprint, void, sync, print confirmation) runs on.
+ * The screen sends the PC chosen as "This PC" in the device bar; the server checks it belongs to the operator's
+ * manufacturer. Without one, a plant with a single PC uses it; a plant with several is refused (409
+ * DEVICE_REQUIRED) instead of silently booking the work, its pool codes and its sync state on the first PC.
+ */
+export async function printDevice(tx: StoreTx, manufacturerId: string, deviceId?: string | null): Promise<Device> {
+  const devices = await tx.devices.list({ manufacturerId });
+  if (deviceId) {
+    const device = devices.find((d) => d.id === deviceId);
+    if (!device) throw badRequest("NO_DEVICE", "This PC is not registered for your plant — choose This PC again in the device bar");
+    return device;
+  }
+  if (!devices.length) throw badRequest("NO_DEVICE", "No device registered for this manufacturer");
+  if (devices.length > 1) {
+    throw new ServiceError(409, "DEVICE_REQUIRED", `Your plant has ${devices.length} PCs — choose This PC in the device bar first, so the work is recorded on the right PC`);
+  }
+  return devices[0];
+}
+
 export async function parseOptions(tx: StoreTx) {
   const [countries, flavours] = await Promise.all([tx.countries.list({ active: true }), tx.flavours.list()]);
   return { countries: countries.map((c) => c.code), flavours: flavours.map((f) => f.code) };

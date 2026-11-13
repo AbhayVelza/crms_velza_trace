@@ -196,7 +196,8 @@ test.describe.serial("Velza demo script (9.1)", () => {
     await page.getByRole("button", { name: "Open print view" }).click();
     await expect(page.getByText("PRINTING PENDING", { exact: true })).toBeVisible();
     const orderId = page.url().split("/print/")[1];
-    const orderStatus = async () => (await (await page.request.get(`/api/print-orders/${orderId}`)).json()).printOrder;
+    // The order's status, read from its codes list (the sticker sheet itself is not served once PRINTED).
+    const orderStatus = async () => (await (await page.request.get(`/api/print-orders/${orderId}/codes`)).json()).printOrder;
     // Leaving the print view and coming back records nothing.
     await page.goto("/operator/orders");
     const finish = page.locator(`a[href="/print/${orderId}"]`);
@@ -284,6 +285,13 @@ test.describe.serial("Velza demo script (9.1)", () => {
     await expect(page.getByRole("button", { name: /^Mark .* as printed$/ })).toHaveCount(0);
     expect(confirmations).toHaveLength(2);
     expect(await orderStatus()).toMatchObject({ status: "PRINTED", printedAt: expect.any(String) });
+    // Once confirmed, the stickers are not printed again from here: no Print button, and the sheet is refused.
+    await expect(page.getByRole("button", { name: /^Print \d+ sticker/ })).toHaveCount(0);
+    await expect(page.getByText(/confirmed printed, so its stickers are not printed again/)).toBeVisible();
+    const again = await page.request.get(`/api/print-orders/${orderId}`);
+    expect(again.status()).toBe(409);
+    expect((await again.json()).error.code).toBe("ORDER_ALREADY_PRINTED");
+    expect((await page.request.get(`/api/stickers?code=${lots[0]}`)).status()).toBe(410);
   });
 
   test("2. supervisor verifies every lot; a pack from another lot is rejected", async ({ page }) => {
@@ -436,10 +444,17 @@ test.describe.serial("Velza demo script (9.1)", () => {
     await page.getByRole("button", { name: "Log reprint" }).click();
     await expect(page.getByText(`Reprint of ${code} logged (same code)`)).toBeVisible();
     await expect(page.locator("tbody tr").first()).toContainText("Sticker torn while pasting");
-    await page.getByRole("link", { name: `Open print view for ${code}` }).click();
+    await page.getByRole("link", { name: `Print ${code} (once)` }).click();
     await expect(page.locator(".sticker")).toHaveCount(1);
     await expect(page.locator(".sticker")).toHaveAttribute("data-code", code);
     await expect(page.locator(".sticker")).toContainText("PACK 3 of 6 | 4 CANS");
+    // The logged reprint prints once: opening its print view again is refused.
+    expect(page.url()).toMatch(/\/print\/reprint\/[0-9a-f-]{36}$/);
+    await page.reload();
+    await expect(page.getByText(/already printed\. To print the sticker again, log a new reprint/)).toBeVisible();
+    await expect(page.locator(".sticker")).toHaveCount(0);
+    await page.goto("/operator/reprint");
+    await expect(page.locator("tbody tr").first()).not.toContainText("Not yet");
   });
 
   test("10. SS-1 receives the synced case and reports it damaged → it leaves stock, shows in Damaged, HQ is alerted", async ({ page }) => {

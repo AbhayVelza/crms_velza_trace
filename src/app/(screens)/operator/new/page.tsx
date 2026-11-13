@@ -6,13 +6,14 @@
 import { useRouter } from "next/navigation";
 import { useState, type ReactNode } from "react";
 import { useSession } from "@/components/session";
+import { thisPcId } from "@/components/DeviceBar";
 import { GeneratedCodes } from "@/components/GeneratedCodes";
 import { IconArrowLeft, IconArrowRight, IconCheck, IconMinus, IconPlus, IconPrinter } from "@/components/icons";
 import { Button, Card, Code, cx, Field, Input, Loading, Notice, PageTitle, Pill, Table, Td } from "@/components/ui";
 import { useApi } from "@/components/useApi";
 import { api, errorText } from "@/lib/client";
 import type { BatchCounter } from "@/lib/core/codes";
-import type { BatchInput, PrintOrderPlan } from "@/lib/core/printOrder";
+import type { BatchInput, PrintOrderPlanSummary } from "@/lib/core/printOrder";
 import type { PrintOrder } from "@/lib/core/types";
 import { notifyDataChanged } from "@/lib/events";
 import { countLabel, lotRangeLabel } from "@/lib/format";
@@ -118,11 +119,15 @@ function NewBatchesWizard() {
   const [step, setStep] = useState(0);
   const [count, setCount] = useState(1);
   const [batches, setBatches] = useState<BatchInput[]>([newBatch()]);
-  const [plan, setPlan] = useState<PrintOrderPlan | null>(null);
+  const [plan, setPlan] = useState<PrintOrderPlanSummary | null>(null);
+  const [maxLots, setMaxLots] = useState<number | null>(null);
   const [offline, setOffline] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<PrintOrder | null>(null);
+  // One request key per exact order: a retry of the same batches reuses it (the server returns the order it
+  // already saved instead of allocating again); changed batches get a new key.
+  const [request, setRequest] = useState<{ key: string; body: string } | null>(null);
 
   const flavours = (data?.flavours ?? []).filter((f) => f.active);
   const update = (i: number, patch: Partial<BatchInput>) => setBatches((bs) => bs.map((b, j) => (j === i ? { ...b, ...patch } : b)));
@@ -131,8 +136,9 @@ function NewBatchesWizard() {
     setBusy(true);
     setError(null);
     try {
-      const r = await api<{ plan: PrintOrderPlan; device: { offline: boolean } }>("/api/print-orders", { body: { batches, preview: true } });
+      const r = await api<{ plan: PrintOrderPlanSummary; device: { offline: boolean }; maxLotsPerOrder: number }>("/api/print-orders", { body: { batches, preview: true, deviceId: thisPcId() } });
       setPlan(r.plan);
+      setMaxLots(r.maxLotsPerOrder);
       setOffline(r.device.offline);
     } catch (e) {
       setError(errorText(e));
@@ -157,7 +163,10 @@ function NewBatchesWizard() {
     setBusy(true);
     setError(null);
     try {
-      const r = await api<{ printOrder: PrintOrder }>("/api/print-orders", { body: { batches } });
+      const body = JSON.stringify(batches);
+      const idempotencyKey = request?.body === body ? request.key : crypto.randomUUID();
+      setRequest({ key: idempotencyKey, body });
+      const r = await api<{ printOrder: PrintOrder }>("/api/print-orders", { body: { batches, idempotencyKey, deviceId: thisPcId() } });
       setCreated(r.printOrder);
       notifyDataChanged();
       setStep(6);
@@ -170,6 +179,7 @@ function NewBatchesWizard() {
   }
 
   function restart() {
+    setRequest(null);
     setStep(0);
     setCount(1);
     setBatches([newBatch()]);
@@ -301,7 +311,10 @@ function NewBatchesWizard() {
                     <Td />
                     <Td>{plan.batches.reduce((s, b) => s + (b.cases || 0), 0)}</Td>
                     <Td>{plan.batches.reduce((s, b) => s + (b.trays || 0), 0)}</Td>
-                    <Td>{plan.totalLots} lots</Td>
+                    <Td>
+                      {plan.totalLots} lots
+                      {maxLots !== null && <div className="text-xs font-normal text-muted-foreground">at most {maxLots.toLocaleString("en-IN")} per order</div>}
+                    </Td>
                     <Td>
                       <span data-testid="summary-total-stickers">{plan.totalStickers}</span>
                     </Td>
@@ -453,7 +466,7 @@ function ContinueBatchWizard() {
     setBusy(true);
     setError(null);
     try {
-      setPreview(await api<ContinuePreview>("/api/print-orders/continue", { body: { batchCode, cases, trays, preview: true } }));
+      setPreview(await api<ContinuePreview>("/api/print-orders/continue", { body: { batchCode, cases, trays, preview: true, deviceId: thisPcId() } }));
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -480,7 +493,7 @@ function ContinueBatchWizard() {
     setBusy(true);
     setError(null);
     try {
-      const r = await api<ContinueResult>("/api/print-orders/continue", { body: { batchCode, cases, trays, idempotencyKey } });
+      const r = await api<ContinueResult>("/api/print-orders/continue", { body: { batchCode, cases, trays, idempotencyKey, deviceId: thisPcId() } });
       setCreated(r);
       notifyDataChanged();
       setStep(3);

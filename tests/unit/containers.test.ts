@@ -26,7 +26,7 @@ const partner = async (prefix: string) => (await store().partners.list()).find((
 
 /** Cases and trays printed and passed by QC (PACKED at the plant). */
 async function packedLots(cases: number, trays: number) {
-  const r = await createPrintOrder(ids.operator, { batches: [{ flavour: "OR", mfgDate: "2026-11-01", expiryDate: "2027-08-01", cases, trays }] });
+  const r = await createPrintOrder(ids.operator, { idempotencyKey: crypto.randomUUID(), batches: [{ flavour: "OR", mfgDate: "2026-11-01", expiryDate: "2027-08-01", cases, trays }] });
   if (r.preview) throw new Error("expected an order");
   await markPrinted(ids.operator, r.printOrder.id);
   for (const lotCode of r.printOrder.lotCodes) {
@@ -77,7 +77,7 @@ describe("shipping containers", () => {
     expect(await loadContainer(ids.operator, containerId, { code: `${lots[0]}61` })).toMatchObject({ ok: false, code: "INVALID_CODE" });
     expect(await loadContainer(ids.operator, containerId, { code: "91ZZZZZZOR00001" })).toMatchObject({ ok: false, code: "UNKNOWN_CODE" });
     // printed but not verified by QC
-    const r = await createPrintOrder(ids.operator, { batches: [{ flavour: "GA", mfgDate: "2026-11-01", expiryDate: "2027-08-01", cases: 1, trays: 0 }] });
+    const r = await createPrintOrder(ids.operator, { idempotencyKey: crypto.randomUUID(), batches: [{ flavour: "GA", mfgDate: "2026-11-01", expiryDate: "2027-08-01", cases: 1, trays: 0 }] });
     if (r.preview) throw new Error("expected an order");
     await markPrinted(ids.operator, r.printOrder.id);
     expect(await loadContainer(ids.operator, containerId, { code: r.printOrder.lotCodes[0] })).toMatchObject({ ok: false, code: "WRONG_STATUS", message: expect.stringMatching(/QC must verify/) });

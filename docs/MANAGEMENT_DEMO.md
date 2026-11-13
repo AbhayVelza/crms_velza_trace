@@ -145,7 +145,8 @@ optional Python/FastAPI backend (decision #15), 2FA for Admin/HQ.
 
 | Area | Limitation | Impact |
 |---|---|---|
-| Hardware | No physical label printer, USB/2D scanner or phone camera was used in testing | Sticker size/quality and scanner behaviour must be checked on the real devices before go-live |
+| Hardware | No physical label printer, USB/2D scanner or phone camera was used in testing (camera scanning is tested through the browser's fake camera with a real barcode image; manual device checklist: `docs/MANUAL_QA_GUIDE.md` §8) | Sticker size/quality and scanner behaviour must be checked on the real devices before go-live |
+| Scanning (branch `feature/barcode-scanner`, not yet in the demo build) | Live scan checklists, camera controls (Start/Stop, camera choice, torch) and the fast-scanner queue are not in the demo workspace until it is rebuilt from that branch | Rebuild the demo (section F) to show them |
 | Printing | Printing is confirmed by the operator (**Mark as printed**); the app cannot detect whether the printer actually printed | Operator SOP must say: confirm only after checking the stickers |
 | Plant PCs | Operator screens always use the plant's first registered PC (the API supports choosing a PC; the screen has no picker) | Second PC usable only through the API today |
 | Offline | "Offline" is a flag; a real network/server outage stops printing | Needs a plant server for zero downtime (decision #12) |

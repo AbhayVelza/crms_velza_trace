@@ -29,7 +29,7 @@ export default function OpenLotPage() {
 
   return (
     <>
-      <PageTitle title="Open lot" subtitle="Opening a case or tray makes its packs individually movable. The lot itself stays here as OPENED." />
+      <PageTitle title="Open lot" subtitle="Opening a case (4 packs) or tray (6 packs) counts its packs one by one in your stock. The lot stays here as OPENED." />
       <div className="grid gap-4 lg:grid-cols-2 lg:gap-5">
         <Card>
           <ScanInput label="Lot code" onScan={onScan} demoScreen="open" />
@@ -38,7 +38,7 @@ export default function OpenLotPage() {
           </div>
         </Card>
         {packs.length > 0 && (
-          <Card title="Packs now movable">
+          <Card title="Packs now in your stock">
             <ul className="space-y-1 text-sm">
               {packs.map((p) => (
                 <li key={p.packCode} className="flex items-center gap-2">

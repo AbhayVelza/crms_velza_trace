@@ -377,6 +377,39 @@ test.describe.serial("Velza demo script (9.1)", () => {
     await expect(page.getByTestId("search-location")).toContainText("Retailer-4");
   });
 
+  test("6b. Product details: Retailer-1 scans a pack → Mfg / Exp date, Batch No., from SS-1 and DB-1; SS-1 sees the chain up to itself; Retailer-2 sees nothing", async ({ page }) => {
+    const pack = `${lots[0]}62`;
+    await as(page, "RETAILER", "Retailer-1", "/details");
+    await expect(page.locator("nav")).toContainText("Product details");
+    await page.locator("#scan-input").fill(pack);
+    await page.locator("#scan-input").press("Enter");
+    const result = page.getByTestId("details-result");
+    await expect(result).toBeVisible();
+    await expect(page.getByTestId("came-from-ss")).toContainText("SS-1");
+    await expect(page.getByTestId("came-from-db")).toContainText("DB-1");
+    await expect(page.getByTestId("details-batch")).toHaveText(lots[0].slice(2, 8));
+    await expect(page.getByTestId("details-mfg")).not.toHaveText("—");
+    await expect(page.getByTestId("details-exp")).not.toHaveText("—");
+    await expect(result).toContainText("Pack 2 of");
+    await expect(page.getByTestId("details-chain").locator("li")).toHaveCount(5); // plant, warehouse, SS-1, DB-1, you
+
+    // SS-1: the same case, chain up to SS-1 only (never where it went after)
+    await as(page, "SS", "SS-1", "/details");
+    await page.locator("#scan-input").fill(lots[0]);
+    await page.locator("#scan-input").press("Enter");
+    await expect(page.getByTestId("details-position")).toContainText("Passed through you");
+    await expect(page.getByTestId("details-chain").locator("li")).toHaveCount(3);
+    await expect(page.getByTestId("details-result")).not.toContainText("DB-1");
+    await expect(page.getByTestId("details-result")).not.toContainText("Retailer-1");
+
+    // Retailer-2 never had it: answered like an unknown code
+    await as(page, "RETAILER", "Retailer-2", "/details");
+    await page.locator("#scan-input").fill(pack);
+    await page.locator("#scan-input").press("Enter");
+    await expect(page.getByTestId("details-error")).toContainText("Unknown code");
+    await expect(page.getByTestId("details-result")).toHaveCount(0);
+  });
+
   test("7. made-up code → UNKNOWN_CODE; recall Green Apple → RECALLED; public page says Recalled", async ({ page }) => {
     const fake = await receive(page, "SS-1", "SS", "91ZZZZZZOR00001");
     expect(fake.text).toContain("UNKNOWN_CODE");

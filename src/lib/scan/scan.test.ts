@@ -2,7 +2,7 @@
 // (with a mocked camera: no real device is involved here).
 
 import { describe, expect, it } from "vitest";
-import { activeCameraSession, CAMERA_SIZE, CameraSession, toCameraError, type CameraEnv, type Decoder, type VideoLike } from "./camera";
+import { activeCameraSession, CAMERA_SIZE, CameraSession, fixRotatedScans, toCameraError, type CameraEnv, type Decoder, type VideoLike } from "./camera";
 import { applyAccepted, applyRejected, countChecklist, createChecklist, filterRows, mergeExpected, nextPending, pageOf, rebaseChecklist, resetAll, resetItem, statusForRejection } from "./checklist";
 import { ScanGate } from "./gate";
 import { checkCodeFormat, normalizeScannedCode } from "./normalize";
@@ -223,6 +223,23 @@ function fakeDecoder(env: CameraEnv) {
 }
 const video = (): VideoLike => ({ srcObject: null });
 
+describe("zxing rotated scans (TRY_HARDER)", () => {
+  it("the real HTMLCanvasElementLuminanceSource gets its temporary canvas once fixRotatedScans ran (library bug: it threw on every frame)", async () => {
+    const { HTMLCanvasElementLuminanceSource } = await import("@zxing/browser");
+    const created: unknown[] = [];
+    const fakeCanvas = { width: 4, height: 2, ownerDocument: { createElement: (tag: string) => (created.push(tag), { tag, width: 0, height: 0 }) } };
+    const proto = HTMLCanvasElementLuminanceSource.prototype as unknown as { getTempCanvasElement(this: unknown): unknown; tempCanvasElement?: unknown };
+    const before = Object.prototype.hasOwnProperty.call(proto, "tempCanvasElement") ? proto.tempCanvasElement : undefined;
+    expect(proto.getTempCanvasElement.call(Object.create(proto, { canvas: { value: fakeCanvas } }))).toBe(before === null ? created.at(-1) : undefined);
+    fixRotatedScans(proto);
+    fixRotatedScans(proto); // safe to run again
+    const source = Object.create(proto, { canvas: { value: fakeCanvas } });
+    const temp = proto.getTempCanvasElement.call(source);
+    expect(temp).toMatchObject({ tag: "canvas", width: 4, height: 2 });
+    expect(proto.getTempCanvasElement.call(source)).toBe(temp); // created once per source, then reused
+  });
+});
+
 describe("CameraSession (mocked camera)", () => {
   it("starts on the rear camera, passes decoded codes on, and releases every track on stop", async () => {
     const { env, tracks, calls } = fakeEnv();
@@ -242,6 +259,93 @@ describe("CameraSession (mocked camera)", () => {
     d.emit(PACK); // a late frame after stop is dropped
     expect(seen).toEqual([LOT]);
     s.stop(); // idempotent
+  });
+
+  it("two overlapping starts (React's double effect in development): the first one's aborted play() is not an error and does not stop the second camera", async () => {
+    const { env, tracks } = fakeEnv();
+    let first = true;
+    let entered!: () => void;
+    const firstOpening = new Promise<void>((r) => (entered = r));
+    const decoder: Decoder = {
+      async start(constraints, v) {
+        const stream = await env.mediaDevices!.getUserMedia(constraints);
+        if (first) {
+          first = false;
+          entered();
+          // The browser cuts this play() off when the second start loads its own stream into the video.
+          await new Promise((r) => setTimeout(r, 20));
+          throw Object.assign(new Error("The play() request was interrupted by a new load request."), { name: "AbortError" });
+        }
+        v.srcObject = stream;
+        return { stop: () => {} };
+      },
+    };
+    const v = video();
+    const s = new CameraSession(v, decoder, env, () => {});
+    const a = s.start();
+    await firstOpening; // the first attempt is opening the camera when the second one is asked for
+    const b = s.start();
+    await expect(a).resolves.toBeUndefined(); // no "camera busy" error from the superseded attempt
+    await b;
+    expect(s.state).toBe("running");
+    expect(v.srcObject).not.toBeNull();
+    expect(tracks.at(-1)!.readyState).toBe("live"); // the second camera keeps running
+    s.stop();
+  });
+
+  it("two overlapping starts where the older one finishes last: its clean-up does not blank the newer camera (black preview)", async () => {
+    const { env, tracks } = fakeEnv();
+    let n = 0;
+    // Like @zxing/browser: attaches its stream to the shared <video>; stop() stops that stream and clears the video.
+    const decoder: Decoder = {
+      async start(constraints, v) {
+        const slow = n++ === 0;
+        const stream = await env.mediaDevices!.getUserMedia(constraints);
+        v.srcObject = stream;
+        await new Promise((r) => setTimeout(r, slow ? 40 : 5)); // the first camera opens slowly
+        return {
+          stop: () => {
+            stream.getTracks().forEach((t) => t.stop());
+            v.srcObject = null;
+          },
+        };
+      },
+    };
+    const v = video();
+    const s = new CameraSession(v, decoder, env, () => {});
+    const a = s.start();
+    const b = s.start();
+    await Promise.all([a, b]);
+    expect(s.state).toBe("running");
+    expect(v.srcObject).not.toBeNull(); // the preview still has a stream…
+    const shown = (v.srcObject as MediaStream).getVideoTracks()[0] as unknown as { readyState: string };
+    expect(shown.readyState).toBe("live"); // …and it is a live one
+    expect(tracks.filter((t) => t.readyState === "live")).toHaveLength(1); // the superseded camera was released
+    s.stop();
+    expect(tracks.every((t) => t.readyState === "ended")).toBe(true);
+  });
+
+  it("a start superseded by stop() resolves quietly and leaves the camera off", async () => {
+    const { env } = fakeEnv();
+    const decoder: Decoder = {
+      async start() {
+        await new Promise((r) => setTimeout(r, 20));
+        throw Object.assign(new Error("interrupted"), { name: "AbortError" });
+      },
+    };
+    const s = new CameraSession(video(), decoder, env, () => {});
+    const a = s.start();
+    s.stop();
+    await expect(a).resolves.toBeUndefined();
+    expect(s.state).toBe("stopped");
+  });
+
+  it("a real failure of the current start is still reported", async () => {
+    const { env } = fakeEnv({ error: "NotAllowedError" });
+    const { decoder } = fakeDecoder(env);
+    const s = new CameraSession(video(), decoder, env, () => {});
+    await expect(s.start()).rejects.toMatchObject({ kind: "DENIED" });
+    expect(s.state).toBe("idle");
   });
 
   it("switching camera stops the old stream first; only one session holds the camera", async () => {
@@ -264,11 +368,21 @@ describe("CameraSession (mocked camera)", () => {
   it("stop() while the camera is still opening releases it as soon as it opens (unmount during start)", async () => {
     const { env, tracks } = fakeEnv();
     const { decoder } = fakeDecoder(env);
-    const s = new CameraSession(video(), decoder, env, () => {});
+    let entered!: () => void;
+    const opening = new Promise<void>((r) => (entered = r));
+    const s = new CameraSession(video(), { start: (c, v, f) => (entered(), decoder.start(c, v, f)) }, env, () => {});
     const starting = s.start();
+    await opening; // the camera is being opened
     s.stop();
     await starting;
     expect(tracks[0].readyState).toBe("ended");
+    expect(s.state).toBe("stopped");
+    // stop() before the attempt even began: the camera is never opened at all.
+    const before = tracks.length;
+    const t = s.start();
+    s.stop();
+    await t;
+    expect(tracks.length).toBe(before);
     expect(s.state).toBe("stopped");
   });
 

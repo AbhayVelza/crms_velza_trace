@@ -148,7 +148,63 @@ export default function DashboardPage() {
           </Table>
         </Card>
       </div>
+      <ReturnsReport />
     </>
+  );
+}
+
+interface ReturnRow {
+  id: string;
+  code: string;
+  item: string;
+  flavour: string;
+  batch: string;
+  expiry: string | null;
+  returnedFrom: string | null;
+  returnedFromTier: string | null;
+  reason: string | null;
+  pickedUpBy: string | null;
+  date: string;
+  decision: string;
+}
+
+/** Stock Velza field staff took back from partners, and what the Velza Warehouse decided after inspecting it. */
+function ReturnsReport() {
+  const { data } = useApi<{ rows: ReturnRow[] }>("/api/returns/report", { refreshOnChange: true });
+  const rows = data?.rows ?? [];
+  return (
+    <Card title={`Returns (${rows.length})`} className="mt-4 animate-fade-in lg:mt-5">
+      <Table
+        head={["Code", "Item", "Flavour", "Batch", "Expiry", "Returned from", "Reason", "Picked up by", "Date", "Final decision"]}
+        empty={rows.length ? null : <Empty>{data ? "Nothing has been taken back" : "Loading…"}</Empty>}
+      >
+        {rows.map((r) => (
+          <tr key={r.id} data-testid="returns-row" data-code={r.code}>
+            <Td>
+              <Link href={`/hq/search?code=${r.code}`} className="underline-offset-4 hover:underline">
+                <Code>{r.code}</Code>
+              </Link>
+            </Td>
+            <Td>{r.item}</Td>
+            <Td>{r.flavour}</Td>
+            <Td>
+              <Code>{r.batch}</Code>
+            </Td>
+            <Td className="whitespace-nowrap">{r.expiry ?? "—"}</Td>
+            <Td>
+              {r.returnedFrom ?? "—"}
+              {r.returnedFromTier && <div className="text-xs text-muted-foreground">{r.returnedFromTier}</div>}
+            </Td>
+            <Td>{r.reason ?? "—"}</Td>
+            <Td>{r.pickedUpBy ?? "—"}</Td>
+            <Td className="whitespace-nowrap">{fmtTime(r.date)}</Td>
+            <Td>
+              <Pill tone={r.decision.startsWith("Written off") ? "danger" : r.decision === "Back to stock" ? "ok" : "warn"}>{r.decision}</Pill>
+            </Td>
+          </tr>
+        ))}
+      </Table>
+    </Card>
   );
 }
 

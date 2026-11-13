@@ -125,7 +125,8 @@ export async function dispatchItems(
 /** Receives one item that passed canReceive: at the receiver, one RECEIVED movement (shared with containers). */
 export async function receiveItem(tx: StoreTx, args: { actor: Actor; receiver: Partner; item: FoundItem; at: string; note: string | null }) {
   const { actor, receiver, item, at, note } = args;
-  const patch = receivePatch(receiver);
+  const fromStatus = item.movable.status;
+  const patch = receivePatch(receiver, fromStatus);
   const fromId = item.movable.locationId;
   if (item.kind === "LOT") await setLotState(tx, item.lot, patch, at);
   else await tx.packs.update(item.pack!.id, { ...patch, updatedAt: at });
@@ -136,7 +137,7 @@ export async function receiveItem(tx: StoreTx, args: { actor: Actor; receiver: P
     itemCode: item.movable.code,
     fromId,
     toId: receiver.id,
-    fromStatus: "IN_TRANSIT",
+    fromStatus,
     toStatus: patch.status,
     userId: actor.user.id,
     deviceId: null,

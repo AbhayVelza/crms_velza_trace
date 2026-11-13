@@ -90,7 +90,7 @@ describe("product details at the Retailer: Mfg date, Exp date, Batch No., from w
       batchCode,
       mfgDate: "2026-11-01",
       expiryDate: "2027-08-01",
-      packLabel: "Pack 3 of 6",
+      packLabel: "Pack 3 of 4 (6 cans)", // a case is 4 packs of 6 cans
       position: "Here",
       cameFrom: { warehouse: expect.stringMatching(/^VW-1/), superStockist: expect.stringMatching(/^SS-1/), distributor: expect.stringMatching(/^DB-1/) },
     });
@@ -155,9 +155,8 @@ describe("what a partner may not see", () => {
     expect(await productDetails(ids.rt1, "hello")).toMatchObject({ found: false, result: "UNKNOWN_CODE" });
   });
 
-  it("HQ and Admin have their own screens; not signed in is refused", async () => {
-    await expect(productDetails(ids.hq, lots[0])).rejects.toMatchObject({ status: 403 });
-    await expect(productDetails(ids.admin, lots[0])).rejects.toMatchObject({ status: 403 });
+  it("HQ and Admin get the full view (returns.test.ts); not signed in is refused", async () => {
+    for (const who of [ids.hq, ids.admin]) expect(await productDetails(who, lots[0])).toMatchObject({ found: true, full: expect.any(Object) });
     await expect(productDetails(null, lots[0])).rejects.toMatchObject({ status: 401 });
   });
 

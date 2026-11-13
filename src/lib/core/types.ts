@@ -13,7 +13,7 @@ export const PARTNER_TYPE_LABELS: Record<PartnerType, string> = {
   RETAILER: "Retailer",
 };
 
-export const ROLES = ["ADMIN", "OPERATOR", "QC", "WAREHOUSE", "SS", "DB", "RETAILER", "TRACE_OWNER"] as const;
+export const ROLES = ["ADMIN", "OPERATOR", "QC", "WAREHOUSE", "SS", "DB", "RETAILER", "TRACE_OWNER", "VELZA_FIELD"] as const;
 export type Role = (typeof ROLES)[number];
 
 export const ROLE_LABELS: Record<Role, string> = {
@@ -25,6 +25,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   DB: "Distributor",
   RETAILER: "Retailer",
   TRACE_OWNER: "Velza HQ",
+  VELZA_FIELD: "Velza Field Staff",
 };
 
 /** Velza staff (no partner) belong to this organisation. */
@@ -40,6 +41,7 @@ export const ROLE_PARTNER_TYPE: Record<Role, PartnerType | null> = {
   DB: "DB",
   RETAILER: "RETAILER",
   TRACE_OWNER: null,
+  VELZA_FIELD: null,
 };
 
 export const LOT_TYPES = ["CASE", "TRAY"] as const;
@@ -57,7 +59,12 @@ export const MAIN_STATUSES = [
   "AT_RETAILER",
   "OPENED",
 ] as const;
-export const EXCEPTION_STATUSES = ["QUARANTINED", "VOID", "DAMAGED", "RETURNED", "RECALLED"] as const;
+/**
+ * RETURN_IN_TRANSIT: taken back from a partner by Velza field staff, on its way to the Velza Warehouse.
+ * RETURNED: received back at the warehouse, waiting for its inspection (back to stock or write-off).
+ * EXPIRED: written off at the warehouse as past its expiry date (never dispatched again).
+ */
+export const EXCEPTION_STATUSES = ["QUARANTINED", "VOID", "DAMAGED", "RETURN_IN_TRANSIT", "RETURNED", "EXPIRED", "RECALLED"] as const;
 export const ITEM_STATUSES = [...MAIN_STATUSES, ...EXCEPTION_STATUSES] as const;
 export type ItemStatus = (typeof ITEM_STATUSES)[number];
 
@@ -282,6 +289,11 @@ export const MOVEMENT_TYPES = [
   "ALERT_ACKNOWLEDGED",
   "ALERT_CLOSED",
   "ALERT_REOPENED",
+  /** Velza field staff took a case, tray or pack back from a partner (→ RETURN_IN_TRANSIT to the Velza Warehouse). */
+  "RETURN_PICKUP",
+  /** The warehouse's inspection of a returned item: back to stock (AT_WAREHOUSE) or written off (DAMAGED / EXPIRED). */
+  "RETURN_RESTOCKED",
+  "RETURN_WRITTEN_OFF",
 ] as const;
 export type MovementType = (typeof MOVEMENT_TYPES)[number];
 

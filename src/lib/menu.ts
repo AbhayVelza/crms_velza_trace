@@ -24,6 +24,7 @@ export const MENU: Record<Role, MenuItem[]> = {
     { href: "/admin/reference", label: "Countries & flavours", description: "Code lists used inside every code" },
     { href: "/admin/pools", label: "Batch code pools", description: "Issue random batch codes to devices" },
     { href: "/admin/settings", label: "Settings", description: "Alert threshold, sticker sizes, public URL" },
+    { ...details, description: "Scan a code: the full chain with dates and invoices, holder, status, dates" },
   ],
   OPERATOR: [
     { href: "/operator/new", label: "New print order", description: "Guided questions → batch codes → stickers" },
@@ -49,7 +50,10 @@ export const MENU: Record<Role, MenuItem[]> = {
     { href: "/hq/batches", label: "Batches & recall", description: "Batch report and recall" },
     containers,
     { href: "/hq/scans", label: "Scan audit", description: "Every scan, success or failure" },
+    { ...details, description: "Scan a code: the full chain with dates and invoices, holder, status, dates" },
   ],
+  // Velza field staff visit partners: scanning only views (it never receives); Take back sends stock to the warehouse.
+  VELZA_FIELD: [{ href: "/details", label: "Scan", description: "Scan a code: full chain, holder, status, dates; take stock back" }],
 };
 
 /** Pages every signed-in user may open, whatever the role. */

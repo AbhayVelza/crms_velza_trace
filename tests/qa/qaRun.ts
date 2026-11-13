@@ -235,8 +235,8 @@ async function main() {
   record("Auth", "Sign-out ends the session (old cookie refused)", out.status === 200 && afterOut.status === 401, "logout 200, reuse 401", `${out.status}, ${afterOut.status}`);
 
   // ---------- 3. Role × API matrix (expected results come from PERMISSIONS in src/lib/core/permissions.ts)
-  // The QA dataset has no Velza Warehouse sign-in yet, so WAREHOUSE is not in this matrix.
-  type QaRole = Exclude<Role, "WAREHOUSE">;
+  // The QA dataset has no Velza Warehouse or Velza field staff sign-in yet, so WAREHOUSE and VELZA_FIELD are not in this matrix.
+  type QaRole = Exclude<Role, "WAREHOUSE" | "VELZA_FIELD">;
   const sessions: Record<QaRole, Session> = {
     ADMIN: admin,
     TRACE_OWNER: await signIn("HQ0001", creds.hqPassword, "TRACE_OWNER"),

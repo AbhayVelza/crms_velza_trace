@@ -488,8 +488,9 @@ export async function myStock(userId: string | null) {
       ...packs.filter((p) => p.locationId === partner.id && p.status === "IN_TRANSIT").map(packView),
     ],
     incoming: await withInvoices(store, [
-      ...lots.filter((l) => l.inTransitToId === partner.id && l.status === "IN_TRANSIT").map(view),
-      ...packs.filter((p) => p.inTransitToId === partner.id && p.status === "IN_TRANSIT").map(packView),
+      // Also stock Velza field staff took back, on its way to this warehouse (RETURN_IN_TRANSIT).
+      ...lots.filter((l) => l.inTransitToId === partner.id && (l.status === "IN_TRANSIT" || l.status === "RETURN_IN_TRANSIT")).map(view),
+      ...packs.filter((p) => p.inTransitToId === partner.id && (p.status === "IN_TRANSIT" || p.status === "RETURN_IN_TRANSIT")).map(packView),
     ]),
     /** Recalled — do not sell: held here, including units recalled while in transit to this location. */
     recalled: [
@@ -510,7 +511,8 @@ async function withInvoices<T extends { code: string }>(store: Pick<StoreTx, "mo
     const seen = latest.get(m.itemCode);
     if (!seen || m.at > seen.at) latest.set(m.itemCode, { at: m.at, invoice: m.invoice });
   }
-  return items.map((i) => ({ ...i, invoice: latest.get(i.code)?.invoice ?? null }));
+  // A take-back to the warehouse has no invoice (the last one belonged to the delivery before it).
+  return items.map((i) => ({ ...i, invoice: (i as { status?: string }).status === "RETURN_IN_TRANSIT" ? null : (latest.get(i.code)?.invoice ?? null) }));
 }
 
 // ---------------------------------------------------------------- batches, recall

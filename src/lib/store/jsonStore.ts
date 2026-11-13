@@ -132,6 +132,7 @@ function makeTx(db: DbSnapshot): StoreTx {
     batchCodePool: repo("batchCodePool"),
     batches: repo("batches"),
     printOrders: repo("printOrders"),
+    containers: repo("containers"),
     lots: repo("lots"),
     packs: repo("packs"),
     movements: ledger("movements"),
@@ -276,6 +277,7 @@ export class JsonStore implements Store {
   batchCodePool = this.repo<DbSnapshot["batchCodePool"][number]>("batchCodePool");
   batches = this.repo<DbSnapshot["batches"][number]>("batches");
   printOrders = this.repo<DbSnapshot["printOrders"][number]>("printOrders");
+  containers = this.repo<DbSnapshot["containers"][number]>("containers");
   lots = this.repo<DbSnapshot["lots"][number]>("lots");
   packs = this.repo<DbSnapshot["packs"][number]>("packs");
   movements = this.ledger<DbSnapshot["movements"][number]>("movements");

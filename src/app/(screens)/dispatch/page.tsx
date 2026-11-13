@@ -63,8 +63,10 @@ export default function DispatchPage() {
   if (dest.error) return <Notice tone="error">{dest.error}</Notice>;
   if (!dest.data) return <Loading />;
   const { destinationTypes, destinations, sender } = dest.data;
-  // The manufacturer may supply any Super Stockist; SS and DB only the partners assigned to them.
+  // The manufacturer ships only to the Velza Warehouse; the warehouse supplies any SS, DB or Retailer;
+  // SS and DB only the partners assigned to them.
   const assigned = assignedTypesOf(sender.type).length > 0;
+  const scope = assigned ? " assigned to you" : sender.type === "WAREHOUSE" ? " (any)" : " only";
   const tiers = destinationTypes.map((t) => `${PARTNER_TYPE_LABELS[t]}s`).join(" or ");
   const option = (p: Partner) => (
     <option key={p.id} value={p.id}>
@@ -74,7 +76,7 @@ export default function DispatchPage() {
 
   return (
     <>
-      <PageTitle title="Dispatch (scan OUT)" subtitle={`From ${sender.name}${tiers ? ` → ${tiers}${assigned ? " assigned to you" : " only"}` : ""}`} />
+      <PageTitle title="Dispatch (scan OUT)" subtitle={`From ${sender.name}${tiers ? ` → ${tiers}${scope}` : ""}`} />
       {!destinationTypes.length ? (
         <Notice tone="info">Retailers are the last tier and don&apos;t dispatch.</Notice>
       ) : (

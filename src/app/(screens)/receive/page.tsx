@@ -15,6 +15,8 @@ let seq = 0;
 
 export default function ReceivePage() {
   const { partner } = useSession();
+  // The Velza Warehouse also receives a whole shipping container by scanning its number.
+  const warehouse = partner?.type === "WAREHOUSE";
   const stock = useApi<{ incoming: StockItem[] }>("/api/stock", { refreshOnChange: true });
   const [log, setLog] = useState<ScanLogEntry[]>([]);
 
@@ -32,10 +34,10 @@ export default function ReceivePage() {
 
   return (
     <>
-      <PageTitle title="Receive (scan IN)" subtitle={`Scan lots or packs arriving at ${partner?.name ?? "your location"}, one after another.`} />
+      <PageTitle title="Receive (scan IN)" subtitle={`Scan lots or packs arriving at ${partner?.name ?? "your location"}, one after another.${warehouse ? " Scan a container's number to receive everything in it at once." : ""}`} />
       <div className="grid gap-4 lg:grid-cols-2 lg:gap-5">
         <Card>
-          <ScanInput label="Code" onScan={onScan} demoScreen="receive" />
+          <ScanInput label={warehouse ? "Code or container number" : "Code"} onScan={onScan} demoScreen="receive" />
           <div className="mt-4">
             <ScanLog entries={log} />
           </div>

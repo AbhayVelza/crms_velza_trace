@@ -2,23 +2,25 @@
 // Partners and users are keyed by their readable IDs (DB0001, MF0001-OP), lots and packs by their
 // printed code, everything else by a UUID. Timestamps are ISO strings.
 
-export const PARTNER_TYPES = ["MANUFACTURER", "SS", "DB", "RETAILER"] as const;
+export const PARTNER_TYPES = ["MANUFACTURER", "WAREHOUSE", "SS", "DB", "RETAILER"] as const;
 export type PartnerType = (typeof PARTNER_TYPES)[number];
 
 export const PARTNER_TYPE_LABELS: Record<PartnerType, string> = {
   MANUFACTURER: "Manufacturer",
+  WAREHOUSE: "Velza Warehouse",
   SS: "Super Stockist",
   DB: "Distributor",
   RETAILER: "Retailer",
 };
 
-export const ROLES = ["ADMIN", "OPERATOR", "QC", "SS", "DB", "RETAILER", "TRACE_OWNER"] as const;
+export const ROLES = ["ADMIN", "OPERATOR", "QC", "WAREHOUSE", "SS", "DB", "RETAILER", "TRACE_OWNER"] as const;
 export type Role = (typeof ROLES)[number];
 
 export const ROLE_LABELS: Record<Role, string> = {
   ADMIN: "Velza Admin",
   OPERATOR: "Manufacturer Operator",
   QC: "Supervisor/QC",
+  WAREHOUSE: "Velza Warehouse",
   SS: "Super Stockist",
   DB: "Distributor",
   RETAILER: "Retailer",
@@ -33,6 +35,7 @@ export const ROLE_PARTNER_TYPE: Record<Role, PartnerType | null> = {
   ADMIN: null,
   OPERATOR: "MANUFACTURER",
   QC: "MANUFACTURER",
+  WAREHOUSE: "WAREHOUSE",
   SS: "SS",
   DB: "DB",
   RETAILER: "RETAILER",
@@ -48,6 +51,7 @@ export const MAIN_STATUSES = [
   "PRINTED",
   "PACKED",
   "IN_TRANSIT",
+  "AT_WAREHOUSE",
   "AT_SS",
   "AT_DB",
   "AT_RETAILER",
@@ -182,6 +186,36 @@ export interface PrintOrder {
   synced: boolean;
 }
 
+/** Cases and trays one shipping container holds at most. */
+export const CONTAINER_CAPACITY = 2860;
+
+export const CONTAINER_STATUSES = ["LOADING", "IN_TRANSIT", "RECEIVED"] as const;
+export type ContainerStatus = (typeof CONTAINER_STATUSES)[number];
+
+/**
+ * One trip of a shipping container from the manufacturer to the Velza Warehouse. `code` is the container's own
+ * number (e.g. MSCU1234567), entered at the plant; a container is reused for many trips, so a number is unique
+ * only among containers still loading or on the road. The operator scans cases and trays in (LOADING), dispatches
+ * the container to a warehouse (IN_TRANSIT: every lot in it is dispatched), and the warehouse receives everything
+ * still on the way in it with one scan of the container number (RECEIVED).
+ */
+export interface Container {
+  id: string;
+  code: string;
+  manufacturerId: string;
+  status: ContainerStatus;
+  /** Lot (case/tray) codes loaded, in scan order. */
+  lotCodes: string[];
+  toId: string | null;
+  invoice: string | null;
+  createdAt: string;
+  createdBy: string;
+  dispatchedAt: string | null;
+  dispatchedBy: string | null;
+  receivedAt: string | null;
+  receivedBy: string | null;
+}
+
 export interface Lot {
   id: string;
   lotCode: string;
@@ -253,7 +287,7 @@ export interface Movement {
   note: string | null;
 }
 
-export const SCAN_CONTEXTS = ["VERIFY", "DISPATCH", "RECEIVE", "OPEN_LOT", "DAMAGE", "LOOKUP", "PUBLIC_LOOKUP"] as const;
+export const SCAN_CONTEXTS = ["VERIFY", "DISPATCH", "RECEIVE", "OPEN_LOT", "DAMAGE", "LOOKUP", "PUBLIC_LOOKUP", "CONTAINER"] as const;
 export type ScanContext = (typeof SCAN_CONTEXTS)[number];
 
 /** Scan audit row: every scan, success or failure. */

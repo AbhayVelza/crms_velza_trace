@@ -7,7 +7,7 @@ import { dbFilePath, describeStore, getStore } from "@/lib/store";
 async function main() {
   const store = getStore();
   const data = await store.snapshot();
-  await store.reset({ ...data, batches: [], printOrders: [], lots: [], packs: [], movements: [], scans: [], reprints: [] });
+  await store.reset({ ...data, batches: [], printOrders: [], containers: [], lots: [], packs: [], movements: [], scans: [], reprints: [] });
   console.log(`Cleared ${data.batches.length} batches, ${data.lots.length} lots, ${data.movements.length} movements, ${data.scans.length} scans in ${describeStore() ?? dbFilePath()}`);
   console.log(
     `Kept ${data.partners.length} partners, ${data.users.length} sign-ins, ${data.devices.length} device(s), ` +

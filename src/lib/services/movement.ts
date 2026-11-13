@@ -4,6 +4,7 @@ import { z } from "zod";
 import { assignedTypesOf, canDispatch, canOpenLot, canReceive, checkDispatchHeader, DESTINATION_TYPES, dispatchPatch, isAssignedDestination, receivePatch, type RuleResult } from "@/lib/core/rules";
 import type { Partner } from "@/lib/core/types";
 import { getStore, type StoreTx } from "@/lib/store";
+import { receiveContainer } from "./containers";
 import { stockCounts } from "./trace";
 import { badRequest, findItem, loadActor, logScan, manufacturerDevice, nowIso, requireAction, requirePartner, setLotState, type Actor, type FoundItem } from "./common";
 
@@ -68,7 +69,7 @@ export async function myPartners(userId: string | null) {
   };
 }
 
-async function checkOne(tx: StoreTx, actor: Actor, sender: Partner, receiver: Partner | null, invoice: string, code: string) {
+export async function checkOne(tx: StoreTx, actor: Actor, sender: Partner, receiver: Partner | null, invoice: string, code: string) {
   const found = await findItem(tx, code, sender.id);
   if (!found.ok) return { result: found as RuleResult, item: null };
   const { item } = found;
@@ -77,6 +78,56 @@ async function checkOne(tx: StoreTx, actor: Actor, sender: Partner, receiver: Pa
 
 function describe(item: FoundItem) {
   return item.kind === "LOT" ? `${item.lot.lotType} lot` : `Pack ${item.pack?.seq} of lot ${item.lot.lotCode}`;
+}
+
+/** Sends already-checked items to the receiver: IN_TRANSIT, one DISPATCHED movement each (shared with containers). */
+export async function dispatchItems(
+  tx: StoreTx,
+  args: { actor: Actor; sender: Partner; receiver: Partner; invoice: string; items: FoundItem[]; deviceId: string | null; note: string | null; at: string },
+) {
+  const { actor, sender, receiver, invoice, items, deviceId, note, at } = args;
+  for (const item of items) {
+    const patch = dispatchPatch(receiver.id, at);
+    if (item.kind === "LOT") await setLotState(tx, item.lot, patch, at);
+    else await tx.packs.update(item.pack!.id, { ...patch, updatedAt: at });
+    await tx.appendMovement({
+      type: "DISPATCHED",
+      itemKind: item.kind,
+      itemCode: item.movable.code,
+      fromId: sender.id,
+      toId: receiver.id,
+      fromStatus: item.movable.status,
+      toStatus: "IN_TRANSIT",
+      userId: actor.user.id,
+      deviceId,
+      invoice,
+      note,
+    });
+  }
+}
+
+/** Receives one item that passed canReceive: at the receiver, one RECEIVED movement (shared with containers). */
+export async function receiveItem(tx: StoreTx, args: { actor: Actor; receiver: Partner; item: FoundItem; at: string; note: string | null }) {
+  const { actor, receiver, item, at, note } = args;
+  const patch = receivePatch(receiver);
+  const fromId = item.movable.locationId;
+  if (item.kind === "LOT") await setLotState(tx, item.lot, patch, at);
+  else await tx.packs.update(item.pack!.id, { ...patch, updatedAt: at });
+  const dispatchMove = (await tx.movements.list({ itemCode: item.movable.code, type: "DISPATCHED" })).sort((a, b) => b.at.localeCompare(a.at))[0];
+  await tx.appendMovement({
+    type: "RECEIVED",
+    itemKind: item.kind,
+    itemCode: item.movable.code,
+    fromId,
+    toId: receiver.id,
+    fromStatus: "IN_TRANSIT",
+    toStatus: patch.status,
+    userId: actor.user.id,
+    deviceId: null,
+    invoice: dispatchMove?.invoice ?? null,
+    note,
+  });
+  return patch.status;
 }
 
 export async function dispatch(userId: string | null, body: unknown) {
@@ -110,26 +161,8 @@ export async function dispatch(userId: string | null, body: unknown) {
         failed.map((f) => ({ code: f.code, reason: f.result.ok ? "" : f.result.message })),
       );
     }
-    const at = nowIso();
     const invoice = req.invoice.trim();
-    for (const { item } of checks) {
-      const patch = dispatchPatch(receiver!.id, at);
-      if (item!.kind === "LOT") await setLotState(tx, item!.lot, patch, at);
-      else await tx.packs.update(item!.pack!.id, { ...patch, updatedAt: at });
-      await tx.appendMovement({
-        type: "DISPATCHED",
-        itemKind: item!.kind,
-        itemCode: item!.movable.code,
-        fromId: sender.id,
-        toId: receiver!.id,
-        fromStatus: item!.movable.status,
-        toStatus: "IN_TRANSIT",
-        userId: actor.user.id,
-        deviceId,
-        invoice,
-        note: null,
-      });
-    }
+    await dispatchItems(tx, { actor, sender, receiver: receiver!, invoice, items: checks.map((c) => c.item!), deviceId, note: null, at: nowIso() });
     return { ok: true, message: `Dispatched ${checks.length} item(s) to ${receiver!.name} on ${invoice}`, count: checks.length };
   });
 }
@@ -141,35 +174,21 @@ export async function receive(userId: string | null, body: unknown) {
     requireAction(actor, "receive");
     const receiver = requirePartner(actor);
     const found = await findItem(tx, code, receiver.id);
-    let result: RuleResult = found.ok ? canReceive({ item: found.item.movable, parentLotStatus: found.item.parentLotStatus, receiver }) : found;
+    // Not a case, tray or pack code: it may be a shipping container's number (the warehouse receives it whole).
+    if (!found.ok && found.code === "UNKNOWN_CODE") {
+      const byContainer = await receiveContainer(tx, actor, receiver, code);
+      if (byContainer) return byContainer;
+    }
+    const result: RuleResult = found.ok ? canReceive({ item: found.item.movable, parentLotStatus: found.item.parentLotStatus, receiver }) : found;
     if (!result.ok) {
       await logScan(tx, { context: "RECEIVE", code, actor, ok: false, result: result.code, message: result.message });
       return { ok: false, code: result.code, message: result.message };
     }
     const item = (found as { item: FoundItem }).item;
-    const at = nowIso();
-    const patch = receivePatch(receiver);
-    const fromId = item.movable.locationId;
-    if (item.kind === "LOT") await setLotState(tx, item.lot, patch, at);
-    else await tx.packs.update(item.pack!.id, { ...patch, updatedAt: at });
-    const dispatchMove = (await tx.movements.list({ itemCode: item.movable.code, type: "DISPATCHED" })).sort((a, b) => b.at.localeCompare(a.at))[0];
-    await tx.appendMovement({
-      type: "RECEIVED",
-      itemKind: item.kind,
-      itemCode: item.movable.code,
-      fromId,
-      toId: receiver.id,
-      fromStatus: "IN_TRANSIT",
-      toStatus: patch.status,
-      userId: actor.user.id,
-      deviceId: null,
-      invoice: dispatchMove?.invoice ?? null,
-      note: null,
-    });
-    result = { ok: true };
-    const message = `${code} received → ${patch.status} (${describe(item)})`;
+    const status = await receiveItem(tx, { actor, receiver, item, at: nowIso(), note: null });
+    const message = `${code} received → ${status} (${describe(item)})`;
     await logScan(tx, { context: "RECEIVE", code, actor, ok: true, result: "OK", message });
-    return { ok: result.ok, message, status: patch.status };
+    return { ok: true, message, status };
   });
 }
 

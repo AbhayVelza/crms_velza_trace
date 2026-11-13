@@ -48,6 +48,7 @@ beforeAll(async () => {
   for (const [k, role, tag] of [
     ["operator", "OPERATOR"],
     ["qc", "QC"],
+    ["vw", "WAREHOUSE"],
     ["ss1", "SS", "SS-1"],
     ["ss2", "SS", "SS-2"],
     ["db1", "DB", "DB-1"],
@@ -57,13 +58,21 @@ beforeAll(async () => {
   ] as [string, Role, string?][]) {
     ids[k] = await user(role, tag);
   }
+  ids.VW = await partner("VW-1");
   ids.SS1 = await partner("SS-1");
   ids.DB1 = await partner("DB-1");
   ids.RT1 = await partner("Retailer-1"); // DB-1's
   ids.RT4 = await partner("Retailer-4"); // SS-1's directly
   lots = await printAndVerify(4);
-  await dispatch(ids.operator, { action: "confirm", toPartnerId: ids.SS1, invoice: "INV-1", codes: [lots[0], lots[1]] });
+  await viaWarehouseToSS1([lots[0], lots[1]], "INV-1");
 });
+
+/** Manufacturer → Velza Warehouse (received there) → SS-1; the lots end up in transit to SS-1. */
+async function viaWarehouseToSS1(codes: string[], invoice: string) {
+  await dispatch(ids.operator, { action: "confirm", toPartnerId: ids.VW, invoice, codes });
+  for (const code of codes) await receive(ids.vw, { code });
+  await dispatch(ids.vw, { action: "confirm", toPartnerId: ids.SS1, invoice: `VW-${invoice}`, codes });
+}
 afterAll(async () => {
   delete process.env.VELZA_DB_PATH;
   delete process.env.VELZA_UPLOAD_DIR;
@@ -153,7 +162,7 @@ describe("report damaged", () => {
   });
 
   it("a Retailer supplied by its Super Stockist directly reports a sealed case", async () => {
-    await dispatch(ids.operator, { action: "confirm", toPartnerId: ids.SS1, invoice: "INV-4", codes: [lots[3]] });
+    await viaWarehouseToSS1([lots[3]], "INV-4");
     await receive(ids.ss1, { code: lots[3] });
     await dispatch(ids.ss1, { action: "confirm", toPartnerId: ids.RT4, invoice: "INV-5", codes: [lots[3]] });
     expect(await reportDamaged(ids.rt4, { code: lots[3], reason: "Wet", ...photoOf(lots[3]) })).toMatchObject({ ok: false, message: expect.stringMatching(/receive it first/) });

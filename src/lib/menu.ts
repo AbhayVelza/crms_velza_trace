@@ -12,6 +12,7 @@ const receive: MenuItem = { href: "/receive", label: "Receive", description: "Sc
 const dispatch: MenuItem = { href: "/dispatch", label: "Dispatch", description: "Scan OUT down the chain with an invoice/challan" };
 const openLot: MenuItem = { href: "/open-lot", label: "Open lot", description: "Open a case or tray so its packs can move one by one" };
 const stock: MenuItem = { href: "/stock", label: "My stock", description: "Lots and packs at, leaving and arriving at your location" };
+const containers: MenuItem = { href: "/containers", label: "Containers", description: "Shipping containers from the plant to the Velza Warehouse" };
 const damaged: MenuItem = { href: "/damaged", label: "Damaged", description: "Report a damaged case, tray or pack; see everything reported damaged here" };
 
 export const MENU: Record<Role, MenuItem[]> = {
@@ -26,6 +27,7 @@ export const MENU: Record<Role, MenuItem[]> = {
   OPERATOR: [
     { href: "/operator/new", label: "New print order", description: "Guided questions → batch codes → stickers" },
     { href: "/operator/orders", label: "Print orders", description: "History; open the print view again" },
+    { ...containers, description: "Load cases and trays into a shipping container and dispatch it to the Velza Warehouse" },
     dispatch,
     { href: "/operator/reprint", label: "Reprint", description: "Reprint a damaged sticker (same code, reason logged)" },
     { href: "/operator/void", label: "Void lot", description: "Void an unpasted or misprinted lot" },
@@ -33,6 +35,8 @@ export const MENU: Record<Role, MenuItem[]> = {
     damaged,
   ],
   QC: [{ href: "/qc/verify", label: "Verify", description: "Scan a lot and each of its packs, then confirm" }, stock],
+  // The Velza Warehouse receives from the manufacturer and supplies any SS, Distributor or Retailer; it never opens lots.
+  WAREHOUSE: [receive, { ...containers, description: "Containers on their way from the plant; receive one by scanning its number on Receive" }, dispatch, stock, damaged],
   SS: [receive, dispatch, stock, damaged, { href: "/my-partners", label: "My partners", description: "The distributors and retailers assigned to you and their stock" }],
   DB: [receive, dispatch, stock, damaged, { href: "/my-partners", label: "My retailers", description: "The retailers assigned to you and their stock" }],
   RETAILER: [receive, openLot, stock, damaged],
@@ -41,6 +45,7 @@ export const MENU: Record<Role, MenuItem[]> = {
     { href: "/hq/search", label: "Search code", description: "Status, location, parent/children and full timeline" },
     { href: "/hq/alerts", label: "Alerts", description: "Not received, wrong receiver, unknown, duplicate, blocked" },
     { href: "/hq/batches", label: "Batches & recall", description: "Batch report and recall" },
+    containers,
     { href: "/hq/scans", label: "Scan audit", description: "Every scan, success or failure" },
   ],
 };

@@ -4,6 +4,7 @@
 import type {
   Batch,
   BatchCodePoolEntry,
+  Container,
   Country,
   Device,
   Flavour,
@@ -59,6 +60,7 @@ export interface StoreTx {
   batchCodePool: Repo<BatchCodePoolEntry>;
   batches: Repo<Batch>;
   printOrders: Repo<PrintOrder>;
+  containers: Repo<Container>;
   lots: Repo<Lot>;
   packs: Repo<Pack>;
   movements: AppendOnlyRepo<Movement>;
@@ -88,6 +90,7 @@ export interface DbSnapshot {
   batchCodePool: BatchCodePoolEntry[];
   batches: Batch[];
   printOrders: PrintOrder[];
+  containers: Container[];
   lots: Lot[];
   packs: Pack[];
   movements: Movement[];
@@ -107,6 +110,7 @@ export const COLLECTIONS = [
   "batchCodePool",
   "batches",
   "printOrders",
+  "containers",
   "lots",
   "packs",
   "movements",

@@ -119,6 +119,7 @@ beforeAll(async () => {
     ["admin", "ADMIN"],
     ["operator", "OPERATOR"],
     ["qc", "QC"],
+    ["vw", "WAREHOUSE"],
     ["ss1", "SS", "SS-1"],
     ["ss2", "SS", "SS-2"],
     ["db1", "DB", "DB-1"],
@@ -128,7 +129,7 @@ beforeAll(async () => {
   ] as [string, Role, string?][]) {
     ids[k] = await user(role, tag);
   }
-  for (const [k, prefix] of [["SS1", "SS-1"], ["SS2", "SS-2"], ["DB1", "DB-1"], ["DB2", "DB-2"], ["RT1", "Retailer-1"], ["RT2", "Retailer-2"], ["RT4", "Retailer-4"]]) {
+  for (const [k, prefix] of [["VW", "VW-1"], ["SS1", "SS-1"], ["SS2", "SS-2"], ["DB1", "DB-1"], ["DB2", "DB-2"], ["RT1", "Retailer-1"], ["RT2", "Retailer-2"], ["RT4", "Retailer-4"]]) {
     ids[k] = await partner(prefix);
   }
 });
@@ -166,7 +167,9 @@ describe("a network with stock at every tier", () => {
     const order = await printAndVerify(6);
     lots = order.lotCodes;
     orderId = order.id;
-    await send("operator", "SS1", [lots[0], lots[1], lots[2], lots[3]]);
+    // Manufacturer → Velza Warehouse → SS-1
+    await send("operator", "VW", [lots[0], lots[1], lots[2], lots[3]], "vw");
+    await send("vw", "SS1", [lots[0], lots[1], lots[2], lots[3]]);
     for (const code of [lots[0], lots[1], lots[2]]) await receive(ids.ss1, { code }); // lots[3] stays in transit
     await send("ss1", "DB1", [lots[1]], "db1");
     await send("db1", "RT1", [lots[1]], "rt1");
@@ -218,7 +221,8 @@ describe("a network with stock at every tier", () => {
 
     it("the answer does not change when unrelated history is added", async () => {
       const before = await lookup(ids.hq, lots[1]);
-      await send("operator", "SS1", [lots[4]], "ss1");
+      await send("operator", "VW", [lots[4]], "vw");
+      await send("vw", "SS1", [lots[4]], "ss1");
       await store().appendMovement({ type: "REPRINTED", itemKind: "LOT", itemCode: lots[5], fromId: null, toId: null, fromStatus: null, toStatus: null, userId: ids.operator, deviceId: null, invoice: null, note: "unrelated" });
       expect(await lookup(ids.hq, lots[1])).toEqual(before);
     });

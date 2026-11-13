@@ -6,17 +6,22 @@
 // v2: the chain is Manufacturer → Super Stockist → Distributor → Retailer (a few Retailers are served by
 // their Super Stockist directly). The Supplier tier is gone and Outlet is now Retailer (RT0001). A v1
 // database is upgraded in place by the last section of the SQL.
+//
+// v3 (6 Nov 2026): the Velza Warehouse tier (partner type WAREHOUSE, IDs VW0001…, role WAREHOUSE, code status
+// AT_WAREHOUSE) between the Manufacturer and SS/DB/Retailer, and the containers table (shipping containers from
+// the plant to the warehouse). A v2 database only gains allowed values and a new table: the upgrade section
+// below re-applies the checks with the v3 values.
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
-// Checks whose values changed in v2. Each is named explicitly — with the name PostgreSQL gave it in
+// Checks whose values changed in v2 or v3. Each is named explicitly — with the name PostgreSQL gave it in
 // v1 — so the upgrade can replace it, and is written once here for both CREATE TABLE and the upgrade.
-const PARTNER_TYPE_CHECK = `partner_type IN ('MANUFACTURER', 'SS', 'DB', 'RETAILER')`;
-const PARTNER_ID_CHECK = `partner_id ~ '^(MF|SS|DB|RT)[0-9]{4,}$' AND left(partner_id, 2) = CASE partner_type
-      WHEN 'MANUFACTURER' THEN 'MF' WHEN 'SS' THEN 'SS' WHEN 'DB' THEN 'DB' ELSE 'RT' END`;
-const LOGIN_ID_CHECK = `login_id ~ '^(MF|SS|DB|RT|AD|HQ)[0-9]{4,}(-(OP|QC))?$'`;
-const ROLE_CHECK = `role IN ('ADMIN', 'OPERATOR', 'QC', 'SS', 'DB', 'RETAILER', 'TRACE_OWNER')`;
-const CODE_STATUS_CHECK = `status IN ('GENERATED', 'PRINTED', 'PACKED', 'IN_TRANSIT', 'AT_SS', 'AT_DB', 'AT_RETAILER',
+const PARTNER_TYPE_CHECK = `partner_type IN ('MANUFACTURER', 'WAREHOUSE', 'SS', 'DB', 'RETAILER')`;
+const PARTNER_ID_CHECK = `partner_id ~ '^(MF|VW|SS|DB|RT)[0-9]{4,}$' AND left(partner_id, 2) = CASE partner_type
+      WHEN 'MANUFACTURER' THEN 'MF' WHEN 'WAREHOUSE' THEN 'VW' WHEN 'SS' THEN 'SS' WHEN 'DB' THEN 'DB' ELSE 'RT' END`;
+const LOGIN_ID_CHECK = `login_id ~ '^(MF|VW|SS|DB|RT|AD|HQ)[0-9]{4,}(-(OP|QC))?$'`;
+const ROLE_CHECK = `role IN ('ADMIN', 'OPERATOR', 'QC', 'WAREHOUSE', 'SS', 'DB', 'RETAILER', 'TRACE_OWNER')`;
+const CODE_STATUS_CHECK = `status IN ('GENERATED', 'PRINTED', 'PACKED', 'IN_TRANSIT', 'AT_WAREHOUSE', 'AT_SS', 'AT_DB', 'AT_RETAILER',
                     'OPENED', 'QUARANTINED', 'VOID', 'DAMAGED', 'RETURNED', 'RECALLED')`;
 
 // Values only a v1 database can hold (the Supplier tier, Outlets and their SP / OT IDs).
@@ -171,6 +176,28 @@ CREATE TABLE IF NOT EXISTS print_orders (
   row_no           bigint GENERATED ALWAYS AS IDENTITY
 );
 
+-- ============================================================ containers
+-- One trip of a shipping container from the plant to the Velza Warehouse. container_code is the container's
+-- own number; containers are reused, so it is unique only among containers still loading or on the road.
+CREATE TABLE IF NOT EXISTS containers (
+  container_id     text PRIMARY KEY,
+  container_code   text NOT NULL CHECK (container_code ~ '^[A-Z0-9][A-Z0-9-]{2,19}$'),
+  manufacturer_id  text NOT NULL,
+  status           text NOT NULL CHECK (status IN ('LOADING', 'IN_TRANSIT', 'RECEIVED')),
+  lot_codes        text[] NOT NULL,
+  to_partner_id    text,
+  invoice          text,
+  created_at       timestamptz NOT NULL,
+  created_by       text NOT NULL,
+  dispatched_at    timestamptz,
+  dispatched_by    text,
+  received_at      timestamptz,
+  received_by      text,
+  row_no           bigint GENERATED ALWAYS AS IDENTITY
+);
+CREATE UNIQUE INDEX IF NOT EXISTS containers_one_active_per_code ON containers (container_code) WHERE status <> 'RECEIVED';
+CREATE INDEX IF NOT EXISTS containers_by_manufacturer ON containers (manufacturer_id);
+
 -- ============================================================ codes
 -- One row per sticker: a case or tray (LOT) and each of its packs (PACK). The code must equal its
 -- parts: country (2) + batch (6) + flavour (2) + hex lot number (5) [+ pack size + pack sequence].
@@ -259,9 +286,9 @@ DROP TRIGGER IF EXISTS code_history_no_change ON code_history;
 CREATE TRIGGER code_history_no_change BEFORE UPDATE OR DELETE ON code_history
   FOR EACH ROW EXECUTE FUNCTION code_history_append_only();
 
--- ============================================================ upgrade from v1
+-- ============================================================ upgrade from v1 / v2
 -- CREATE TABLE IF NOT EXISTS leaves an existing table's checks as they were, so the checks that changed
--- in v2 are put back here with the v2 values (on a new database this replaces them with the same).
+-- in v2 and v3 are put back here with the current values (on a new database this replaces them with the same).
 -- Rows from before the change must be converted first; if any are left this stops and says how.
 DO $$
 DECLARE
@@ -305,6 +332,7 @@ export const ALL_TABLES = [
   "code_history",
   "codes",
   "print_orders",
+  "containers",
   "batches",
   "batch_code_pool",
   "sessions",

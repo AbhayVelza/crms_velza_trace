@@ -113,7 +113,27 @@ describe("Maharashtra QA network (18 partners)", () => {
       expect(dest.destinations.map((p) => p.id).sort()).toEqual(mine.partners.map((p) => p.id).sort());
     }
     await expect(myPartners(idOf(`${QA_PREFIX}-RTL-001`))).rejects.toMatchObject({ status: 403 });
-    // The plant supplies any Super Stockist (there is no plant → SS assignment).
-    expect((await destinations(`${idOf(`${QA_PREFIX}-MFG-001`)}-OP`)).destinations.map((p) => p.id).sort()).toEqual([idOf(`${QA_PREFIX}-SS-001`), idOf(`${QA_PREFIX}-SS-002`)].sort());
+    // The plant ships only to a Velza Warehouse, never straight to a Super Stockist; this QA network has none yet.
+    const plantOp = `${idOf(`${QA_PREFIX}-MFG-001`)}-OP`;
+    expect((await destinations(plantOp)).destinations).toEqual([]);
+  });
+
+  it("a registered Velza Warehouse is the plant's only destination and may supply every SS, DB and Retailer", async () => {
+    const r = (await createEntity("AD0001", "partners", {
+      type: "WAREHOUSE", name: "QA Velza Warehouse", place: "Bhiwandi", address: "Gala 1", city: "Thane", state: "Maharashtra",
+      contactPerson: "QA Warehouse", phone: "+91 90000 77701", password: PASSWORD,
+    })) as { partner: Partner; logins: { id: string; role: string }[] };
+    expect(r.partner.id).toBe("VW0001");
+    expect(r.logins).toEqual([expect.objectContaining({ id: "VW0001", role: "WAREHOUSE" })]);
+    // A warehouse is not assigned to anyone.
+    await expect(
+      createEntity("AD0001", "partners", { type: "WAREHOUSE", name: "VW 2", place: "x", address: "x", city: "Pune", state: "Maharashtra", contactPerson: "x", phone: "+91 90000 77702", password: PASSWORD, parentId: idOf(`${QA_PREFIX}-SS-001`) }),
+    ).rejects.toMatchObject({ code: "BAD_PARENT" });
+
+    expect((await destinations(`${idOf(`${QA_PREFIX}-MFG-001`)}-OP`)).destinations.map((p) => p.id)).toEqual(["VW0001"]);
+    const fromVw = (await destinations("VW0001")).destinations.map((p) => p.id).sort();
+    const everyoneElse = (await partners()).filter((p) => ["SS", "DB", "RETAILER"].includes(p.type) && p.active).map((p) => p.id).sort();
+    expect(fromVw).toEqual(everyoneElse);
+    expect(fromVw).toHaveLength(EXPECTED_COUNTS.SS + EXPECTED_COUNTS.DB + EXPECTED_COUNTS.RETAILER);
   });
 });

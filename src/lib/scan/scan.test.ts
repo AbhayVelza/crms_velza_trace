@@ -2,7 +2,7 @@
 // (with a mocked camera: no real device is involved here).
 
 import { describe, expect, it } from "vitest";
-import { activeCameraSession, CameraSession, toCameraError, type CameraEnv, type Decoder, type VideoLike } from "./camera";
+import { activeCameraSession, CAMERA_SIZE, CameraSession, toCameraError, type CameraEnv, type Decoder, type VideoLike } from "./camera";
 import { applyAccepted, applyRejected, countChecklist, createChecklist, filterRows, mergeExpected, nextPending, pageOf, rebaseChecklist, resetAll, resetItem, statusForRejection } from "./checklist";
 import { ScanGate } from "./gate";
 import { checkCodeFormat, normalizeScannedCode } from "./normalize";

@@ -29,11 +29,12 @@ Oct 27, 2026 · Abhay Velza · living document, updated 30 Oct 2026 (see [Change
 
 Velza Traceability gives every case, tray and pack of Velza beverages a unique code and records each hand-over from
 the factory to the retailer. Stickers with a barcode are printed at the plant, checked by QC, and scanned
-OUT and IN at every step of the chain: **Manufacturer → Super Stockist → Distributor → Retailer**. A few retailers are
-supplied by their Super Stockist directly (**Manufacturer → Super Stockist → Retailer**).
+OUT and IN at every step of the chain. Since 6 Nov 2026 the plant ships only to the **Velza Warehouse**, in shipping
+containers: **Manufacturer → Velza Warehouse → Super Stockist, Distributor or Retailer**, and from there the chain goes
+on as before: **Super Stockist → Distributor → Retailer** (a few retailers are supplied by their Super Stockist directly).
 
 Velza Global India runs the system through two central roles: **Velza Admin** sets up the network, and **Velza HQ**
-watches it (status, location, history, alerts, recalls). Each of the 7 roles works in its own portal and sees only its
+watches it (status, location, history, alerts, recalls). Each of the 8 roles works in its own portal and sees only its
 own part of the chain. Lot stickers no longer carry a QR code (6 Nov 2026); cases printed earlier with a QR still open
 the public check page, where consumers see whether the product is genuine and not recalled.
 
@@ -46,24 +47,47 @@ the plant (see [Scale and readiness](#scale-and-readiness-2-crore-stickers)).
 
 ## Working model structure
 
-The model has three parts: a four-tier partner chain, a code on every unit, and a status that moves with each scan.
+The model has three parts: a five-tier partner chain, a code on every unit, and a status that moves with each scan.
 
 ### Partner tiers and assignment
 
 Every Distributor is assigned to one Super Stockist. Every Retailer is assigned to one Distributor, or to its Super
-Stockist directly. A partner sees, and can dispatch to, only the partners assigned to it. The Supplier tier was removed
-and Outlet renamed Retailer on 27 Oct 2026.
+Stockist directly. A partner sees, and can dispatch to, only the partners assigned to it — except the **Velza
+Warehouse**, which is Velza's own and supplies any Super Stockist, Distributor or Retailer. The Supplier tier was removed
+and Outlet renamed Retailer on 27 Oct 2026; the Velza Warehouse tier was added on 6 Nov 2026.
 
 | Tier | Receives from | Dispatches to | Assigned to | Example |
 |---|---|---|---|---|
-| Manufacturer (plant) | — | Any Super Stockist | — | vietnam_plant |
-| Super Stockist (SS) | Manufacturer | Its assigned distributors and its direct retailers | — | pune_stocks |
-| Distributor (DB) | Its Super Stockist | Its assigned retailers | One Super Stockist | fc_road_db, baner_db → pune_stocks |
-| Retailer (RT) | Its Distributor, or its Super Stockist | — (sells to consumers) | One Distributor, or one Super Stockist directly | JW Marriot → fc_road_db; Colaba Kirana → pune_stocks |
+| Manufacturer (plant) | — | Only the Velza Warehouse (in shipping containers, or case by case) | — | vietnam_plant |
+| Velza Warehouse (VW) | Manufacturer | Any Super Stockist, Distributor or Retailer | — (not assigned) | VW0001 Bhiwandi |
+| Super Stockist (SS) | Velza Warehouse | Its assigned distributors and its direct retailers | — | pune_stocks |
+| Distributor (DB) | Velza Warehouse, or its Super Stockist | Its assigned retailers | One Super Stockist | fc_road_db, baner_db → pune_stocks |
+| Retailer (RT) | Velza Warehouse, its Distributor, or its Super Stockist | — (sells to consumers) | One Distributor, or one Super Stockist directly | JW Marriot → fc_road_db; Colaba Kirana → pune_stocks |
 
 Example: assign 50 distributors to the Pune SS, and the Pune SS sees exactly those 50 plus the retailers assigned to it
 directly. Assign 50 retailers to fc_road_db, and fc_road_db sees exactly those 50. An SS never sees the retailers of its
 distributors.
+
+### Velza Warehouse and shipping containers (since 6 Nov 2026)
+
+- There is one Velza Warehouse for now (VW0001, sign-in VW0001, role *Velza Warehouse*). Admin registers more on
+  Partners like any other tier if the company opens more; nothing else changes. A warehouse is not assigned to anyone.
+- Its portal: Receive, Containers, Dispatch, My stock, Damaged. Stock there has the status **At warehouse**. It never
+  opens cases or trays (only Retailers do).
+- **Containers.** The plant ships to the warehouse in shipping containers of up to **2,860 cases and trays**. On the
+  operator's *Containers* page: open a container by its own number as printed on it (e.g. `MSCU1234567`; letters, digits
+  and dashes, 3–20 characters, never a case/tray code) → scan cases and trays into it (each must be Packed by QC, synced,
+  at the plant and in no other loading container; packs are refused; *Take out* removes one) → choose the warehouse and
+  the invoice → **Dispatch container**: every case and tray in it is checked like a normal dispatch and they all go, or
+  none do. A loading container can be cancelled.
+- The warehouse receives a container by scanning its number on **Receive**: every case and tray in it still on its way
+  there becomes At warehouse at once (one received movement each, noting the container). Ones already received singly
+  are left as they are. Anyone else scanning the number gets WRONG_RECEIVER; scanning it again, DUPLICATE_RECEIPT.
+- A container number is reused for many trips: it is unique only while that container is loading or on the road; once
+  received, the next trip can use it again. Each trip is its own record (status Loading → On the way → Received, with
+  invoice, times and who did it). The operator sees its plant's containers, the warehouse those sent to it, Velza HQ all
+  of them (*Containers*). In a code's timeline the dispatch and receipt say "Container MSCU1234567".
+- The plant can still dispatch single cases and trays to the warehouse on Dispatch (no container).
 
 ### Units and codes
 
@@ -269,12 +293,12 @@ its packs is still there.
 | Generated | Codes allocated, stickers not printed | Operator creates a print order |
 | Printed | Stickers printed | Operator confirms each print run (cases, trays) with **Mark cases as printed** / **Mark trays as printed** in the print view; only that run's lots become Printed, so QC can start on the cases while the trays are still printing. **Print** only opens the browser print dialog; cancelling or closing it, Ctrl+P, downloading the codes CSV or leaving the page record nothing. The print order shows *Printing pending* until every run is confirmed, and QC refuses lots of an unconfirmed run. An order whose lots are all voided cannot be marked printed |
 | Packed | QC checked the lot and all its pack stickers | Supervisor/QC confirms |
-| In transit | On its way to the next partner | Sender confirms dispatch |
-| At SS / At DB / At Retailer | Received at that partner | Receiver scans it IN |
+| In transit | On its way to the next partner | Sender confirms dispatch (or the operator dispatches its container) |
+| At warehouse / At SS / At DB / At Retailer | Received at that partner | Receiver scans it IN (the warehouse can scan a whole container's number) |
 | Opened | Case or tray opened; packs now move individually | Retailer opens the lot (only Retailers open cases and trays) |
 | Quarantined | Failed QC check; cannot move. Two ways out: Void (ends as Void for good), or reprint the bad sticker with a reason, which sends the lot back to Printed so QC verifies it again before it becomes Packed | QC confirms with missing or wrong packs |
 | Void | Misprinted or unused stickers cancelled | Operator voids the lot |
-| Damaged | Case, tray or pack damaged; leaves stock, cannot move, HQ alerted, public page says not for sale | Plant, SS, DB or Retailer reports it on its Damaged page, with a reason, a photo of the item showing its barcode and 1–4 photos of the damage itself |
+| Damaged | Case, tray or pack damaged; leaves stock, cannot move, HQ alerted, public page says not for sale | Plant, Velza Warehouse, SS, DB or Retailer reports it on its Damaged page, with a reason, a photo of the item showing its barcode and 1–4 photos of the damage itself |
 | Recalled | Batch withdrawn; cannot move, public page warns consumers | Velza HQ recalls the batch |
 
 ## Tree diagrams
@@ -287,7 +311,9 @@ assigned to it directly; each distributor sees only its own retailers.
 ```
 Velza Admin (builds)            Velza HQ (sees everything)
         │
-Manufacturer (vietnam_plant) ──► any Super Stockist
+Manufacturer (vietnam_plant) ──► only the Velza Warehouse (containers)
+        │
+Velza Warehouse (VW0001) ──► any Super Stockist, Distributor or Retailer
         │
 Super Stockist (pune_stocks)
  ├── Distributor (fc_road_db)
@@ -325,7 +351,8 @@ Operator: New print order ─► Generated ─► Print ─► Printed
 QC: scan lot + every pack ─► all match ─► Packed
                          └─► missing/wrong ─► Quarantined ─► Void
                                                         └─► Reprint (reason) ─► Printed ─► QC again
-Plant: Dispatch (invoice) ─► In transit ─► SS: Receive ─► At SS
+Plant: Container (scan cases/trays in) ─► Dispatch container (invoice) ─► In transit ─► VW: scan container number ─► At warehouse
+VW: Dispatch ─► In transit ─► SS, DB or Retailer: Receive ─► At SS / At DB / At Retailer
 SS: Dispatch ─► In transit ─► DB: Receive ─► At DB ─► Dispatch ─► Retailer: Receive ─► At Retailer ─► Open lot ─► Opened
 SS: Dispatch ─► its direct Retailer ─► At Retailer
 Any stock-holding tier: Damaged (reason + photo with barcode + 1–4 damage photos) ─► Damaged, HQ alerted
@@ -340,7 +367,7 @@ scanner, camera or keyboard.
 ### Onboarding a partner (Velza Admin)
 
 1. **Partners → Register a partner:** tier, site name, contact person, place, address, city, state, PIN, phone and email.
-   The system issues the next ID of the tier (MF0001, SS0001, DB0001, RT0001 …) and a sign-in with that ID; Admin shares
+   The system issues the next ID of the tier (MF0001, VW0001, SS0001, DB0001, RT0001 …) and a sign-in with that ID; Admin shares
    the password.
 2. **Assigned to:** link it to its parent in the same form. A distributor goes under a Super Stockist. A retailer goes
    under a distributor, or, by choosing Super Stockist in *Assigned to tier*, directly under its Super Stockist. Without
@@ -359,6 +386,7 @@ only the assigned receiver can scan it IN. Anyone else who scans it gets a WRONG
 | Location | Device | Scanning | Volume |
 |---|---|---|---|
 | Manufacturer | Plant PC (registered device) | Webcam or phone camera now; a 2D USB scanner at the QC table is recommended | Highest: QC scans every lot and pack sticker |
+| Velza Warehouse | PC with a barcode scanner | Container number once per container; case/tray barcodes when dispatching onward | High: whole containers in, whole cases out |
 | Super Stockist | Phone or PC | Phone camera on the lot barcode | Low: whole cases only |
 | Distributor | PC, tablet or phone | Barcode scanner (USB or Bluetooth, keyboard mode) | Medium: whole cases only |
 | Retailer | PC, tablet or phone | Barcode scanner | Medium; the only tier that opens cases into packs |
@@ -416,21 +444,22 @@ server.
 
 ## Roles and responsibilities
 
-There are seven roles: two central roles at Velza Global India and five in the distribution line. Each role sees only
+There are eight roles: two central roles at Velza Global India and six in the distribution line. Each role sees only
 its own portal, the server refuses anything outside it, and everyone can change their own password on the Account page.
 
 | Role | Belongs to | Responsible for | Portal screens |
 |---|---|---|---|
 | Velza Admin | Velza Global India | Setting up and maintaining the network: registering partners (with their IDs and sign-ins), assignments, passwords, plant devices, country and flavour codes, batch code pools, settings. Deactivates or deletes records that have no history. | Partners (registration form), Sign-ins & passwords, Devices, Countries & flavours, Batch code pools, Settings |
-| Velza HQ | Velza Global India | Watching the whole chain: stock and status everywhere, investigating alerts (not received, wrong receiver, unknown or blocked codes), tracing any code, recalling a batch. Only role with the HQ dashboard. | Dashboard, Search code, Alerts, Batches & recall, Scan audit |
-| Manufacturer Operator | A plant | Creating print orders and printing stickers, seeing every generated code per order, dispatching packed lots to Super Stockists with an invoice, reprinting damaged stickers (same code, reason logged), voiding misprints, keeping the plant PC synced. | New print order, Print orders (with Codes view), Dispatch, Reprint, Void lot, My stock, Damaged |
+| Velza HQ | Velza Global India | Watching the whole chain: stock and status everywhere, investigating alerts (not received, wrong receiver, unknown or blocked codes), tracing any code, following containers, recalling a batch. Only role with the HQ dashboard. | Dashboard, Search code, Alerts, Batches & recall, Containers, Scan audit |
+| Manufacturer Operator | A plant | Creating print orders and printing stickers, seeing every generated code per order, loading packed cases and trays into shipping containers and dispatching them to the Velza Warehouse with an invoice, reprinting damaged stickers (same code, reason logged), voiding misprints, keeping the plant PC synced. | New print order, Print orders (with Codes view), Containers, Dispatch, Reprint, Void lot, My stock, Damaged |
 | Supervisor / QC | A plant | Checking that every pasted pack sticker belongs to its lot before anything leaves the plant: confirms to Packed, or the lot is quarantined. | Verify, My stock |
-| Super Stockist | Its own company (one per state) | Receiving cases from the plant and dispatching them to its assigned distributors and to the retailers assigned to it directly. | Receive, Dispatch, My stock, Damaged, My partners |
-| Distributor | Its own company | Receiving from its Super Stockist and dispatching to its assigned retailers. | Receive, Dispatch, My stock, Damaged, My retailers |
-| Retailer | Its own shop | Receiving from its distributor (or its Super Stockist) and opening cases and trays for sale; the only role that opens them. Cannot dispatch. | Receive, Open lot, My stock, Damaged |
+| Velza Warehouse | Velza Global India (one warehouse for now) | Receiving containers from the plant (one scan of the container number) and dispatching cases and trays to any Super Stockist, Distributor or Retailer. Never opens cases. | Receive, Containers, Dispatch, My stock, Damaged |
+| Super Stockist | Its own company (one per state) | Receiving cases from the Velza Warehouse and dispatching them to its assigned distributors and to the retailers assigned to it directly. | Receive, Dispatch, My stock, Damaged, My partners |
+| Distributor | Its own company | Receiving from the Velza Warehouse or its Super Stockist and dispatching to its assigned retailers. | Receive, Dispatch, My stock, Damaged, My retailers |
+| Retailer | Its own shop | Receiving from the Velza Warehouse, its distributor or its Super Stockist and opening cases and trays for sale; the only role that opens them. Cannot dispatch. | Receive, Open lot, My stock, Damaged |
 | Consumer (no login) | — | Scanning the QR code on older stickers to check a product is genuine and not recalled (new stickers have no QR). Sees no business data. | Public check page |
 
-Every role that holds stock (plant, Super Stockist, Distributor, Retailer) also reports damaged cases, trays and packs
+Every role that holds stock (plant, Velza Warehouse, Super Stockist, Distributor, Retailer) also reports damaged cases, trays and packs
 on its Damaged page. Scanning the lot code reports a whole case or tray, opened or not (an opened one takes the packs of
 it still at that location); single packs can be reported once the lot is opened. Each Damaged page and the HQ dashboard
 show the count as cases, trays and single packs.
@@ -1336,6 +1365,8 @@ section above in the same change.
 
 | Date | Who | Change | Verified |
 |---|---|---|---|
+| 13 Nov 2026 | Claude Code on `develop/aditya` | **Warehouse work merged with `main` (PR #3 / #4); Abhay's 12 Nov merge repaired.** The 6 Nov warehouse/containers work (`2ff5f9e`, also on `feature/velza-warehouse`) was merged with `origin/develop/aditya` @ `23d2836`, where `main` had been merged in on 12 Nov. That merge had kept both sides of its conflicts in `ScanInput.tsx`, `PrintView.tsx`, `printOrders.ts`, `trace.ts`, `damage.ts`, the printed route, the HQ alerts page and two tests (duplicate functions; `tsc` failed on `main` too). Re-merged from the two parents, keeping both behaviours: cases and trays still print and confirm as **separate runs** (`{ lotType }`) on top of PR #3's print-once sheet, one-time reprints and bulk `markPrinted` (`{ deviceId }` accepted too; the order is PRINTED only when no run is waiting). Camera: PR #3's `CameraSession` now asks for 1920×1080, `TRY_HARDER` and continuous focus, exposes the resolution, and the scan box keeps the camera open between QC steps and warns below 1280 px. Damage reports keep the required photos and take the cleaned scan code. HQ alert rows carry both the alert state and `photoUrls`. PostgreSQL schema renumbered: warehouse + containers are **v5** (v3 = code integrity, v4 = indexes, from `main`); `containers` added to the clear-activity list. `AT_WAREHOUSE` added to the public "Genuine" and sellable status lists. Receive page: no client-side 15/17-character check for the warehouse (container numbers). Tests from `main` that shipped plant → SS directly now go through the warehouse; `reportDamaged` calls send the photos. | typecheck + eslint clean; vitest 823 passed + 9 skipped (55 files, JSON and PostgreSQL, 2 workers); Playwright e2e 19/19 (`demo.spec.ts` 12 + `scanning.spec.ts` 7; the dispatch/receive checklist test now ships to VW-1). Not tested: in-place upgrade of a real PostgreSQL database from v4 to v5 |
+| 6 Nov 2026 | Claude Code on `develop/aditya` | **Velza Warehouse tier and shipping containers** (Overview, "Working model structure" incl. new "Velza Warehouse and shipping containers", Statuses, Partner tree, Workflow, onboarding, "How each location connects" and Roles updated). At the user's request the pipeline changed: the plant dispatches containers to the Velza Warehouse, which distributes to SS, DB and Retailers. Decisions (user, 6 Nov): a container holds up to 2,860 cases/trays and carries its own number, entered in the system for container tracking; after the warehouse the old chain continues (SS → DB → Retailer, SS → direct Retailer); the warehouse may supply any SS, DB or Retailer (no assignment); one warehouse for now, more can be registered later. **Tier:** partner type `WAREHOUSE` (IDs VW0001…, label Velza Warehouse), role `WAREHOUSE` (sign-in = partner ID; Receive, Containers, Dispatch, My stock, Damaged), status `AT_WAREHOUSE`; `DESTINATION_TYPES`: Manufacturer → Warehouse only, Warehouse → SS/DB/Retailer; `isAssignedDestination` lets the warehouse supply anyone; Admin Partners texts and the Dispatch subtitle updated. **Containers:** new `containers` table/collection (one row per trip: number, plant, status LOADING/IN_TRANSIT/RECEIVED, lot codes, warehouse, invoice, who/when); `src/lib/services/containers.ts` + `/api/containers` (list, open, detail, cancel, load, unload, dispatch); Receive accepts a container number (`receiveContainer`); dispatch and receive steps shared with single scans (`dispatchItems`, `receiveItem` in `movement.ts`); movements note "Container <number>"; scan context `CONTAINER`; permission `container` (Operator, Warehouse, HQ); new *Containers* page. **PostgreSQL:** schema v3 (renumbered v5 on 13 Nov, after the code-integrity v3 and index v4 from `main`) — new allowed values in the partner type, ID, sign-in, role and code status checks (re-applied by the upgrade section), and the `containers` table with a unique index on the number among unfinished trips; `db/schema.sql` regenerated. Existing stock already at or on its way to an SS is unaffected. QA script `tests/qa/qaRun.ts`: role matrix skips WAREHOUSE (the QA dataset has no warehouse sign-in yet). | typecheck + eslint clean; vitest JSON store 378/378 (rules: MF → VW only, VW → any SS/DB/RT, AT_WAREHOUSE; demo script via VW incl. VW → DB/Retailer directly; new `containers.test.ts`: number checks, loading rules, all-or-nothing dispatch, receive by number incl. partial/wrong receiver/duplicate, HQ timeline, number reuse; QA dataset: registered VW is the plant's only destination); PostgreSQL: containers, demo script and damage tests 28/28; `playwright demo.spec.ts` 13/13 (plant → VW → SS-1 in the UI, new step 12: container loaded, dispatched and received by its number). Not yet: a real v2 PostgreSQL database upgraded in place (the upgrade re-applies the checks the same way as v1 → v2) |
 | 6 Nov 2026 | Claude Code on `develop/aditya` | **No minimum for cases or trays** (Part 1 "Units and codes" and continuation checks updated). At the user's request, cases and trays are each 0 or a whole number with no compulsion. Before, a batch with 0 cases and 0 trays was refused ("enter at least 1 case or 1 tray (both are 0)") and an emptied box was an error. Decision (user, 6 Nov): 0 + 0 is allowed for a batch — it takes its batch code, gets no lot numbers (the counter stays at 00001) and is filled later with *Continue an existing batch*. Still refused, because nothing would print: a whole new order where every batch is 0 + 0 (400 `INVALID_ORDER`, "Nothing to print") and a continuation of 0 + 0 (400 `INVALID_QUANTITY`). New batches and Continue: an empty box counts as 0; negative or fractional counts still say "must be 0 or a whole number". Files: `src/lib/core/printOrder.ts`, `src/lib/services/printOrders.ts`, `src/app/(screens)/operator/new/page.tsx`, tests. | typecheck + eslint clean; vitest JSON store 369/369 (new: 0-tray and 0 + 0 batches plan fine, all-zero order refused, 0 + 0 batch created with no lots and continued from 00001, 0 + 0 continuation refused); `playwright demo.spec.ts` 12/12 |
 | 6 Nov 2026 | Claude Code on `develop/aditya` | **Cases and trays printed as separate runs** (Part 1 "Working model structure" and "Statuses" updated). At the user's request: case and tray stickers go on different label rolls and are stuck on differently, so they are never printed in one run. Decisions (user, 6 Nov): same sticker sizes for both rolls; each run confirmed on its own. Print view: new **Print run** choice (Cases · n lots, m stickers / Trays · …, each marked *To print* or *Printed*; the first run still to print is selected); the preview, **Print n case/tray stickers** and the size warnings cover the chosen run only; **Mark cases as printed** / **Mark trays as printed**. Server: every sticker carries `lotType`; the order's sheet has `runs` (`lotType`, lots, stickers, pending); `POST /api/print-orders/<id>/printed` takes `{ lotType }` — only that run's GENERATED lots (and packs) become PRINTED, and the order becomes PRINTED with its time only when no lot of any run is waiting; repeating a run changes nothing; a run the order lacks is 400 `NOTHING_TO_PRINT`. Without `lotType` (or with no body) the whole order is confirmed as before, so scripts keep working. Reprints are unchanged (one sticker). Files: `src/lib/core/stickers.ts`, `src/lib/services/printOrders.ts`, `src/app/api/print-orders/[id]/printed/route.ts`, `src/components/PrintView.tsx`, tests. | typecheck + eslint clean; vitest JSON store 366/366 (new: runs on the sheet, cases confirmed alone → order still pending, QC verifies the cases and refuses the trays, then trays → order PRINTED; missing/bad run refused); `playwright demo.spec.ts` 12/12 — cases run (10 stickers) and trays run (14) each decoded, printed and confirmed separately |
 | 6 Nov 2026 | Claude Code on `develop/aditya` | **One batch, one flavour: flavour change on existing batches removed** (Part 1 "Continuing a batch" updated; reverses the 5 Nov flavour switch, 5938ed1). At the user's request a batch carries one flavour only. *Continue an existing batch*: step 2 is "Cases & trays" again, with no flavour picker; new lots always take the batch's flavour. Server: `POST /api/print-orders/continue` no longer takes a flavour choice — a request naming another flavour gets 400 `FLAVOUR_CHANGE_NOT_ALLOWED` (preview too) and allocates nothing; the batch's own flavour is accepted. Kept on purpose: screens show each lot's own flavour (lot lookup, Batches, batch report, Print orders) and a flavour used by lots cannot be deleted, so lots already printed with a switched flavour still display and stay consistent; the whole-row click on *Choose batch* (also from 5938ed1) stays. Files: `src/lib/services/printOrders.ts`, `src/app/(screens)/operator/new/page.tsx`, `tests/unit/continuation.test.ts`. | typecheck + eslint clean; `continuation.test.ts` 54 pass / 2 skipped on JSON and PostgreSQL (new: another flavour refused without allocating, own flavour accepted); full vitest: all JSON-store tests pass, the 7 PostgreSQL files that time out in setup on this branch (no `9a9fc53`) unchanged. Not clicked through in a browser |

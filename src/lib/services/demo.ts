@@ -76,7 +76,7 @@ export async function demoCodes(userId: string | null, screen: DemoScreen, lotCo
       return lots.filter((l) => l.locationId === me && l.status === "AT_RETAILER").map((l) => ({ code: l.lotCode, label: lotLabel(l) }));
     case "damage": {
       // Lots in stock here (sealed, or opened with packs left here), and loose packs in stock here.
-      const inStock = new Set(["PACKED", "AT_SS", "AT_DB", "AT_RETAILER"]);
+      const inStock = new Set(["PACKED", "AT_WAREHOUSE", "AT_SS", "AT_DB", "AT_RETAILER"]);
       const myPacks = packs.filter((p) => loose(p) && p.locationId === me && inStock.has(p.status));
       const openedHere = new Set(myPacks.map((p) => p.lotCode));
       const myLots = lots.filter((l) => l.locationId === me && l.synced && (inStock.has(l.status) || (l.status === "OPENED" && openedHere.has(l.lotCode))));

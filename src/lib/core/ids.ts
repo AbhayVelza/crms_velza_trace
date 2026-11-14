@@ -7,6 +7,7 @@ import type { PartnerType, Role } from "./types";
 
 export const PARTNER_ID_PREFIX: Record<PartnerType, string> = {
   MANUFACTURER: "MF",
+  WAREHOUSE: "VW",
   SS: "SS",
   DB: "DB",
   RETAILER: "RT",
@@ -21,6 +22,7 @@ export const PLANT_LOGIN_SUFFIX: Partial<Record<Role, string>> = { OPERATOR: "OP
 /** The sign-ins a new partner of this type gets. */
 export const PARTNER_LOGIN_ROLES: Record<PartnerType, Role[]> = {
   MANUFACTURER: ["OPERATOR", "QC"],
+  WAREHOUSE: ["WAREHOUSE"],
   SS: ["SS"],
   DB: ["DB"],
   RETAILER: ["RETAILER"],

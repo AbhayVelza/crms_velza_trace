@@ -18,6 +18,7 @@ describe("publicStatus (allowlist)", () => {
     PRINTED: { label: "Not yet released", tone: "warn" },
     PACKED: { label: "Genuine Velza product", tone: "ok" },
     IN_TRANSIT: { label: "Genuine Velza product", tone: "ok" },
+    AT_WAREHOUSE: { label: "Genuine Velza product", tone: "ok" },
     AT_SS: { label: "Genuine Velza product", tone: "ok" },
     AT_DB: { label: "Genuine Velza product", tone: "ok" },
     AT_RETAILER: { label: "Genuine Velza product", tone: "ok" },

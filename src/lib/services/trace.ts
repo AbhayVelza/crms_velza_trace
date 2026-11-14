@@ -44,7 +44,7 @@ const MAX_LOGGED_CODE = 64;
 const cleanCode = (raw: string) => normalizeScannedCode(String(raw ?? "").slice(0, MAX_RAW_CODE)).slice(0, MAX_LOGGED_CODE);
 
 /** Sellable stock: QC-passed at the plant (PACKED) and received down the chain. Everything else is not stock. */
-export const SELLABLE_STATUSES: readonly ItemStatus[] = ["PACKED", "AT_SS", "AT_DB", "AT_RETAILER"];
+export const SELLABLE_STATUSES: readonly ItemStatus[] = ["PACKED", "AT_WAREHOUSE", "AT_SS", "AT_DB", "AT_RETAILER"];
 const sellable = (s: ItemStatus) => SELLABLE_STATUSES.includes(s);
 
 type Placed = { status: ItemStatus; statusBeforeRecall: ItemStatus | null; locationId: string; inTransitToId: string | null };

@@ -150,6 +150,7 @@ const STATUS_TONES: Partial<Record<ItemStatus, PillTone>> = {
   PRINTED: "neutral",
   PACKED: "strong",
   IN_TRANSIT: "warn",
+  AT_WAREHOUSE: "strong",
   AT_SS: "strong",
   AT_DB: "strong",
   AT_RETAILER: "ok",

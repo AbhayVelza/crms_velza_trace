@@ -55,9 +55,9 @@ function decode(buf: Buffer, format: BarcodeFormat): string {
 }
 
 const PASSWORD = "Sample2026pass"; // every sample sign-in (tests/fixtures/sampleNetwork.ts)
-const PREFIX: Record<string, string> = { SS: "SS", DB: "DB", RETAILER: "RT" };
+const PREFIX: Record<string, string> = { WAREHOUSE: "VW", SS: "SS", DB: "DB", RETAILER: "RT" };
 
-/** Sign-in ID of a sample person: AD0001, HQ0001, MF0001-OP, MF0001-QC, or the partner ID ("SS-2" → SS0002). */
+/** Sign-in ID of a sample person: AD0001, HQ0001, MF0001-OP, MF0001-QC, or the partner ID ("SS-2" → SS0002, "VW-1" → VW0001). */
 function loginIdOf(role: string, tag: string | null): string {
   if (role === "ADMIN") return "AD0001";
   if (role === "TRACE_OWNER") return "HQ0001";
@@ -307,8 +307,22 @@ test.describe.serial("Velza demo script (9.1)", () => {
     await verifyLot(page, lots[3], packsOf(lots[3], "TRAY"));
   });
 
-  test("3. operator dispatches the 2 Original cases to SS-1 with INV-001", async ({ page }) => {
-    await dispatch(page, "OPERATOR", null, "SS-1", "INV-001", [lots[0], lots[1]]);
+  test("3. operator dispatches the 2 Original cases to the Velza Warehouse (INV-001); the warehouse receives them and sends them to SS-1 (VW-001)", async ({ page }) => {
+    // The plant ships only to the Velza Warehouse: it is the only destination offered.
+    await as(page, "OPERATOR", null, "/dispatch");
+    const destination = page.getByLabel("Destination");
+    await expect(destination.locator("option", { hasText: "VW-1 Velza Warehouse" })).toHaveCount(1);
+    await expect(destination.locator("option", { hasText: /SS-|DB-|Retailer-/ })).toHaveCount(0);
+    await dispatch(page, "OPERATOR", null, "VW-1", "INV-001", [lots[0], lots[1]]);
+    for (const c of [lots[0], lots[1]]) {
+      const r = await receive(page, "VW-1", "WAREHOUSE", c);
+      expect(r.ok).toBe(true);
+      expect(r.text).toContain("AT_WAREHOUSE");
+    }
+    // The warehouse never opens a case: it has no Open lot screen.
+    await page.goto("/open-lot");
+    await expect(page.getByText("This page is not part of the Velza Warehouse portal")).toBeVisible();
+    await dispatch(page, "WAREHOUSE", "VW-1", "SS-1", "VW-001", [lots[0], lots[1]]);
   });
 
   test("4. SS-2 receive → WRONG_RECEIVER alert; SS-1 receives both → AT_SS", async ({ page }) => {
@@ -346,9 +360,14 @@ test.describe.serial("Velza demo script (9.1)", () => {
   test("6. HQ search: case timeline shows every step; pack …62 is AT_RETAILER; the direct case is at Retailer-4", async ({ page }) => {
     await as(page, "TRACE_OWNER", null, `/hq/search?code=${lots[0]}`);
     const rows = page.getByTestId("timeline-row");
-    await expect(rows).toHaveCount(10);
+    await expect(rows).toHaveCount(12);
     expect(await rows.locator("td:nth-child(2)").allInnerTexts()).toEqual([
-      "GENERATED", "PRINTED", "VERIFIED", "DISPATCHED", "RECEIVED", "DISPATCHED", "RECEIVED", "DISPATCHED", "RECEIVED", "OPENED",
+      "GENERATED", "PRINTED", "VERIFIED",
+      "DISPATCHED", "RECEIVED", // plant → Velza Warehouse
+      "DISPATCHED", "RECEIVED", // Velza Warehouse → SS-1
+      "DISPATCHED", "RECEIVED", // SS-1 → DB-1
+      "DISPATCHED", "RECEIVED", // DB-1 → Retailer-1
+      "OPENED",
     ]);
     await as(page, "TRACE_OWNER", null, `/hq/search?code=${lots[0]}62`);
     await expect(page.getByTestId("search-result")).toContainText("AT RETAILER");
@@ -402,7 +421,7 @@ test.describe.serial("Velza demo script (9.1)", () => {
 
     await as(page, "OPERATOR", null, "/dispatch");
     const sel = page.getByLabel("Destination");
-    await sel.selectOption((await sel.locator("option", { hasText: "SS-1" }).getAttribute("value"))!);
+    await sel.selectOption((await sel.locator("option", { hasText: "VW-1" }).getAttribute("value"))!);
     await page.getByLabel("Invoice").fill("INV-009");
     const blocked = await scan(page, lot);
     expect(blocked.ok).toBe(false);
@@ -413,7 +432,7 @@ test.describe.serial("Velza demo script (9.1)", () => {
     await expect(bar).toContainText("Synced 1 batch(es) and 1 lot(s)");
     expect((await scan(page, lot)).ok).toBe(true);
     await page.getByRole("button", { name: /Confirm dispatch/ }).click();
-    await expect(page.getByText(/Dispatched 1 item\(s\) to .*SS-1.* on INV-009/)).toBeVisible();
+    await expect(page.getByText(/Dispatched 1 item\(s\) to .*VW-1.* on INV-009/)).toBeVisible();
   });
 
   test("9. reprint a sticker → same code, logged with reason", async ({ page }) => {
@@ -439,6 +458,9 @@ test.describe.serial("Velza demo script (9.1)", () => {
   });
 
   test("10. SS-1 receives the synced case and reports it damaged → it leaves stock, shows in Damaged, HQ is alerted", async ({ page }) => {
+    // The synced case reaches SS-1 through the Velza Warehouse.
+    expect((await receive(page, "VW-1", "WAREHOUSE", offlineLot)).text).toContain("AT_WAREHOUSE");
+    await dispatch(page, "WAREHOUSE", "VW-1", "SS-1", "VW-009", [offlineLot]);
     expect((await receive(page, "SS-1", "SS", offlineLot)).text).toContain("AT_SS");
     await as(page, "SS", "SS-1", "/damaged");
     await expect(page.locator("#scan-input")).toBeDisabled(); // reason first
@@ -546,5 +568,31 @@ test.describe.serial("Velza demo script (9.1)", () => {
     await expect(page.getByText("Password changed")).toBeVisible();
     await page.getByRole("button", { name: "Sign out" }).click();
     await expect(page).toHaveURL(/\/login$/);
+  });
+
+  test("12. a shipping container: the operator loads a tray and dispatches the container; the warehouse receives it by its number", async ({ page }) => {
+    const tray = lots[2]; // the Original tray, still packed at the plant
+    await as(page, "OPERATOR", null, "/containers");
+    await page.getByLabel("Container number").fill("mscu1234567");
+    await page.getByRole("button", { name: "Open container" }).click();
+    await expect(page.getByText("Container MSCU1234567 · Loading")).toBeVisible();
+    expect((await scan(page, `${tray}41`)).ok).toBe(false); // a pack: scan the tray sticker
+    expect((await scan(page, tray)).ok).toBe(true);
+    await expect(page.getByTestId("container-count")).toContainText("1 / 2,860 cases & trays (0 cases, 1 trays)");
+    await expect(page.getByTestId("container-lot")).toHaveCount(1);
+    await page.getByLabel("Container invoice").fill("INV-020");
+    await page.getByRole("button", { name: "Dispatch container (1)" }).click();
+    await expect(page.getByText(/Container MSCU1234567 dispatched to .*VW-1.* on INV-020: 1 case\(s\)\/tray\(s\)/)).toBeVisible();
+    await expect(page.getByTestId("container-MSCU1234567")).toContainText("On the way");
+
+    // The warehouse receives the whole container with one scan of its number.
+    const r = await receive(page, "VW-1", "WAREHOUSE", "MSCU1234567");
+    expect(r.ok).toBe(true);
+    expect(r.text).toContain("Container MSCU1234567 received: 1 case(s)/tray(s) → AT_WAREHOUSE");
+    await page.goto("/containers");
+    await expect(page.getByTestId("container-MSCU1234567")).toContainText("Received");
+    await as(page, "TRACE_OWNER", null, `/hq/search?code=${tray}`);
+    await expect(page.getByTestId("search-result")).toContainText("AT WAREHOUSE");
+    await expect(page.getByTestId("search-location")).toContainText("VW-1");
   });
 });

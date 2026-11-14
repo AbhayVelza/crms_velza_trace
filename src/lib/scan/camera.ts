@@ -66,6 +66,14 @@ export interface CameraInfo {
   label: string;
 }
 
+/**
+ * Requested size. Without one, browsers give 640×480: a pack sticker's Code 128 bars (≈0.33 mm) are then under
+ * 2 px wide and can't be read, while the lot sticker's QR still is. 1280×720 or more reads both.
+ */
+export const CAMERA_SIZE = { width: { ideal: 1920 }, height: { ideal: 1080 } } as const;
+/** Below this width, small (pack) barcodes need the sticker held close to the camera. */
+export const LOW_RES_WIDTH = 1280;
+
 /** The session currently holding the camera on this page, if any. */
 const camera: { active: CameraSession | null } = { active: null };
 
@@ -88,6 +96,8 @@ export class CameraSession {
   resolution: { width: number; height: number } | null = null;
   torchSupported = false;
   torchOn = false;
+  /** The size the camera actually gave (null until running, or if the browser doesn't say). */
+  resolution: { width: number; height: number } | null = null;
   private controls: DecoderControls | null = null;
   private generation = 0;
 

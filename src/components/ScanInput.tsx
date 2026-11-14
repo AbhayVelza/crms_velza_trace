@@ -240,6 +240,7 @@ function CameraPanel({ onCode, busy, onClose }: { onCode: (text: string) => void
       await session.current.start(id || undefined);
       if (session.current.state !== "running") return;
       setState("running");
+      setResolution(session.current.resolution);
       setTorch({ supported: session.current.torchSupported, on: false });
       setResolution(session.current.resolution);
       // Labels are only available once the user has allowed the camera.

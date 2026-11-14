@@ -19,6 +19,7 @@ export const ACTIONS = [
   "recall",
   "territory",
   "damage",
+  "container",
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -26,14 +27,14 @@ export const PERMISSIONS: Record<Action, Role[]> = {
   admin: ["ADMIN"],
   printOrder: ["OPERATOR"],
   verify: ["QC"],
-  dispatch: ["OPERATOR", "SS", "DB"],
-  receive: ["SS", "DB", "RETAILER"],
+  dispatch: ["OPERATOR", "WAREHOUSE", "SS", "DB"],
+  receive: ["WAREHOUSE", "SS", "DB", "RETAILER"],
   openLot: ["RETAILER"],
   reprint: ["OPERATOR"],
   void: ["OPERATOR"],
   device: ["OPERATOR", "ADMIN"],
   sync: ["OPERATOR"],
-  stock: ["OPERATOR", "QC", "SS", "DB", "RETAILER"],
+  stock: ["OPERATOR", "QC", "WAREHOUSE", "SS", "DB", "RETAILER"],
   // The HQ dashboard is for Velza HQ only; every role gets its own portal and nothing else.
   dashboard: ["TRACE_OWNER"],
   search: ["TRACE_OWNER"],
@@ -41,7 +42,9 @@ export const PERMISSIONS: Record<Action, Role[]> = {
   /** See the partners assigned to you: SS → its distributors and direct retailers, DB → its retailers. */
   territory: ["SS", "DB"],
   /** Report damaged cases, trays and packs held at your location. */
-  damage: ["OPERATOR", "SS", "DB", "RETAILER"],
+  damage: ["OPERATOR", "WAREHOUSE", "SS", "DB", "RETAILER"],
+  /** Shipping containers plant → Velza Warehouse: the operator loads and dispatches them; the warehouse and HQ follow them. */
+  container: ["OPERATOR", "WAREHOUSE", "TRACE_OWNER"],
 };
 
 export function can(role: Role, action: Action): boolean {

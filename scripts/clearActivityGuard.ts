@@ -22,7 +22,7 @@ export class ClearActivityRefused extends Error {
 
 /** The collections clear-activity empties. Everything else (countries, flavours, partners, sign-ins, sessions,
  *  devices, batch code pool, ID sequences, settings) is kept exactly as it is. */
-export const ACTIVITY_COLLECTIONS = ["batches", "printOrders", "lots", "packs", "movements", "scans", "reprints"] as const;
+export const ACTIVITY_COLLECTIONS = ["batches", "printOrders", "containers", "lots", "packs", "movements", "scans", "reprints"] as const;
 type ActivityCollection = (typeof ACTIVITY_COLLECTIONS)[number];
 
 export function activityCounts(s: DbSnapshot): Record<string, number> {

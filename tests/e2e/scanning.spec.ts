@@ -39,7 +39,7 @@ test.use({
   permissions: ["camera"],
 });
 
-const loginId = (who: string) => ({ operator: "MF0001-OP", qc: "MF0001-QC", ss1: "SS0001", ss2: "SS0002" })[who]!;
+const loginId = (who: string) => ({ operator: "MF0001-OP", qc: "MF0001-QC", ss1: "SS0001", ss2: "SS0002", vw: "VW0001" })[who]!;
 
 async function api(baseURL: string, who: string): Promise<APIRequestContext> {
   const ctx = await request.newContext({ baseURL });
@@ -242,7 +242,8 @@ test.describe.serial("Scanning: camera, scanner, checklists", () => {
     const lots = await newCases(baseURL!, 2, true);
     await signInPage(page, "operator", "/dispatch");
     const sel = page.getByLabel("Destination");
-    await sel.selectOption((await sel.locator("option", { hasText: "SS-1" }).getAttribute("value"))!);
+    // The plant ships only to the Velza Warehouse.
+    await sel.selectOption((await sel.locator("option", { hasText: "VW-1" }).getAttribute("value"))!);
     await page.getByLabel("Invoice").fill("INV-SCAN-E2E");
     for (const l of lots) await expect(row(page, l)).toHaveAttribute("data-status", "PENDING");
     const input = page.locator("#scan-input");
@@ -263,13 +264,13 @@ test.describe.serial("Scanning: camera, scanner, checklists", () => {
       await expect(row(page, l)).toHaveAttribute("data-status", "SCANNED");
     }
     await page.getByRole("button", { name: /Confirm dispatch of 2 items/ }).click();
-    await expect(page.getByText(/Dispatched 2 item\(s\) to .*SS-1.* on INV-SCAN-E2E/)).toBeVisible();
+    await expect(page.getByText(/Dispatched 2 item\(s\) to .*VW-1.* on INV-SCAN-E2E/)).toBeVisible();
     for (const l of lots) await expect(row(page, l)).toHaveCount(0); // left the stock list
 
-    // The wrong Super Stockist cannot receive them; the right one sees them with the invoice and ticks them on receipt.
+    // A Super Stockist cannot receive them; the warehouse sees them with the invoice and ticks them on receipt.
     const ss2 = await api(baseURL!, "ss2");
     expect((await (await ss2.post("/api/receive", { data: { code: lots[0] } })).json()).code).toBe("WRONG_RECEIVER");
-    await signInPage(page, "ss1", "/receive");
+    await signInPage(page, "vw", "/receive");
     for (const l of lots) {
       await expect(row(page, l)).toHaveAttribute("data-status", "PENDING");
       await expect(row(page, l)).toContainText("INV-SCAN-E2E");

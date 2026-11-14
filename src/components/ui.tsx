@@ -158,7 +158,9 @@ const STATUS_TONES: Partial<Record<ItemStatus, PillTone>> = {
   QUARANTINED: "warn",
   VOID: "muted",
   DAMAGED: "danger",
+  RETURN_IN_TRANSIT: "warn",
   RETURNED: "neutral",
+  EXPIRED: "danger",
   RECALLED: "danger",
 };
 

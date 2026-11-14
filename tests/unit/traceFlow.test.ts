@@ -86,18 +86,19 @@ afterAll(async () => {
 });
 
 describe("plant stock: only QC-passed lots are finished stock (LOW-unverified-plant-stock)", () => {
-  it("generated and printed lots are awaiting QC, not cases; a QC pass makes one a case", async () => {
+  it("generated lots are awaiting printing, printed lots awaiting QC — neither is a case; a QC pass makes one a case", async () => {
     const before = { cases: (await row(ids.MF))?.cases ?? 0, mine: (await myStock(ids.operator)).counts.cases };
     const o = await order(2);
-    expect(await row(ids.MF)).toMatchObject({ cases: before.cases, awaitingQc: 2 });
+    // Not printed yet: counted as awaiting printing, never as awaiting QC.
+    expect(await row(ids.MF)).toMatchObject({ cases: before.cases, awaitingPrint: 2, awaitingQc: 0 });
     await markPrinted(ids.operator, o.id);
-    expect(await row(ids.MF)).toMatchObject({ cases: before.cases, awaitingQc: 2 });
+    expect(await row(ids.MF)).toMatchObject({ cases: before.cases, awaitingPrint: 0, awaitingQc: 2 });
     expect((await myStock(ids.operator)).inStock.map((s) => s.code)).not.toContain(o.lotCodes[0]);
     await qcPass(o.lotCodes[0]);
     expect(await row(ids.MF)).toMatchObject({ cases: before.cases + 1, awaitingQc: 1 });
     const mine = await myStock(ids.operator);
     expect(mine.counts.cases).toBe(before.mine + 1);
-    expect(mine.pending).toEqual({ awaitingQc: 1, quarantined: 0 });
+    expect(mine.pending).toEqual({ awaitingPrint: 0, awaitingQc: 1, quarantined: 0 });
     expect(codesOf(mine.inStock)).toContain(o.lotCodes[0]);
     expect(codesOf(mine.inStock)).not.toContain(o.lotCodes[1]);
     await qcPass(o.lotCodes[1]); // leave the plant clean for the next checks

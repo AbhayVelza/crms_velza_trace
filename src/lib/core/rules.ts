@@ -29,7 +29,7 @@ export const AT_STATUS: Record<PartnerType, ItemStatus> = {
 /** Scanning one of these raises a BLOCKED_CODE alert. */
 export const BLOCKED_STATUSES: ItemStatus[] = ["RECALLED", "QUARANTINED", "VOID"];
 /** Exception statuses: the item cannot move. */
-export const STOPPED_STATUSES: ItemStatus[] = ["RECALLED", "QUARANTINED", "VOID", "DAMAGED", "RETURNED"];
+export const STOPPED_STATUSES: ItemStatus[] = ["RECALLED", "QUARANTINED", "VOID", "DAMAGED", "RETURN_IN_TRANSIT", "RETURNED", "EXPIRED"];
 
 export const ALERT_RESULT_CODES = ["WRONG_RECEIVER", "UNKNOWN_CODE", "DUPLICATE_RECEIPT", "BLOCKED_CODE"] as const;
 
@@ -175,6 +175,10 @@ export interface ReceiveCheckInput {
 }
 
 export function canReceive({ item, parentLotStatus, receiver }: ReceiveCheckInput): RuleResult {
+  // Taken back by Velza field staff: only the warehouse it is on its way to may receive it (as RETURNED).
+  if (item.status === "RETURN_IN_TRANSIT") {
+    return item.inTransitToId === receiver.id ? OK : reject("WRONG_RECEIVER", `${item.code} is not in transit to ${receiver.name}`);
+  }
   const blocked = blockedResult(item);
   if (blocked) return blocked;
   if (item.kind === "PACK" && parentLotStatus !== "OPENED") {
@@ -187,8 +191,10 @@ export function canReceive({ item, parentLotStatus, receiver }: ReceiveCheckInpu
   return reject("WRONG_RECEIVER", `${item.code} is not in transit to ${receiver.name}`);
 }
 
-export function receivePatch(receiver: Partner) {
-  return { status: AT_STATUS[receiver.type], locationId: receiver.id, inTransitToId: null, dispatchedAt: null };
+export function receivePatch(receiver: Partner, fromStatus: ItemStatus = "IN_TRANSIT") {
+  // A return arrives as RETURNED and waits for the warehouse's inspection before it is stock again.
+  const status: ItemStatus = fromStatus === "RETURN_IN_TRANSIT" ? "RETURNED" : AT_STATUS[receiver.type];
+  return { status, locationId: receiver.id, inTransitToId: null, dispatchedAt: null };
 }
 
 // ---------------------------------------------------------------- verify
@@ -330,6 +336,8 @@ export function lotStatusAfterReprint(lotStatus: ItemStatus): ItemStatus {
 export function recallPatch(status: ItemStatus): { status: ItemStatus; statusBeforeRecall: ItemStatus } | null {
   // RETURNED stock has already left the chain (withdrawn); a recall must not overwrite that classification.
   if (status === "VOID" || status === "RECALLED" || status === "RETURNED") return null;
+  // Taken back (on its way to the warehouse) or written off as expired: also out of the chain already.
+  if (status === "RETURN_IN_TRANSIT" || status === "EXPIRED") return null;
   return { status: "RECALLED", statusBeforeRecall: status };
 }
 
@@ -349,7 +357,8 @@ export function publicStatus(found: boolean, status: ItemStatus | null): { label
   if (!found || !status) return { label: "Unregistered code", tone: "warn" };
   if (PUBLIC_GENUINE_STATUSES.includes(status)) return { label: "Genuine Velza product", tone: "ok" };
   if (status === "RECALLED") return { label: "Recalled — do not consume", tone: "danger" };
-  if (status === "RETURNED") return { label: "Withdrawn — do not consume", tone: "danger" };
+  if (status === "RETURNED" || status === "RETURN_IN_TRANSIT") return { label: "Withdrawn — do not consume", tone: "danger" };
+  if (status === "EXPIRED") return { label: "Expired — do not consume", tone: "danger" };
   if (status === "QUARANTINED" || status === "DAMAGED") return { label: "Not for sale — do not consume", tone: "danger" };
   // Printed but not yet through QC: it has not left the plant, so it is not a released product.
   if (status === "GENERATED" || status === "PRINTED") return { label: "Not yet released", tone: "warn" };

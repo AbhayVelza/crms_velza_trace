@@ -25,7 +25,9 @@ describe("publicStatus (allowlist)", () => {
     OPENED: { label: "Genuine Velza product", tone: "ok" },
     QUARANTINED: { label: "Not for sale — do not consume", tone: "danger" },
     DAMAGED: { label: "Not for sale — do not consume", tone: "danger" },
+    RETURN_IN_TRANSIT: { label: "Withdrawn — do not consume", tone: "danger" },
     RETURNED: { label: "Withdrawn — do not consume", tone: "danger" },
+    EXPIRED: { label: "Expired — do not consume", tone: "danger" },
     RECALLED: { label: "Recalled — do not consume", tone: "danger" },
     VOID: { label: "Unregistered code", tone: "warn" },
   };

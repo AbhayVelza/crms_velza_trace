@@ -20,6 +20,9 @@ export const ACTIONS = [
   "territory",
   "damage",
   "container",
+  "details",
+  "takeBack",
+  "returnInspect",
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -45,6 +48,12 @@ export const PERMISSIONS: Record<Action, Role[]> = {
   damage: ["OPERATOR", "WAREHOUSE", "SS", "DB", "RETAILER"],
   /** Shipping containers plant → Velza Warehouse: the operator loads and dispatches them; the warehouse and HQ follow them. */
   container: ["OPERATOR", "WAREHOUSE", "TRACE_OWNER"],
+  /** Scan a code to see its product details (batch, dates) and the partners it came through to reach you. */
+  details: ["OPERATOR", "QC", "WAREHOUSE", "SS", "DB", "RETAILER", "TRACE_OWNER", "ADMIN", "VELZA_FIELD"],
+  /** Velza field staff take stock back from a partner (not selling, near expiry, damaged …) to the Velza Warehouse. */
+  takeBack: ["VELZA_FIELD"],
+  /** The Velza Warehouse inspects what came back: back to stock, or write-off. */
+  returnInspect: ["WAREHOUSE"],
 };
 
 export function can(role: Role, action: Action): boolean {

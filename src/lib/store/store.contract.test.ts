@@ -418,6 +418,7 @@ describe("PostgreSQL only: the schema guards the data", () => {
       expect.arrayContaining(["codes_manufacturer", "codes_device_unsynced", "print_orders_manufacturer", "print_orders_device_unsynced", "batches_manufacturer", "batches_device_unsynced", "batch_code_pool_device"]),
     );
     expect(await sql(`SELECT version FROM schema_info`)).toEqual([{ version: 6 }]); // v6: self sign-up approval
+    expect(await sql(`SELECT version FROM schema_info`)).toEqual([{ version: 6 }]); // v5: the Velza Warehouse tier; v6: returns
   });
 
   it("refuses a code that doesn't match its parts", async () => {

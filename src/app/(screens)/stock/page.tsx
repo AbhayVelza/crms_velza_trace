@@ -13,7 +13,7 @@ interface Stock {
   /** Recalled stock held here (also units recalled while in transit to here): do not sell. */
   recalled?: StockItem[];
   /** At the plant: lots not yet finished stock. */
-  pending?: { awaitingQc: number; quarantined: number };
+  pending?: { awaitingPrint: number; awaitingQc: number; quarantined: number };
 }
 
 export default function StockPage() {
@@ -21,7 +21,16 @@ export default function StockPage() {
   const { data, error } = useApi<Stock>("/api/stock", { refreshOnChange: true });
   const recalled = data?.recalled ?? [];
   const pending = data?.pending;
-  const pendingHint = pending && (pending.awaitingQc || pending.quarantined) ? [pending.awaitingQc && `${pending.awaitingQc} lot(s) awaiting QC`, pending.quarantined && `${pending.quarantined} quarantined`].filter(Boolean).join(" · ") : null;
+  const pendingHint =
+    pending && (pending.awaitingPrint || pending.awaitingQc || pending.quarantined)
+      ? [
+          pending.awaitingPrint && `${pending.awaitingPrint} lot(s) not printed yet`,
+          pending.awaitingQc && `${pending.awaitingQc} lot(s) awaiting QC`,
+          pending.quarantined && `${pending.quarantined} quarantined`,
+        ]
+          .filter(Boolean)
+          .join(" · ")
+      : null;
   return (
     <>
       <PageTitle title="My stock" subtitle={partner?.name} />

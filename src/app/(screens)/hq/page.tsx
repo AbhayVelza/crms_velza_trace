@@ -11,7 +11,7 @@ interface Dashboard {
   lotCounts: Record<string, number>;
   packCounts: Record<string, number>;
   totals: { lots: number; packs: number; batches: number; unsyncedLots: number };
-  stock: { partnerId: string; partner: string; tier: string; tierLabel: string; cases: number; trays: number; openedCases: number; openedTrays: number; loosePacks: number; damaged: DamagedCounts; recalled?: DamagedCounts; awaitingQc?: number; quarantined?: number }[];
+  stock: { partnerId: string; partner: string; tier: string; tierLabel: string; cases: number; trays: number; openedCases: number; openedTrays: number; loosePacks: number; damaged: DamagedCounts; recalled?: DamagedCounts; awaitingPrint?: number; awaitingQc?: number; quarantined?: number }[];
   inTransit: { kind: string; code: string; from: string; to: string; dispatchedAt: string; age: string; overdue: boolean }[];
   alertCounts: Record<string, number>;
   recentAlerts: { id: string; type: string; at: string; code: string; message: string; partner: string | null }[];
@@ -107,6 +107,7 @@ export default function DashboardPage() {
                 <Td>{s.partner}</Td>
                 <Td>
                   <Opened total={s.cases} opened={s.openedCases} />
+                  {!!s.awaitingPrint && <div className="whitespace-nowrap text-xs text-muted-foreground">{s.awaitingPrint} lot(s) not printed yet</div>}
                   {!!s.awaitingQc && <div className="whitespace-nowrap text-xs text-muted-foreground">{s.awaitingQc} lot(s) awaiting QC</div>}
                   {!!s.quarantined && <div className="whitespace-nowrap text-xs text-warning">{s.quarantined} lot(s) quarantined</div>}
                 </Td>

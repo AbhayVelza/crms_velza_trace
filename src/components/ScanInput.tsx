@@ -120,7 +120,12 @@ export function ScanInput({ onScan, label = "Scan code", placeholder = "Scan or 
   );
 
   useEffect(() => {
-    if (!disabled && !coarsePointer()) ref.current?.focus();
+    if (disabled || coarsePointer()) return;
+    // Ready for the scanner — but never pull the cursor out of a field the user is typing in (e.g. the
+    // invoice on Dispatch, whose first letter makes this box appear).
+    const active = document.activeElement;
+    if (active && active !== ref.current && active.matches(OTHER_FIELDS)) return;
+    ref.current?.focus();
   }, [disabled]);
 
   const send = (source: ScanSource) => {

@@ -366,11 +366,15 @@ export function recalledCounts(partnerId: string, lots: Lot[], packs: Pack[], lo
   };
 }
 
-/** At the plant, lots that are not finished stock yet: printed codes awaiting QC, and quarantined lots. */
+/**
+ * At the plant, lots that are not finished stock yet: codes not printed yet (GENERATED), printed lots
+ * awaiting QC (PRINTED), and quarantined lots. Kept apart so "awaiting QC" never counts unprinted codes.
+ */
 export function pendingCounts(partnerId: string, lots: Lot[]) {
   const here = lots.filter((l) => l.locationId === partnerId);
   return {
-    awaitingQc: here.filter((l) => l.status === "GENERATED" || l.status === "PRINTED").length,
+    awaitingPrint: here.filter((l) => l.status === "GENERATED").length,
+    awaitingQc: here.filter((l) => l.status === "PRINTED").length,
     quarantined: here.filter((l) => l.status === "QUARANTINED").length,
   };
 }
@@ -412,7 +416,7 @@ export async function dashboard(userId: string | null) {
       const r = recalledCounts(p.id, recalledLotsAt.get(p.id) ?? [], recalledPacksAt.get(p.id) ?? [], lotByCode);
       return { partnerId: p.id, partner: p.name, tier: p.type, tierLabel: PARTNER_TYPE_LABELS[p.type], ...c, damaged: d, recalled: r, ...pendingCounts(p.id, lotsAt.get(p.id) ?? []) };
     })
-    .filter((s) => s.cases || s.trays || s.loosePacks || s.damaged.cases || s.damaged.trays || s.damaged.packs || s.recalled.cases || s.recalled.trays || s.recalled.packs || s.awaitingQc || s.quarantined);
+    .filter((s) => s.cases || s.trays || s.loosePacks || s.damaged.cases || s.damaged.trays || s.damaged.packs || s.recalled.cases || s.recalled.trays || s.recalled.packs || s.awaitingPrint || s.awaitingQc || s.quarantined);
 
   const threshold = notReceivedThresholdMs(settings);
   const units = inTransitUnits(lots, packs, lotByCode);

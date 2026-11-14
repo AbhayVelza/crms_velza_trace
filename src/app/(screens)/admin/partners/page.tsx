@@ -28,15 +28,31 @@ function matches(view: string, row: Row): boolean {
 
 const EMPTY = { type: "" as PartnerType | "", name: "", place: "", address: "", city: "", state: "", pincode: "", contactPerson: "", phone: "", email: "", parentId: "", password: "", qcPassword: "" };
 
+/** Fields the server requires (same as the admin partner schema), with the label shown on the form; in form order. */
+const REQUIRED: [keyof typeof EMPTY, string][] = [
+  ["name", "Site name"],
+  ["contactPerson", "Contact person"],
+  ["place", "Place (locality)"],
+  ["address", "Address"],
+  ["city", "City"],
+  ["phone", "Phone"],
+];
+
 /** The registration form: one partner and its sign-in(s), with the passwords to share. */
 function RegisterForm({ partners }: { partners: Partner[] }) {
   const { refresh } = useSession();
   const [f, setF] = useState(EMPTY);
   const [msg, setMsg] = useState<{ tone: "ok" | "error"; text: string; share?: { id: string; password: string }[] } | null>(null);
   const [busy, setBusy] = useState(false);
+  // Per-field "… is required" messages, shown under the field itself (cleared as soon as it is edited).
+  const [missing, setMissing] = useState<Partial<Record<keyof typeof EMPTY, string>>>({});
   // A Retailer is assigned to a Distributor or, for a few, straight to a Super Stockist: pick the tier first.
   const [parentTier, setParentTier] = useState<PartnerType | "">("");
-  const set = (k: keyof typeof EMPTY) => (v: string) => setF((x) => ({ ...x, [k]: v }));
+  const set = (k: keyof typeof EMPTY) => (v: string) => {
+    setF((x) => ({ ...x, [k]: v }));
+    setMissing((m) => (m[k] ? { ...m, [k]: undefined } : m));
+  };
+  const err = (k: keyof typeof EMPTY) => missing[k] ?? null;
   const type = f.type || null;
   const parentTypes = (type && ASSIGNED_TO[type]) || [];
   const parentType = parentTier && parentTypes.includes(parentTier) ? parentTier : parentTypes[0];
@@ -44,6 +60,19 @@ function RegisterForm({ partners }: { partners: Partner[] }) {
   const ssStates = new Map(partners.filter((p) => p.type === "SS").map((p) => [p.state, p]));
 
   async function submit() {
+    // Required fields first, each marked under its own field, so nothing is missed below the fold.
+    // The state is required for every tier but the plant (server rule BAD_STATE); it sits after City on the form.
+    const required: typeof REQUIRED = plant ? REQUIRED : [...REQUIRED.slice(0, 5), ["state", "State"], ...REQUIRED.slice(5)];
+    const empty = required.filter(([k]) => !String(f[k]).trim());
+    if (empty.length) {
+      setMissing(Object.fromEntries(empty.map(([k, label]) => [k, `${label} is required`])));
+      setMsg({ tone: "error", text: `Fill in the required field${empty.length > 1 ? "s" : ""}: ${empty.map(([, label]) => label).join(", ")}` });
+      // Centre it (a plain focus() can leave it under the sticky top bar), then put the cursor in it.
+      const first = document.querySelector<HTMLInputElement>(`[data-field="${empty[0][0]}"]`);
+      first?.scrollIntoView({ block: "center" });
+      first?.focus({ preventScroll: true });
+      return;
+    }
     // Same wording as the server's BAD_PHONE (the server stays authoritative).
     if (f.phone.trim() && !/^\+?[0-9][0-9 ()-]{6,18}$/.test(f.phone.trim())) {
       setMsg({ tone: "error", text: "Phone: digits only, e.g. +91 98765 43210" });
@@ -60,6 +89,7 @@ function RegisterForm({ partners }: { partners: Partner[] }) {
         share: r.logins.map((u) => ({ id: u.id, password: u.role === "QC" ? f.qcPassword : f.password })),
       });
       setF({ ...EMPTY, type: f.type });
+      setMissing({});
       notifyDataChanged();
       await refresh();
     } catch (e) {
@@ -90,26 +120,26 @@ function RegisterForm({ partners }: { partners: Partner[] }) {
             ))}
           </Select>
         </Field>
-        <Field label="Site name">
-          <Input aria-label="Site name" value={f.name} onChange={(e) => set("name")(e.target.value)} placeholder="e.g. FC Road Distributors" />
+        <Field label="Site name *" error={err("name")}>
+          <Input aria-label="Site name" data-field="name" aria-required aria-invalid={!!err("name") || undefined} value={f.name} onChange={(e) => set("name")(e.target.value)} placeholder="e.g. FC Road Distributors" />
         </Field>
-        <Field label="Contact person">
-          <Input aria-label="Contact person" value={f.contactPerson} onChange={(e) => set("contactPerson")(e.target.value)} placeholder="Full name" />
+        <Field label="Contact person *" error={err("contactPerson")}>
+          <Input aria-label="Contact person" data-field="contactPerson" aria-required aria-invalid={!!err("contactPerson") || undefined} value={f.contactPerson} onChange={(e) => set("contactPerson")(e.target.value)} placeholder="Full name" />
         </Field>
-        <Field label="Place (locality)">
-          <Input aria-label="Place" value={f.place} onChange={(e) => set("place")(e.target.value)} placeholder="e.g. FC Road" />
+        <Field label="Place (locality) *" error={err("place")}>
+          <Input aria-label="Place" data-field="place" aria-required aria-invalid={!!err("place") || undefined} value={f.place} onChange={(e) => set("place")(e.target.value)} placeholder="e.g. FC Road" />
         </Field>
-        <Field label="Address">
-          <Input aria-label="Address" value={f.address} onChange={(e) => set("address")(e.target.value)} placeholder="Shop / building, street" />
+        <Field label="Address *" error={err("address")}>
+          <Input aria-label="Address" data-field="address" aria-required aria-invalid={!!err("address") || undefined} value={f.address} onChange={(e) => set("address")(e.target.value)} placeholder="Shop / building, street" />
         </Field>
-        <Field label="City">
-          <Input aria-label="City" value={f.city} onChange={(e) => set("city")(e.target.value)} placeholder="e.g. Pune" />
+        <Field label="City *" error={err("city")}>
+          <Input aria-label="City" data-field="city" aria-required aria-invalid={!!err("city") || undefined} value={f.city} onChange={(e) => set("city")(e.target.value)} placeholder="e.g. Pune" />
         </Field>
-        <Field label="State" hint={type === "SS" ? "One Super Stockist per state — states that have one are greyed out" : undefined}>
+        <Field label={plant ? "State" : "State *"} error={err("state")} hint={type === "SS" ? "One Super Stockist per state — states that have one are greyed out" : undefined}>
           {plant ? (
             <Input aria-label="State" value={f.state} onChange={(e) => set("state")(e.target.value)} placeholder="State / province (optional)" />
           ) : (
-            <Select aria-label="State" value={f.state} onChange={(e) => set("state")(e.target.value)}>
+            <Select aria-label="State" data-field="state" aria-required aria-invalid={!!err("state") || undefined} value={f.state} onChange={(e) => set("state")(e.target.value)}>
               <option value="">Choose…</option>
               {INDIAN_STATES.map((s) => (
                 <option key={s} value={s} disabled={type === "SS" && ssStates.has(s)}>
@@ -123,8 +153,8 @@ function RegisterForm({ partners }: { partners: Partner[] }) {
         <Field label="PIN code">
           <Input aria-label="PIN code" inputMode="numeric" value={f.pincode} onChange={(e) => set("pincode")(e.target.value)} placeholder="6 digits (optional)" />
         </Field>
-        <Field label="Phone">
-          <Input aria-label="Phone" type="tel" value={f.phone} onChange={(e) => set("phone")(e.target.value)} placeholder="+91 98765 43210" />
+        <Field label="Phone *" error={err("phone")}>
+          <Input aria-label="Phone" data-field="phone" aria-required aria-invalid={!!err("phone") || undefined} type="tel" value={f.phone} onChange={(e) => set("phone")(e.target.value)} placeholder="+91 98765 43210" />
         </Field>
         <Field label="Email">
           <Input aria-label="Email" type="email" value={f.email} onChange={(e) => set("email")(e.target.value)} placeholder="optional" />
@@ -164,11 +194,9 @@ function RegisterForm({ partners }: { partners: Partner[] }) {
           </Field>
         )}
       </div>
-      <Button className="mt-4" onClick={submit} disabled={!type} loading={busy}>
-        {busy ? "Registering…" : "Register"}
-      </Button>
+      {/* Above the button, so the result (or what is missing) is seen right where the user clicked. */}
       {msg && (
-        <Notice tone={msg.tone} className="mt-3">
+        <Notice tone={msg.tone} className="mt-4">
           <div data-testid="register-result">{msg.text}</div>
           {msg.share && (
             <div className="mt-1">
@@ -182,6 +210,9 @@ function RegisterForm({ partners }: { partners: Partner[] }) {
           )}
         </Notice>
       )}
+      <Button className="mt-4" onClick={submit} disabled={!type} loading={busy}>
+        {busy ? "Registering…" : "Register"}
+      </Button>
     </Card>
   );
 }

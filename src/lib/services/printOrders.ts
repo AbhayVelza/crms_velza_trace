@@ -761,7 +761,14 @@ export async function stickersForOrder(userId: string | null, printOrderId: stri
     const lots = await tx.lots.list({ printOrderId });
     const ordered = order.lotCodes.map((c) => lots.find((l) => l.lotCode === c)).filter((l): l is Lot => !!l);
     const printable = ordered.filter((l) => l.status === "GENERATED");
-    const withheld = ordered.length - printable.length;
+    // Withheld = voided or recalled only. Lots already confirmed printed in an earlier run (cases before
+    // trays) are not withheld: they are simply done.
+    const isWithheld = (l: Lot) => l.status === "VOID" || l.status === "RECALLED";
+    const withheld = ordered.filter(isWithheld).length;
+    // The header counts the whole order's stickers (every run), not only the run(s) still to print.
+    const orderStickers = stickersForLots(
+      ordered.filter((l) => !isWithheld(l)).map((l) => ({ lotCode: l.lotCode, lotType: l.lotType, flavourName: name(l.flavour) })),
+    ).length;
     if (!printable.length) {
       throw new ServiceError(409, "NOTHING_TO_PRINT", "No lot of this print order is waiting to be printed (voided or recalled lots are not printed)");
     }
@@ -782,7 +789,7 @@ export async function stickersForOrder(userId: string | null, printOrderId: stri
       note: `${stickers.length} sticker(s) of ${printable.length} lot(s) served for first-time printing${withheld ? `; ${withheld} voided/recalled lot(s) withheld` : ""}`,
     });
     return {
-      title: `Print order ${order.id.slice(0, 8)} · ${stickers.length} stickers`,
+      title: `Print order ${order.id.slice(0, 8)} · ${orderStickers} stickers`,
       stickers,
       lotSize: settings.lotSticker,
       packSize: settings.packSticker,

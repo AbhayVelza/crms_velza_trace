@@ -9,8 +9,10 @@ import { signInRequired } from "@/lib/signInMode";
 
 export function proxy(req: NextRequest) {
   const isLogin = req.nextUrl.pathname === "/login";
+  // The sign-up page is for shops that have no account yet: always open.
+  const isSignup = req.nextUrl.pathname === "/signup";
   if (!signInRequired()) return isLogin ? NextResponse.redirect(new URL("/", req.url)) : NextResponse.next();
-  if (isLogin || req.cookies.has(SESSION_COOKIE)) return NextResponse.next();
+  if (isLogin || isSignup || req.cookies.has(SESSION_COOKIE)) return NextResponse.next();
   const url = new URL("/login", req.url);
   const back = req.nextUrl.pathname + req.nextUrl.search;
   if (back !== "/") url.searchParams.set("next", back);

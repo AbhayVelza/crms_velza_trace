@@ -29,6 +29,7 @@ const plant: Partner = {
   email: "plant@example.com",
   parentId: null,
   active: true,
+  approval: null, // approved (the SQL store always returns the column; JSON keeps what was written)
   createdAt: AT,
   createdBy: "AD0001",
 };
@@ -416,6 +417,7 @@ describe("PostgreSQL only: the schema guards the data", () => {
     expect(names).toEqual(
       expect.arrayContaining(["codes_manufacturer", "codes_device_unsynced", "print_orders_manufacturer", "print_orders_device_unsynced", "batches_manufacturer", "batches_device_unsynced", "batch_code_pool_device"]),
     );
+    expect(await sql(`SELECT version FROM schema_info`)).toEqual([{ version: 6 }]); // v6: self sign-up approval
     expect(await sql(`SELECT version FROM schema_info`)).toEqual([{ version: 6 }]); // v5: the Velza Warehouse tier; v6: returns
   });
 
@@ -427,6 +429,11 @@ describe("PostgreSQL only: the schema guards the data", () => {
   it("refuses a partner ID that doesn't match its tier, and a second SS in a state", async () => {
     await expect(store.partners.create({ ...ss, id: "DB0009", phone: "9" })).rejects.toThrow(/partner_id_matches_type/);
     await expect(store.partners.create({ ...ss, id: "SS0002", phone: "8" })).rejects.toThrow(/partners_one_ss_per_state/);
+    // v6: a rejected SS sign-up does not hold its state; a pending one does; an unknown approval is refused.
+    await store.partners.create({ ...ss, id: "SS0003", phone: "7", state: "Goa", approval: "REJECTED", active: false });
+    await store.partners.create({ ...ss, id: "SS0004", phone: "6", state: "Goa", approval: "PENDING", active: false });
+    await expect(store.partners.create({ ...ss, id: "SS0005", phone: "5", state: "Goa" })).rejects.toThrow(/partners_one_ss_per_state/);
+    await expect(store.partners.create({ ...ss, id: "SS0006", phone: "4", state: "Kerala", approval: "MAYBE" as never })).rejects.toThrow(/partners_approval_check/);
     await expect(store.partners.create({ ...retailer, id: "DB0009" })).rejects.toThrow(/partner_id_matches_type/);
     await expect(store.partners.create({ ...retailer, id: "RT0009", type: "DB" })).rejects.toThrow(/partner_id_matches_type/);
     await store.partners.create({ ...retailer, id: "RT0009" });

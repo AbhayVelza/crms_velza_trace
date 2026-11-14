@@ -83,6 +83,9 @@ export async function login(body: unknown, ip = "unknown"): Promise<{ token: str
   failures.delete(idKey);
 
   const partner = user.partnerId ? await store.partners.get(user.partnerId) : null;
+  // Self-signed-up SS / DB: the password is right, but Velza has not approved the account (or turned it down).
+  if (partner?.approval === "PENDING") throw new ServiceError(403, "PENDING_APPROVAL", "Your account is waiting for Velza approval");
+  if (partner?.approval === "REJECTED") throw new ServiceError(403, "REJECTED", "This sign-up was not approved. Contact Velza.");
   if (!user.active || (partner && !partner.active)) {
     throw new ServiceError(403, "DISABLED", "This sign-in is disabled. Contact Velza Admin.");
   }

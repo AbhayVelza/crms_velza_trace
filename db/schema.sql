@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS partners (
       WHEN 'MANUFACTURER' THEN 'MF' WHEN 'WAREHOUSE' THEN 'VW' WHEN 'SS' THEN 'SS' WHEN 'DB' THEN 'DB' ELSE 'RT' END)
 );
 -- One Super Stockist per state.
-CREATE UNIQUE INDEX IF NOT EXISTS partners_one_ss_per_state ON partners (state) WHERE partner_type = 'SS';
+-- One Super Stockist per state: the index is (re)built in the v6 section below, where the approval column exists.
 CREATE UNIQUE INDEX IF NOT EXISTS partners_email_unique ON partners (lower(email)) WHERE email <> '';
 CREATE INDEX IF NOT EXISTS partners_parent ON partners (parent_id);
 
@@ -354,6 +354,17 @@ CREATE INDEX IF NOT EXISTS print_orders_device_unsynced ON print_orders (device_
 CREATE INDEX IF NOT EXISTS batches_manufacturer ON batches (manufacturer_id);
 CREATE INDEX IF NOT EXISTS batches_device_unsynced ON batches (device_id) WHERE NOT synced;
 CREATE INDEX IF NOT EXISTS batch_code_pool_device ON batch_code_pool (device_id, status);
+
+-- ============================================================ v6: self sign-up approval
+-- SS, DB and Retailer shops sign themselves up. approval: NULL = approved (every older row, every Retailer),
+-- PENDING = a self-signed-up SS or DB waiting for Velza Admin, REJECTED = turned down (kept; ID never reused).
+-- A rejected SS no longer holds its state, so the one-SS-per-state index leaves it out.
+ALTER TABLE partners ADD COLUMN IF NOT EXISTS approval text;
+ALTER TABLE partners
+  DROP CONSTRAINT IF EXISTS partners_approval_check,
+  ADD CONSTRAINT partners_approval_check CHECK (approval IS NULL OR approval IN ('PENDING', 'REJECTED'));
+DROP INDEX IF EXISTS partners_one_ss_per_state;
+CREATE UNIQUE INDEX partners_one_ss_per_state ON partners (state) WHERE partner_type = 'SS' AND approval IS DISTINCT FROM 'REJECTED';
 
 INSERT INTO schema_info (id, version) VALUES (1, 6)
   ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version, applied_at = now();

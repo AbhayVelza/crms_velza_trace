@@ -26,6 +26,12 @@ function matches(view: string, row: Row): boolean {
   return row.type === view;
 }
 
+/**
+ * Tiers Velza Admin registers itself: the plant (its -OP and -QC sign-ins) and Velza's own warehouse.
+ * Super Stockists, Distributors and Retailers create their own accounts on /signup.
+ */
+const ADMIN_REGISTER_TYPES: PartnerType[] = ["MANUFACTURER", "WAREHOUSE"];
+
 const EMPTY = { type: "" as PartnerType | "", name: "", place: "", address: "", city: "", state: "", pincode: "", contactPerson: "", phone: "", email: "", parentId: "", password: "", qcPassword: "" };
 
 /** Fields the server requires (same as the admin partner schema), with the label shown on the form; in form order. */
@@ -102,8 +108,10 @@ function RegisterForm({ partners }: { partners: Partner[] }) {
   return (
     <Card title="Register a partner">
       <p className="mb-3 text-sm text-muted-foreground">
-        The partner gets the next ID of its tier — {PARTNER_TYPES.map((t) => `${PARTNER_ID_PREFIX[t]}0001`).join(", ")} … — and a sign-in with that ID
-        (the plant gets two: -OP for the Operator and -QC for QC). Share the password with the person; they can change it after signing in.
+        Register a plant (it gets two sign-ins: -OP for the Operator and -QC for QC) or a Velza Warehouse. It gets the next ID of its tier —{" "}
+        {ADMIN_REGISTER_TYPES.map((t) => `${PARTNER_ID_PREFIX[t]}0001`).join(", ")} … Share the password with the person; they can change it after signing in.{" "}
+        <b>Super Stockists, Distributors and Retailers create their own account</b> at <span className="font-mono">/signup</span> (link on the sign-in page);
+        Super Stockists and Distributors appear under Pending approvals.
       </p>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <Field label="Tier">
@@ -113,7 +121,7 @@ function RegisterForm({ partners }: { partners: Partner[] }) {
             onChange={(e) => (setF({ ...f, type: e.target.value as PartnerType, parentId: "", state: "" }), setParentTier(""))}
           >
             <option value="">Choose…</option>
-            {PARTNER_TYPES.map((t) => (
+            {ADMIN_REGISTER_TYPES.map((t) => (
               <option key={t} value={t}>
                 {PARTNER_TYPE_LABELS[t]} ({PARTNER_ID_PREFIX[t]}…)
               </option>
@@ -217,6 +225,75 @@ function RegisterForm({ partners }: { partners: Partner[] }) {
   );
 }
 
+/** Self-signed-up Super Stockists and Distributors waiting for Velza Admin: Approve or Reject. */
+function PendingApprovals({ partners }: { partners: Partner[] }) {
+  const { refresh } = useSession();
+  const [busy, setBusy] = useState<string | null>(null);
+  const [msg, setMsg] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+  const pending = partners.filter((p) => p.approval === "PENDING").sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const parentName = (id: string | null) => (id ? `${partners.find((p) => p.id === id)?.name ?? id} (${id})` : "—");
+
+  async function decide(p: Partner, decision: "approve" | "reject") {
+    setBusy(`${p.id}:${decision}`);
+    setMsg(null);
+    try {
+      const r = await api<{ message: string }>(`/api/admin/approvals/${p.id}`, { body: { decision } });
+      setMsg({ tone: "ok", text: r.message });
+      notifyDataChanged();
+      await refresh();
+    } catch (e) {
+      setMsg({ tone: "error", text: errorText(e) });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <Card title={`Pending approvals (${pending.length})`}>
+      <p className="mb-3 text-sm text-muted-foreground">
+        Super Stockists and Distributors that created their own account. They can&apos;t sign in until approved. Rejecting keeps the record; its ID is never reused.
+        (Retailers don&apos;t need approval.)
+      </p>
+      {msg && (
+        <Notice tone={msg.tone} className="mb-3">
+          {msg.text}
+        </Notice>
+      )}
+      {!pending.length ? (
+        <p className="text-sm text-muted-foreground" data-testid="no-pending">
+          Nothing waiting for approval.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {pending.map((p) => (
+            <div key={p.id} data-testid={`pending-${p.id}`} className="flex flex-wrap items-center justify-between gap-3 rounded-control border border-line p-3">
+              <div className="min-w-0 text-sm">
+                <div className="font-semibold text-foreground">
+                  <span className="font-mono">{p.id}</span> · {p.name} <span className="font-normal text-muted-foreground">({PARTNER_TYPE_LABELS[p.type]})</span>
+                </div>
+                <div className="text-muted-foreground">
+                  {p.contactPerson} · {p.phone}
+                  {p.email ? ` · ${p.email}` : ""} · {p.place}, {p.city}, {p.state}
+                  {p.type === "DB" ? ` · supplied by ${parentName(p.parentId)}` : ""}
+                </div>
+                <div className="text-xs text-subtle-foreground">Signed up {new Date(p.createdAt).toLocaleString("en-IN")}</div>
+              </div>
+              <div className="flex gap-2">
+                <Button onClick={() => decide(p, "approve")} loading={busy === `${p.id}:approve`} disabled={!!busy}>
+                  Approve
+                </Button>
+                <Button variant="secondary" onClick={() => decide(p, "reject")} loading={busy === `${p.id}:reject`} disabled={!!busy}>
+                  Reject
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 export default function PartnersPage() {
   const { data } = useSession();
   const partners = data?.partners ?? [];
@@ -234,6 +311,7 @@ export default function PartnersPage() {
     <>
       <PageTitle title="Partners" subtitle="Every tier of the chain: Manufacturer → Velza Warehouse → Super Stockist, Distributor or Retailer; then Super Stockist → Distributor → Retailer (a few retailers directly under their Super Stockist)" />
       <div className="space-y-4">
+        <PendingApprovals partners={partners} />
         <RegisterForm partners={partners} />
         <AdminCrud
           entity="partners"
@@ -311,6 +389,21 @@ export default function PartnersPage() {
                   {assignedLabel(row)}
                 </button>
               ),
+            },
+            {
+              key: "approval",
+              label: "Sign-up",
+              type: "display",
+              render: (row) =>
+                row.approval === "PENDING" ? (
+                  <span className="whitespace-nowrap text-xs font-semibold text-warning">Waiting for approval</span>
+                ) : row.approval === "REJECTED" ? (
+                  <span className="whitespace-nowrap text-xs font-semibold text-danger">Rejected</span>
+                ) : row.createdBy ? (
+                  <span className="whitespace-nowrap text-xs text-muted-foreground">By Velza Admin</span>
+                ) : (
+                  <span className="whitespace-nowrap text-xs text-muted-foreground">Self sign-up</span>
+                ),
             },
             { key: "active", label: "Active", type: "bool" },
           ]}

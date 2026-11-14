@@ -21,6 +21,7 @@ import { createPrintOrder, markPrinted } from "@/lib/services/printOrders";
 import { publicLookup } from "@/lib/services/trace";
 import { publicCheck, resetPublicRepeatMemory, verify } from "@/lib/services/verify";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
+import { photoOf } from "../fixtures/damagePhoto";
 
 let dir: string;
 const ids: Record<string, string> = {};
@@ -91,7 +92,7 @@ describe("public consumer check (REF-12, void details, damaged ok, junk input)",
   it("a damaged lot is 'Not for sale' and its consumer scan is logged ok:false (not OK)", async () => {
     const [lot] = await printLots(1);
     await qcPass(lot);
-    await reportDamaged(ids.operator, { code: lot, reason: "Crushed in the plant" });
+    await reportDamaged(ids.operator, { code: lot, reason: "Crushed in the plant", ...photoOf(lot) });
     const r = await publicCheck(lot);
     expect(r.status).toEqual({ label: "Not for sale — do not consume", tone: "danger" });
     expect((await publicScans(lot)).at(-1)).toMatchObject({ context: "PUBLIC_LOOKUP", ok: false, result: "PUBLIC_BLOCKED", message: `Public scan of DAMAGED code ${lot}` });

@@ -15,10 +15,7 @@ import { allocateLots, batchCounter, CONTINUE_MAX_LOTS, JSON_CONTINUE_MAX_LOTS, 
 import { planPrintOrder, summarizePlan } from "@/lib/core/printOrder";
 import { canReprint } from "@/lib/core/rules";
 import { stickerForCode, stickersForLots, type Sticker } from "@/lib/core/stickers";
-import { LOT_TYPES, type Batch, type Device, type Lot, type LotType, type Pack, type PrintOrder } from "@/lib/core/types";
-import { getStore, storeKind, type StoreTx } from "@/lib/store";
-import { badRequest, loadActor, manufacturerDevice, notFound, nowIso, requireAction, requirePartner, ServiceError, type Actor } from "./common";
-import type { Batch, Device, Lot, Pack, PrintOrder, Reprint } from "@/lib/core/types";
+import { LOT_TYPES, type Batch, type Device, type Lot, type LotType, type Pack, type PrintOrder, type Reprint } from "@/lib/core/types";
 import { ConcurrentWriteError, getStore, storeKind, type Store, type StoreTx } from "@/lib/store";
 import { badRequest, findItem, loadActor, notFound, nowIso, printDevice, requireAction, requirePartner, ServiceError, type Actor } from "./common";
 import { autoRefill, reservedCodes } from "./pool";
@@ -728,6 +725,8 @@ export interface StickerSheet {
   lotSize: { widthMm: number; heightMm: number };
   packSize: { widthMm: number; heightMm: number };
   printOrder: PrintOrder | null;
+  /** Lots of the order not served because they are no longer waiting to be printed (voided, recalled). */
+  withheldLots?: number;
   /** Cases first, then trays; only the types the order has. Empty for a reprint. */
   runs: PrintRun[];
 }
@@ -738,8 +737,6 @@ function printRuns(lots: Lot[], stickers: Sticker[]): PrintRun[] {
     if (!run.length) return [];
     return [{ lotType, lots: run.length, stickers: stickers.filter((s) => s.lotType === lotType).length, pending: run.filter((l) => l.status === "GENERATED").length }];
   });
-  /** Lots of the order not served because they are no longer waiting to be printed (voided, recalled). */
-  withheldLots?: number;
 }
 
 /**
@@ -748,21 +745,6 @@ function printRuns(lots: Lot[], stickers: Sticker[]): PrintRun[] {
  * (PRINT_SHEET_SERVED). A PRINTED order's stickers are never served again here: use Reprint.
  */
 export async function stickersForOrder(userId: string | null, printOrderId: string): Promise<StickerSheet> {
-  const store = getStore();
-  const actor = await loadActor(store, userId);
-  requireAction(actor, "printOrder");
-  const order = await requireOwnOrder(store, actor, printOrderId);
-  const [settings, name, lots] = await Promise.all([store.getSettings(), flavourNames(store), store.lots.list({ printOrderId })]);
-  const ordered = order.lotCodes.map((c) => lots.find((l) => l.lotCode === c)).filter((l): l is Lot => !!l);
-  const stickers = stickersForLots(ordered.map((l) => ({ lotCode: l.lotCode, lotType: l.lotType, flavourName: name(l.flavour) })));
-  return {
-    title: `Print order ${order.id.slice(0, 8)} · ${order.stickerCount} stickers`,
-    stickers,
-    lotSize: settings.lotSticker,
-    packSize: settings.packSticker,
-    printOrder: order,
-    runs: printRuns(ordered, stickers),
-  };
   return getStore().transaction(async (tx) => {
     const actor = await loadActor(tx, userId);
     requireAction(actor, "printOrder");
@@ -785,7 +767,6 @@ export async function stickersForOrder(userId: string | null, printOrderId: stri
     }
     const stickers = stickersForLots(
       printable.map((l) => ({ lotCode: l.lotCode, lotType: l.lotType, flavourName: name(l.flavour) })),
-      settings.publicBaseUrl,
     );
     await tx.appendMovement({
       type: "PRINT_SHEET_SERVED",
@@ -807,6 +788,8 @@ export async function stickersForOrder(userId: string | null, printOrderId: stri
       packSize: settings.packSticker,
       printOrder: order,
       withheldLots: withheld,
+      // Runs count every lot of the order; a run already confirmed has pending 0 and no stickers served.
+      runs: printRuns(ordered, stickers),
     };
   });
 }
@@ -831,14 +814,6 @@ export const reprintServedId = (reprintId: string) => `reprint-served:${reprintI
  */
 export async function serveReprint(userId: string | null, reprintId: string): Promise<StickerSheet & { reprint: Reprint & { servedAt: string } }> {
   const store = getStore();
-  const actor = await loadActor(store, userId);
-  requireAction(actor, "reprint");
-  const lot = await store.lots.findOne({ lotCode: code.slice(0, 15) });
-  if (!lot || lot.manufacturerId !== actor.partner?.id) throw notFound(`Code ${code}`);
-  const [settings, name] = await Promise.all([store.getSettings(), flavourNames(store)]);
-  const sticker = stickerForCode(code, { lotCode: lot.lotCode, lotType: lot.lotType, flavourName: name(lot.flavour) });
-  if (!sticker) throw notFound(`Code ${code}`);
-  return { title: `Reprint ${code}`, stickers: [sticker], lotSize: settings.lotSticker, packSize: settings.packSticker, printOrder: null, runs: [] };
   const servedId = reprintServedId(reprintId);
   const alreadyUsed = () =>
     new ServiceError(409, "REPRINT_ALREADY_USED", "This reprint was already printed. To print the sticker again, log a new reprint with its reason.");
@@ -858,7 +833,7 @@ export async function serveReprint(userId: string | null, reprintId: string): Pr
       if (!check.ok) throw new ServiceError(409, check.code, `${check.message} — this logged reprint can no longer be printed`);
       const settings = await tx.getSettings();
       const name = await flavourNames(tx);
-      const sticker = stickerForCode(row.code, { lotCode: lot.lotCode, lotType: lot.lotType, flavourName: name(lot.flavour) }, settings.publicBaseUrl);
+      const sticker = stickerForCode(row.code, { lotCode: lot.lotCode, lotType: lot.lotType, flavourName: name(lot.flavour) });
       if (!sticker) throw notFound(`Code ${row.code}`);
       const at = nowIso();
       await tx.movements.append({
@@ -883,6 +858,7 @@ export async function serveReprint(userId: string | null, reprintId: string): Pr
         packSize: settings.packSticker,
         printOrder: null,
         reprint: { ...row, servedAt: at },
+        runs: [],
       };
     });
   } catch (e) {
@@ -894,28 +870,28 @@ export async function serveReprint(userId: string | null, reprintId: string): Pr
   }
 }
 
-export const markPrintedSchema = z.object({ deviceId: z.string().optional() }).optional();
-
 /**
- * The operator's explicit "Mark as printed" confirmation (never inferred from the print dialog, a CSV download or
- * navigation): GENERATED lots of the order and their packs become PRINTED, one PRINTED movement per lot, and the
- * order gets its printedAt — all in one transaction. Repeating it changes nothing.
- *
  * `{ lotType }` confirms one print run only (cases and trays are printed on separate label rolls): only that run's
  * lots become PRINTED, and the order becomes PRINTED once no lot of any run is waiting. Without it, every run.
+ * `{ deviceId }` names the PC confirming, when it is not the order's own PC.
  */
-export const markPrintedSchema = z.object({ lotType: z.enum(LOT_TYPES).optional() });
+export const markPrintedSchema = z.object({ deviceId: z.string().optional(), lotType: z.enum(LOT_TYPES).optional() }).optional();
 
 const runLabel = (t: LotType) => (t === "CASE" ? "case" : "tray");
 
-export async function markPrinted(userId: string | null, printOrderId: string, body: unknown = {}) {
-  const { lotType } = markPrintedSchema.parse(body ?? {});
+/**
+ * The operator's explicit "Mark as printed" confirmation (never inferred from the print dialog, a CSV download or
+ * navigation): GENERATED lots of the order (or of one run) and their packs become PRINTED, one PRINTED movement per
+ * lot, and once nothing of any run is waiting the order gets its printedAt — all in one transaction. Repeating it
+ * changes nothing.
+ *
  * Bulk writes (one statement for the lots, one for their packs, one batch of movements), so a 5,000-lot order
  * is confirmed in about a second instead of one round trip per lot and pack. The PRINTED movements keep the
  * order's PC; when the confirmation comes from another PC of the plant, that PC is named in the note.
  */
 export async function markPrinted(userId: string | null, printOrderId: string, body?: unknown) {
   const input = markPrintedSchema.parse(body ?? undefined);
+  const lotType = input?.lotType;
   return getStore().transaction(async (tx) => {
     const actor = await loadActor(tx, userId);
     requireAction(actor, "printOrder");
@@ -925,38 +901,17 @@ export async function markPrinted(userId: string | null, printOrderId: string, b
     const lots = await tx.lots.list({ printOrderId });
     const run = lotType ? lots.filter((l) => l.lotType === lotType) : lots;
     if (lotType && !run.length) throw badRequest("NOTHING_TO_PRINT", `This print order has no ${runLabel(lotType)}s`);
-    if (order.status !== "PRINTED" && !run.some((l) => l.status === "GENERATED")) {
+    const pending = run.filter((l) => l.status === "GENERATED");
+    if (order.status !== "PRINTED" && !pending.length) {
       // This run was already confirmed: repeating it changes nothing.
       if (lotType && run.some((l) => l.status !== "VOID")) return { printOrder: order, lotsPrinted: 0 };
-    const pending = await tx.lots.list({ printOrderId, status: "GENERATED" });
-    if (order.status !== "PRINTED" && !pending.length) {
       // Every lot was voided (or is otherwise no longer waiting for stickers): nothing to confirm.
       const what = lotType ? `${runLabel(lotType)} lot` : "lot";
       throw badRequest("NOTHING_TO_PRINT", `No ${what} of this print order is waiting to be printed (voided lots cannot be marked as printed)`);
     }
-    let changed = 0;
-    for (const lot of run.filter((l) => l.status === "GENERATED")) {
-      await tx.lots.update(lot.id, { status: "PRINTED", updatedAt: at });
-      for (const p of await tx.packs.list({ lotCode: lot.lotCode })) {
-        if (p.status === "GENERATED") await tx.packs.update(p.id, { status: "PRINTED", updatedAt: at });
-      }
-      await tx.appendMovement({
-        type: "PRINTED",
-        itemKind: "LOT",
-        itemCode: lot.lotCode,
-        fromId: lot.locationId,
-        toId: lot.locationId,
-        fromStatus: "GENERATED",
-        toStatus: "PRINTED",
-        userId: actor.user.id,
-        deviceId: order.deviceId,
-        invoice: null,
-        note: null,
-      });
-      changed++;
     if (pending.length) {
       const lotCodes = pending.map((l) => l.lotCode);
-      await tx.lots.updateWhere({ printOrderId, status: "GENERATED" }, { status: "PRINTED", updatedAt: at });
+      await tx.lots.updateWhere({ printOrderId, status: "GENERATED", ...(lotType ? { lotType } : {}) }, { status: "PRINTED", updatedAt: at });
       await tx.packs.updateWhere({ lotCode: lotCodes, status: "GENERATED" }, { status: "PRINTED", updatedAt: at });
       const note = confirmingPc && confirmingPc.id !== order.deviceId ? `Confirmed on ${confirmingPc.name}` : null;
       await tx.appendMovements(
@@ -977,7 +932,7 @@ export async function markPrinted(userId: string | null, printOrderId: string, b
       );
     }
     // Lots of the other run still waiting: the order stays pending until that run is confirmed too.
-    if (lots.some((l) => l.status === "GENERATED" && !run.includes(l))) return { printOrder: order, lotsPrinted: changed };
+    if (lots.some((l) => l.status === "GENERATED" && !run.includes(l))) return { printOrder: order, lotsPrinted: pending.length };
     const updated = await tx.printOrders.update(order.id, { status: "PRINTED", printedAt: order.printedAt ?? at });
     return { printOrder: updated, lotsPrinted: pending.length };
   });

@@ -82,6 +82,8 @@ beforeAll(async () => {
     ss1: user("SS", "SS-1"),
     ss2: user("SS", "SS-2"),
     SS1: partners.find((p) => p.name.startsWith("SS-1"))!.id,
+    VW: partners.find((p) => p.name.startsWith("VW-1"))!.id,
+    vw: users.find((u) => u.role === "WAREHOUSE")!.id,
   });
   const op = users.find((u) => u.id === ids.operator)!;
   await store().users.create({ ...op, id: "MF9998-OP", name: "Second operator" });
@@ -290,8 +292,11 @@ describe("existing workflows", () => {
     await markPrinted(ids.operator, o.printOrder.id);
     const [lot] = await lotsOf(o.printOrder.id);
     expect(await qcVerify(lot.lotCode)).toMatchObject({ ok: true });
-    expect(await dispatch(ids.operator, { action: "confirm", toPartnerId: ids.SS1, invoice: "SER-1", codes: [lot.lotCode] })).toMatchObject({ ok: true });
+    // The plant ships only to the Velza Warehouse; the warehouse sends it on to SS-1.
+    expect(await dispatch(ids.operator, { action: "confirm", toPartnerId: ids.VW, invoice: "SER-0", codes: [lot.lotCode] })).toMatchObject({ ok: true });
     await expect(reprint(ids.operator, { code: lot.lotCode, reason: "torn" })).rejects.toMatchObject({ code: "WRONG_STATUS" });
+    expect(await receive(ids.vw, { code: lot.lotCode })).toMatchObject({ ok: true });
+    expect(await dispatch(ids.vw, { action: "confirm", toPartnerId: ids.SS1, invoice: "SER-1", codes: [lot.lotCode] })).toMatchObject({ ok: true });
     expect(await receive(ids.ss2, { code: lot.lotCode })).toMatchObject({ ok: false, code: "WRONG_RECEIVER" });
     expect(await receive(ids.ss1, { code: lot.lotCode })).toMatchObject({ ok: true });
     expect(await receive(ids.ss1, { code: lot.lotCode })).toMatchObject({ ok: false, code: "DUPLICATE_RECEIPT" });

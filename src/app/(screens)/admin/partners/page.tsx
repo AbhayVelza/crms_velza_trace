@@ -201,7 +201,7 @@ export default function PartnersPage() {
 
   return (
     <>
-      <PageTitle title="Partners" subtitle="Every tier of the chain: Manufacturer → Super Stockist → Distributor → Retailer (a few retailers directly under their Super Stockist)" />
+      <PageTitle title="Partners" subtitle="Every tier of the chain: Manufacturer → Velza Warehouse → Super Stockist, Distributor or Retailer; then Super Stockist → Distributor → Retailer (a few retailers directly under their Super Stockist)" />
       <div className="space-y-4">
         <RegisterForm partners={partners} />
         <AdminCrud
@@ -211,7 +211,8 @@ export default function PartnersPage() {
           intro={
             <Notice tone="info">
               Assign each <b>Distributor</b> to a Super Stockist and each <b>Retailer</b> to a Distributor (or, for a few, directly to a Super Stockist).
-              A partner sees and can dispatch to only the partners assigned to it. IDs never change and are never reused. Partners with history can&apos;t be deleted —
+              A partner sees and can dispatch to only the partners assigned to it. The <b>Velza Warehouse</b> (VW0001…) is not assigned:
+              the manufacturer ships only to it, and it can supply any Super Stockist, Distributor or Retailer. IDs never change and are never reused. Partners with history can&apos;t be deleted —
               untick <b>Active</b> instead (their sign-ins stop working at once).
             </Notice>
           }

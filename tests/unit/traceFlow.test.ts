@@ -17,6 +17,7 @@ import { voidLot } from "@/lib/services/operator";
 import { createPrintOrder, markPrinted } from "@/lib/services/printOrders";
 import { alertPage, alerts, batchReport, dashboard, lookup, myStock, publicLookup, recall, recallReport, updateAlert } from "@/lib/services/trace";
 import { verify } from "@/lib/services/verify";
+import { photoOf } from "../fixtures/damagePhoto";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
 
 let dir: string;
@@ -40,6 +41,12 @@ async function qcPass(lotCode: string) {
   for (const [i, code] of packs.entries()) await verify(ids.qc, { action: "scanPack", lotCode, code, scanned: packs.slice(0, i) });
   await verify(ids.qc, { action: "confirm", lotCode, packCodes: packs });
 }
+/** The plant ships only to the Velza Warehouse; the warehouse sends the stock on to SS-1 (in transit to it). */
+async function toSS1(codes: string[], invoice: string) {
+  await dispatch(ids.operator, { action: "confirm", toPartnerId: ids.VW, invoice: `${invoice}-VW`, codes });
+  for (const code of codes) await receive(ids.vw, { code });
+  await dispatch(ids.vw, { action: "confirm", toPartnerId: ids.SS1, invoice, codes });
+}
 async function printAndVerify(cases: number) {
   const o = await order(cases);
   await markPrinted(ids.operator, o.id);
@@ -53,11 +60,13 @@ const codesOf = (items: { code: string }[]) => items.map((i) => i.code);
 beforeAll(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "velza-traceflow-"));
   process.env.VELZA_DB_PATH = path.join(dir, "db.json");
+  process.env.VELZA_UPLOAD_DIR = path.join(dir, "uploads");
   await store().reset(buildSampleSeed());
   for (const [k, role, tag] of [
     ["admin", "ADMIN"],
     ["operator", "OPERATOR"],
     ["qc", "QC"],
+    ["vw", "WAREHOUSE"],
     ["ss1", "SS", "SS-1"],
     ["rt1", "RETAILER", "Retailer-1"],
     ["rt4", "RETAILER", "Retailer-4"],
@@ -65,12 +74,14 @@ beforeAll(async () => {
   ] as [string, Role, string?][]) {
     ids[k] = await user(role, tag);
   }
+  ids.VW = await partner("VW-1");
   ids.SS1 = await partner("SS-1");
   ids.RT4 = await partner("Retailer-4");
   ids.MF = (await store().users.get(ids.operator))!.partnerId!;
 });
 afterAll(async () => {
   delete process.env.VELZA_DB_PATH;
+  delete process.env.VELZA_UPLOAD_DIR;
   await fs.rm(dir, { recursive: true, force: true });
 });
 
@@ -97,13 +108,13 @@ describe("an opened case with no packs left (LOW-opened-empty-listed) and its ti
   let lot = "";
   it("is not listed in My stock once every pack is reported damaged", async () => {
     [lot] = await printAndVerify(1);
-    await dispatch(ids.operator, { action: "confirm", toPartnerId: ids.SS1, invoice: "INV-D1", codes: [lot] });
+    await toSS1([lot], "INV-D1");
     await receive(ids.ss1, { code: lot });
     await dispatch(ids.ss1, { action: "confirm", toPartnerId: ids.RT4, invoice: "INV-D2", codes: [lot] });
     await receive(ids.rt4, { code: lot });
     await openLot(ids.rt4, { lotCode: lot });
     expect((await myStock(ids.rt4)).counts).toMatchObject({ cases: 1, openedCases: 1, loosePacks: 4 });
-    for (const seq of [1, 2, 3, 4]) expect(await reportDamaged(ids.rt4, { code: `${lot}6${seq}`, reason: "Leaking" })).toMatchObject({ ok: true });
+    for (const seq of [1, 2, 3, 4]) expect(await reportDamaged(ids.rt4, { code: `${lot}6${seq}`, reason: "Leaking", ...photoOf(`${lot}6${seq}`) })).toMatchObject({ ok: true });
     const mine = await myStock(ids.rt4);
     expect(codesOf(mine.inStock).filter((c) => c.startsWith(lot))).toEqual([]);
     expect(mine.counts).toMatchObject({ cases: 0, openedCases: 0, loosePacks: 0 });
@@ -122,7 +133,7 @@ describe("recall while in transit (REF-06)", () => {
   let lots: string[] = [];
   it("a lot recalled on its way to the SS is recalled stock at the SS, not stock or outgoing at the plant", async () => {
     lots = await printAndVerify(2);
-    await dispatch(ids.operator, { action: "confirm", toPartnerId: ids.SS1, invoice: "INV-A1", codes: [lots[0]] });
+    await toSS1([lots[0]], "INV-A1");
     const before = { mf: (await row(ids.MF))!.cases, ss: (await row(ids.SS1))?.cases ?? 0 };
     await recall(ids.hq, { batchCode: batchOf(lots[0]), reason: "Seal failure", confirm: true });
 
@@ -151,13 +162,13 @@ describe("recall after damage and after opening (REF-06, REF-07)", () => {
   let damagedBefore: Record<string, unknown> = {};
   it("set up: SS reports a sealed case damaged, a retailer opens a case and reports one pack", async () => {
     lots = await printAndVerify(3);
-    await dispatch(ids.operator, { action: "confirm", toPartnerId: ids.SS1, invoice: "INV-B1", codes: lots });
+    await toSS1(lots, "INV-B1");
     for (const code of lots) await receive(ids.ss1, { code });
-    expect(await reportDamaged(ids.ss1, { code: lots[0], reason: "Crushed" })).toMatchObject({ ok: true });
+    expect(await reportDamaged(ids.ss1, { code: lots[0], reason: "Crushed", ...photoOf(lots[0]) })).toMatchObject({ ok: true });
     await dispatch(ids.ss1, { action: "confirm", toPartnerId: ids.RT4, invoice: "INV-B2", codes: [lots[1]] });
     await receive(ids.rt4, { code: lots[1] });
     await openLot(ids.rt4, { lotCode: lots[1] });
-    expect(await reportDamaged(ids.rt4, { code: `${lots[1]}62`, reason: "Leaking" })).toMatchObject({ ok: true });
+    expect(await reportDamaged(ids.rt4, { code: `${lots[1]}62`, reason: "Leaking", ...photoOf(`${lots[1]}62`) })).toMatchObject({ ok: true });
     expect((await myStock(ids.rt4)).counts).toMatchObject({ cases: 1, loosePacks: 3 });
     const d = await dashboard(ids.hq);
     damagedBefore = Object.fromEntries(d.stock.map((s) => [s.partnerId, s.damaged]));
@@ -259,7 +270,7 @@ describe("acknowledge, close and page alerts (REF-11)", () => {
   let alertId = "";
   it("only HQ may act on an alert (403 before anything is looked up)", async () => {
     [lot] = await printAndVerify(1);
-    await dispatch(ids.operator, { action: "confirm", toPartnerId: ids.SS1, invoice: "INV-G1", codes: [lot] });
+    await toSS1([lot], "INV-G1");
     expect(await receive(ids.rt1, { code: lot })).toMatchObject({ ok: false, code: "WRONG_RECEIVER" });
     alertId = (await alerts(ids.hq)).find((a) => a.type === "WRONG_RECEIVER" && a.code === lot)!.id;
     for (const who of ["ss1", "admin", "rt1", "operator"]) {

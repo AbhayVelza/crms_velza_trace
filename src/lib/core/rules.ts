@@ -4,11 +4,14 @@ import { buildPackCodes, PACKS_PER_LOT } from "./codes";
 import { PARTNER_TYPES, type ItemKind, type ItemStatus, type LotType, type Partner, type PartnerType } from "./types";
 
 /**
- * Distribution line: Manufacturer → Super Stockist → Distributor → Retailer. A few retailers are supplied
- * by their Super Stockist directly (Manufacturer → Super Stockist → Retailer). Retailers are the last tier.
+ * Distribution line (since 6 Nov 2026): Manufacturer → Velza Warehouse → Super Stockist, Distributor or Retailer.
+ * The manufacturer ships only to the Velza Warehouse; the warehouse supplies any SS, DB or Retailer. Onward the
+ * old chain continues: Super Stockist → its Distributors and direct Retailers, Distributor → its Retailers.
+ * Retailers are the last tier.
  */
 export const DESTINATION_TYPES: Record<PartnerType, PartnerType[]> = {
-  MANUFACTURER: ["SS"],
+  MANUFACTURER: ["WAREHOUSE"],
+  WAREHOUSE: ["SS", "DB", "RETAILER"],
   SS: ["DB", "RETAILER"],
   DB: ["RETAILER"],
   RETAILER: [],
@@ -17,6 +20,7 @@ export const DESTINATION_TYPES: Record<PartnerType, PartnerType[]> = {
 /** Status of an item sitting at a partner of this tier. */
 export const AT_STATUS: Record<PartnerType, ItemStatus> = {
   MANUFACTURER: "PACKED",
+  WAREHOUSE: "AT_WAREHOUSE",
   SS: "AT_SS",
   DB: "AT_DB",
   RETAILER: "AT_RETAILER",
@@ -118,6 +122,8 @@ export function assignedPluralOf(type: PartnerType): string {
 
 /** A sender may supply only the partners assigned to it (when the receiver's tier is assigned at all). */
 export function isAssignedDestination(sender: Pick<Partner, "id" | "type">, receiver: Pick<Partner, "type" | "parentId">): boolean {
+  // The Velza Warehouse supplies any SS, Distributor or Retailer; assignments bind only the onward chain.
+  if (sender.type === "WAREHOUSE") return true;
   if (ASSIGNED_TO[receiver.type]?.includes(sender.type)) return receiver.parentId === sender.id;
   return true;
 }
@@ -336,7 +342,7 @@ export function packStatusForLot(lotStatus: ItemStatus, currentPackStatus: ItemS
  * The only statuses the public page calls genuine: QC-passed stock (PACKED) and everything after it in the chain.
  * An allowlist, so a new or unexpected status is never shown to a consumer as genuine.
  */
-export const PUBLIC_GENUINE_STATUSES: readonly ItemStatus[] = ["PACKED", "IN_TRANSIT", "AT_SS", "AT_DB", "AT_RETAILER", "OPENED"];
+export const PUBLIC_GENUINE_STATUSES: readonly ItemStatus[] = ["PACKED", "IN_TRANSIT", "AT_WAREHOUSE", "AT_SS", "AT_DB", "AT_RETAILER", "OPENED"];
 
 /** Customer-facing status line for the public lookup page. */
 export function publicStatus(found: boolean, status: ItemStatus | null): { label: string; tone: "ok" | "danger" | "warn" } {

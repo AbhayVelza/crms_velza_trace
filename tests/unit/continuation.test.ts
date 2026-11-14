@@ -463,6 +463,7 @@ describe("existing workflows on continued lots", () => {
 describe("a batch created with 0 cases and 0 trays", () => {
   it("takes its batch code with no lots, and is continued later from lot 00001", async () => {
     const r = await createPrintOrder(operator, {
+      idempotencyKey: crypto.randomUUID(),
       batches: [
         { flavour: "OR", mfgDate: "2026-10-01", expiryDate: "2027-10-01", cases: 1, trays: 0 },
         { flavour: "GA", mfgDate: "2026-10-01", expiryDate: "2027-10-01", cases: 0, trays: 0 },
@@ -481,7 +482,7 @@ describe("a batch created with 0 cases and 0 trays", () => {
   });
 
   it("an order or continuation with nothing to print at all is refused", async () => {
-    await expect(createPrintOrder(operator, { batches: [{ flavour: "OR", mfgDate: "2026-10-01", expiryDate: "2027-10-01", cases: 0, trays: 0 }] })).rejects.toMatchObject({
+    await expect(createPrintOrder(operator, { idempotencyKey: crypto.randomUUID(), batches: [{ flavour: "OR", mfgDate: "2026-10-01", expiryDate: "2027-10-01", cases: 0, trays: 0 }] })).rejects.toMatchObject({
       code: "INVALID_ORDER",
     });
     const b = await newBatch();

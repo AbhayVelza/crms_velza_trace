@@ -13,7 +13,8 @@ import { findItem, loadActor, logScan, manufacturerDevice, notFound, nowIso, req
 import { checkDamagePhoto, checkExtraPhotos, damagePhotoUrls, readDamagePhoto, saveDamagePhotos } from "./damagePhotos";
 
 export const damageSchema = z.object({
-  code: z.string().max(200),
+  // The code is cleaned like every scan screen does (QR link, lower case, spaces); see scan/scannedCode.ts.
+  code: scannedCodeSchema,
   reason: z.string().max(300),
   /** Photo of the damaged item showing its barcode: a data URL (or bare base64) of a JPEG, PNG or WebP. */
   photo: z.string().nullish(),
@@ -22,8 +23,6 @@ export const damageSchema = z.object({
   /** 1 to 4 photos of the damage itself (other angles, close-ups): data URLs of JPEG, PNG or WebP images. */
   damagePhotos: z.array(z.string()).nullish(),
 });
-// The code is cleaned like every scan screen does (QR link, lower case, spaces); see scan/scannedCode.ts.
-export const damageSchema = z.object({ code: scannedCodeSchema, reason: z.string().max(300) });
 
 const inStockAt = (p: Pack, partner: Partner) => p.locationId === partner.id && p.status === AT_STATUS[partner.type];
 

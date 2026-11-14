@@ -2,7 +2,7 @@
 // (with a mocked camera: no real device is involved here).
 
 import { describe, expect, it } from "vitest";
-import { activeCameraSession, CameraSession, toCameraError, type CameraEnv, type Decoder, type VideoLike } from "./camera";
+import { activeCameraSession, CAMERA_SIZE, CameraSession, toCameraError, type CameraEnv, type Decoder, type VideoLike } from "./camera";
 import { applyAccepted, applyRejected, countChecklist, createChecklist, filterRows, mergeExpected, nextPending, pageOf, rebaseChecklist, resetAll, resetItem, statusForRejection } from "./checklist";
 import { ScanGate } from "./gate";
 import { checkCodeFormat, normalizeScannedCode } from "./normalize";
@@ -231,7 +231,7 @@ describe("CameraSession (mocked camera)", () => {
     const v = video();
     const s = new CameraSession(v, decoder, env, (t) => seen.push(t));
     await s.start();
-    expect(calls[0]).toEqual({ audio: false, video: { facingMode: { ideal: "environment" } } });
+    expect(calls[0]).toEqual({ audio: false, video: { facingMode: { ideal: "environment" }, ...CAMERA_SIZE } });
     expect(s.state).toBe("running");
     d.emit(LOT);
     expect(seen).toEqual([LOT]);
@@ -250,7 +250,7 @@ describe("CameraSession (mocked camera)", () => {
     const a = new CameraSession(video(), decoder, env, () => {});
     await a.start();
     await a.start("front");
-    expect(calls[1]).toEqual({ audio: false, video: { deviceId: { exact: "front" } } });
+    expect(calls[1]).toEqual({ audio: false, video: { deviceId: { exact: "front" }, ...CAMERA_SIZE } });
     expect(tracks.map((t) => t.readyState)).toEqual(["ended", "live"]);
     const b = new CameraSession(video(), decoder, env, () => {});
     await b.start();
@@ -304,7 +304,8 @@ describe("CameraSession (mocked camera)", () => {
     expect(b.torchSupported).toBe(true);
     expect(await b.setTorch(true)).toBe(true);
     expect(b.torchOn).toBe(true);
-    expect(lit.tracks[0].applied).toEqual([{ advanced: [{ torch: true }] }]);
+    // The first request is the continuous-focus one made when the camera starts.
+    expect(lit.tracks[0].applied).toEqual([{ advanced: [{ focusMode: "continuous" }] }, { advanced: [{ torch: true }] }]);
     b.stop();
     expect(b.torchOn).toBe(false);
   });

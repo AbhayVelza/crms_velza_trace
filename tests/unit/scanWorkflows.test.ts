@@ -15,6 +15,7 @@ import { voidLot } from "@/lib/services/operator";
 import { createPrintOrder, markPrinted } from "@/lib/services/printOrders";
 import { myStock, recall } from "@/lib/services/trace";
 import { verify } from "@/lib/services/verify";
+import { photoOf } from "../fixtures/damagePhoto";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
 
 let dir: string;
@@ -35,11 +36,17 @@ async function qcPass(lotCode: string) {
   for (const [i, code] of packs.entries()) await verify(ids.qc, { action: "scanPack", lotCode, code, scanned: packs.slice(0, i) });
   return verify(ids.qc, { action: "confirm", lotCode, packCodes: packs });
 }
+/** The plant ships only to the Velza Warehouse: dispatch there and receive, so the warehouse can send it on. */
+async function atWarehouse(codes: string[], invoice = "INV-VW") {
+  await dispatch(ids.operator, { action: "confirm", toPartnerId: ids.VW, invoice, codes });
+  for (const code of codes) await receive(ids.vw, { code });
+}
 const scans = async (code: string) => (await store().scans.list()).filter((s) => s.code === code);
 
 beforeAll(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "velza-scan-"));
   process.env.VELZA_DB_PATH = path.join(dir, "db.json");
+  process.env.VELZA_UPLOAD_DIR = path.join(dir, "uploads");
   await store().reset(buildSampleSeed());
   const [users, partners] = await Promise.all([store().users.list(), store().partners.list()]);
   const user = (role: Role, prefix?: string) => users.find((u) => u.role === role && (!prefix || partners.find((p) => p.id === u.partnerId)?.name.startsWith(prefix)))!.id;
@@ -53,6 +60,8 @@ beforeAll(async () => {
     db1: user("DB", "DB-1"),
     rt1: user("RETAILER", "Retailer-1"),
     rt2: user("RETAILER", "Retailer-2"),
+    vw: user("WAREHOUSE"),
+    VW: partners.find((p) => p.name.startsWith("VW-1"))!.id,
     SS1: partners.find((p) => p.name.startsWith("SS-1"))!.id,
     DB1: partners.find((p) => p.name.startsWith("DB-1"))!.id,
     RT1: partners.find((p) => p.name.startsWith("Retailer-1"))!.id,
@@ -60,6 +69,7 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   delete process.env.VELZA_DB_PATH;
+  delete process.env.VELZA_UPLOAD_DIR;
   await fs.rm(dir, { recursive: true, force: true });
 });
 
@@ -112,19 +122,20 @@ describe("dispatch and receive scans", () => {
 
   it("dispatch check: eligible stock accepted, a repeat in the list refused, unverified stock refused, nothing moves before confirm", async () => {
     const [a] = lots;
-    const head = { toPartnerId: ids.SS1, invoice: "INV-SCAN-1" };
+    const head = { toPartnerId: ids.VW, invoice: "INV-SCAN-1" };
     expect(await dispatch(ids.operator, { action: "check", ...head, code: a, listed: [] })).toMatchObject({ ok: true });
     expect(await dispatch(ids.operator, { action: "check", ...head, code: a, listed: [a] })).toMatchObject({ ok: false, code: "DUPLICATE_SCAN" });
     const [printedOnly] = await order("MN", 1);
     expect(await dispatch(ids.operator, { action: "check", ...head, code: printedOnly, listed: [a] })).toMatchObject({ ok: false, code: "WRONG_STATUS" });
-    expect(await dispatch(ids.operator, { action: "check", toPartnerId: ids.SS1, invoice: " ", code: a, listed: [] })).toMatchObject({ ok: false, code: "INVOICE_REQUIRED" });
+    expect(await dispatch(ids.operator, { action: "check", toPartnerId: ids.VW, invoice: " ", code: a, listed: [] })).toMatchObject({ ok: false, code: "INVOICE_REQUIRED" });
     expect(await statusOf(a)).toBe("PACKED");
     expect((await scans(a)).filter((s) => s.context === "DISPATCH").map((s) => s.result)).toEqual(["OK", "DUPLICATE_SCAN", "INVOICE_REQUIRED"]);
   });
 
   it("incoming items carry the invoice they were dispatched on; wrong receiver and duplicate receipt refused; stock counts follow", async () => {
     const [a, b] = lots;
-    await dispatch(ids.operator, { action: "confirm", toPartnerId: ids.SS1, invoice: "INV-SCAN-2", codes: [a, b] });
+    await atWarehouse([a, b]);
+    await dispatch(ids.vw, { action: "confirm", toPartnerId: ids.SS1, invoice: "INV-SCAN-2", codes: [a, b] });
     const incoming = (await myStock(ids.ss1)).incoming;
     expect(incoming.filter((i) => i.code === a || i.code === b).map((i) => [i.code, i.invoice])).toEqual([
       [a, "INV-SCAN-2"],
@@ -136,8 +147,10 @@ describe("dispatch and receive scans", () => {
     const stock = await myStock(ids.ss1);
     expect(stock.inStock.map((i) => i.code)).toContain(a);
     expect(stock.incoming.map((i) => i.code)).toEqual([b]);
-    expect((await store().movements.list({ itemCode: a, type: "RECEIVED" })).length).toBe(1);
+    // Received once at the warehouse, once at SS-1.
+    expect((await store().movements.list({ itemCode: a, type: "RECEIVED" })).filter((m) => m.toId === ids.SS1).length).toBe(1);
     expect((await scans(a)).filter((s) => s.context === "RECEIVE").map((s) => [s.ok, s.result])).toEqual([
+      [true, "OK"], // the warehouse
       [false, "WRONG_RECEIVER"],
       [true, "OK"],
       [false, "DUPLICATE_RECEIPT"],
@@ -165,7 +178,7 @@ describe("chain scans take what the scanner sends (QR link, lower case, padding)
   });
 
   it("dispatch check, confirm, receive and open accept the full QR link and a padded lower-case code; no false UNKNOWN_CODE", async () => {
-    const head = { toPartnerId: ids.SS1, invoice: "INV-QR-1" };
+    const head = { toPartnerId: ids.VW, invoice: "INV-QR-1" };
     expect(await dispatch(ids.operator, { action: "check", ...head, code: url(c1), listed: [] })).toMatchObject({ ok: true, message: expect.stringContaining(c1) });
     // A raw code and its QR link are the same item in the list.
     expect(await dispatch(ids.operator, { action: "check", ...head, code: url(c1), listed: [c1] })).toMatchObject({ ok: false, code: "DUPLICATE_SCAN" });
@@ -173,7 +186,9 @@ describe("chain scans take what the scanner sends (QR link, lower case, padding)
     // Confirm with the code twice (raw + link) dispatches it once.
     expect(await dispatch(ids.operator, { action: "confirm", ...head, codes: [c1, url(c1)] })).toMatchObject({ ok: true, count: 1 });
     expect(await store().movements.list({ itemCode: c1, type: "DISPATCHED" })).toHaveLength(1);
-    expect(await receive(ids.ss1, { code: ` ${c1.toLowerCase()}\r\n` })).toMatchObject({ ok: true, message: expect.stringContaining(c1) });
+    expect(await receive(ids.vw, { code: ` ${c1.toLowerCase()}\r\n` })).toMatchObject({ ok: true, message: expect.stringContaining(c1) });
+    await dispatch(ids.vw, { action: "confirm", toPartnerId: ids.SS1, invoice: "INV-QR-1B", codes: [url(c1)] });
+    expect(await receive(ids.ss1, { code: url(c1) })).toMatchObject({ ok: true });
     await dispatch(ids.ss1, { action: "confirm", toPartnerId: ids.DB1, invoice: "INV-QR-2", codes: [url(c1)] });
     expect(await receive(ids.db1, { code: url(c1) })).toMatchObject({ ok: true });
     await dispatch(ids.db1, { action: "confirm", toPartnerId: ids.RT1, invoice: "INV-QR-3", codes: [c1] });
@@ -218,9 +233,10 @@ describe("receive / dispatch: location before status (no status of stock held el
   it("another partner's DAMAGED lot: NOT_AT_LOCATION / WRONG_RECEIVER; the holder is still told it is DAMAGED", async () => {
     const [d] = await order("OR", 1);
     await qcPass(d);
-    await dispatch(ids.operator, { action: "confirm", toPartnerId: ids.SS1, invoice: "INV-DMG", codes: [d] });
+    await atWarehouse([d]);
+    await dispatch(ids.vw, { action: "confirm", toPartnerId: ids.SS1, invoice: "INV-DMG", codes: [d] });
     await receive(ids.ss1, { code: d });
-    expect(await reportDamaged(ids.ss1, { code: d, reason: "Crushed" })).toMatchObject({ ok: true });
+    expect(await reportDamaged(ids.ss1, { code: d, reason: "Crushed", ...photoOf(d) })).toMatchObject({ ok: true });
     const check = await dispatch(ids.db1, { action: "check", toPartnerId: ids.RT1, invoice: "INV-LEAK", code: d });
     expect(check).toMatchObject({ ok: false, code: "NOT_AT_LOCATION" });
     expect(check.message).not.toMatch(/DAMAGED/);
@@ -245,7 +261,7 @@ describe("dispatch confirm is all-or-nothing", () => {
     const [good] = await order("OR", 1);
     await qcPass(good);
     const [unverified] = await order("MN", 1);
-    const err = await dispatch(ids.operator, { action: "confirm", toPartnerId: ids.SS1, invoice: "INV-AON", codes: [good, unverified] }).catch((e) => e);
+    const err = await dispatch(ids.operator, { action: "confirm", toPartnerId: ids.VW, invoice: "INV-AON", codes: [good, unverified] }).catch((e) => e);
     expect(err).toMatchObject({ status: 400, code: "DISPATCH_REJECTED" });
     expect(err.details).toEqual([{ code: unverified, reason: expect.any(String) }]);
     expect(await statusOf(good)).toBe("PACKED");
@@ -255,7 +271,7 @@ describe("dispatch confirm is all-or-nothing", () => {
   it("two confirms of the same lot at once: exactly one succeeds", async () => {
     const [lot] = await order("OR", 1);
     await qcPass(lot);
-    const head = { action: "confirm", toPartnerId: ids.SS1, invoice: "INV-RACE", codes: [lot] } as const;
+    const head = { action: "confirm", toPartnerId: ids.VW, invoice: "INV-RACE", codes: [lot] } as const;
     const results = await Promise.allSettled([dispatch(ids.operator, head), dispatch(ids.operator, head)]);
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     expect(results.find((r) => r.status === "rejected")).toMatchObject({ reason: { code: "DISPATCH_REJECTED" } });
@@ -276,7 +292,8 @@ describe("retailer opens a lot", () => {
     const types = await Promise.all(codes.map(async (c) => [c, (await store().lots.findOne({ lotCode: c }))!.lotType] as const));
     caseLot = types.find(([, t]) => t === "CASE")![0];
     trayLot = types.find(([, t]) => t === "TRAY")![0];
-    await dispatch(ids.operator, { action: "confirm", toPartnerId: ids.SS1, invoice: "INV-OPEN-1", codes });
+    await atWarehouse(codes);
+    await dispatch(ids.vw, { action: "confirm", toPartnerId: ids.SS1, invoice: "INV-OPEN-1", codes });
     for (const c of codes) await receive(ids.ss1, { code: c });
     await dispatch(ids.ss1, { action: "confirm", toPartnerId: RT4, invoice: "INV-OPEN-2", codes });
   });

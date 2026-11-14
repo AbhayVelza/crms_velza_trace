@@ -22,9 +22,7 @@ const lotOf = async (lotCode: string) => (await store().lots.findOne({ lotCode }
 const packsOf = async (lotCode: string) => (await store().packs.list({ lotCode })).sort((a, b) => a.seq - b.seq);
 
 async function order(flavour: string, cases: number, trays = 0) {
-  const r = await createPrintOrder(ids.operator, { batches: [{ flavour, mfgDate: "2026-11-01", expiryDate: "2027-08-01", cases, trays }] });
-async function order(flavour: string, cases: number) {
-  const r = await createPrintOrder(ids.operator, { idempotencyKey: crypto.randomUUID(), batches: [{ flavour, mfgDate: "2026-11-01", expiryDate: "2027-08-01", cases, trays: 0 }] });
+  const r = await createPrintOrder(ids.operator, { idempotencyKey: crypto.randomUUID(), batches: [{ flavour, mfgDate: "2026-11-01", expiryDate: "2027-08-01", cases, trays }] });
   if (r.preview) throw new Error("expected an order");
   return r.printOrder;
 }

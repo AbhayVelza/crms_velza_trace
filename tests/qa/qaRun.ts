@@ -235,7 +235,9 @@ async function main() {
   record("Auth", "Sign-out ends the session (old cookie refused)", out.status === 200 && afterOut.status === 401, "logout 200, reuse 401", `${out.status}, ${afterOut.status}`);
 
   // ---------- 3. Role × API matrix (expected results come from PERMISSIONS in src/lib/core/permissions.ts)
-  const sessions: Record<Role, Session> = {
+  // The QA dataset has no Velza Warehouse sign-in yet, so WAREHOUSE is not in this matrix.
+  type QaRole = Exclude<Role, "WAREHOUSE">;
+  const sessions: Record<QaRole, Session> = {
     ADMIN: admin,
     TRACE_OWNER: await signIn("HQ0001", creds.hqPassword, "TRACE_OWNER"),
     OPERATOR: await signIn(`${MF}-OP`, creds.partnerPassword, "OPERATOR"),
@@ -244,7 +246,7 @@ async function main() {
     DB: await signIn(id("DST-001"), creds.partnerPassword, "DB"),
     RETAILER: rt1,
   };
-  const ROLES = Object.keys(sessions) as Role[];
+  const ROLES = Object.keys(sessions) as QaRole[];
   // "own-batches": HQ gets every synced batch, a partner sign-in only the batches its own plant made (empty for
   // SS, DB and Retailer), Velza Admin none — see listBatches in src/lib/services/trace.ts.
   const endpoints: { url: string; action: Action | "any" | "own-batches" }[] = [
@@ -283,7 +285,7 @@ async function main() {
     }
   }
   record("Roles", `7 roles × ${endpoints.length} APIs match the permission map (${ROLES.length * endpoints.length} requests)`, matrixFails === 0, "all as PERMISSIONS says", `${matrixFails} mismatches`);
-  for (const role of ["SS", "DB", "RETAILER"] as Role[]) {
+  for (const role of ["SS", "DB", "RETAILER"] as QaRole[]) {
     const b = j(await sessions[role].get("/api/batches")) as unknown[];
     record("Roles", `${role} batch list is empty (it made no batches)`, Array.isArray(b) && b.length === 0, "[]", `${b.length} batch(es)`);
   }
@@ -296,7 +298,7 @@ async function main() {
 
   // ---------- 4. Security boundaries
   const before = JSON.stringify(j(await admin.get("/api/admin/partners")).find((p: ApiPartner) => p.id === id("RTL-001")));
-  for (const role of ["TRACE_OWNER", "OPERATOR", "SS", "DB", "RETAILER"] as Role[]) {
+  for (const role of ["TRACE_OWNER", "OPERATOR", "SS", "DB", "RETAILER"] as QaRole[]) {
     const c = await sessions[role].post("/api/admin/partners", { ...MAHARASHTRA_PARTNERS[10], name: `${QA_PREFIX}-NEG by ${role}`, phone: "+91 00000 202697", email: "qa-neg-role@example.com", parentId: id("DST-002"), password: creds.partnerPassword });
     const u = await sessions[role].patch(`/api/admin/partners/${id("RTL-001")}`, { name: "hijacked" });
     const d = await sessions[role].del(`/api/admin/partners/${id("RTL-010")}`);

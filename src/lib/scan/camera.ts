@@ -64,6 +64,14 @@ export interface CameraInfo {
   label: string;
 }
 
+/**
+ * Requested size. Without one, browsers give 640×480: a pack sticker's Code 128 bars (≈0.33 mm) are then under
+ * 2 px wide and can't be read, while the lot sticker's QR still is. 1280×720 or more reads both.
+ */
+export const CAMERA_SIZE = { width: { ideal: 1920 }, height: { ideal: 1080 } } as const;
+/** Below this width, small (pack) barcodes need the sticker held close to the camera. */
+export const LOW_RES_WIDTH = 1280;
+
 /** The session currently holding the camera on this page, if any. */
 const camera: { active: CameraSession | null } = { active: null };
 
@@ -76,6 +84,8 @@ export class CameraSession {
   state: "idle" | "starting" | "running" | "stopped" = "idle";
   torchSupported = false;
   torchOn = false;
+  /** The size the camera actually gave (null until running, or if the browser doesn't say). */
+  resolution: { width: number; height: number } | null = null;
   private controls: DecoderControls | null = null;
   private generation = 0;
 
@@ -107,7 +117,7 @@ export class CameraSession {
     this.state = "starting";
     const constraints: MediaStreamConstraints = {
       audio: false,
-      video: deviceId ? { deviceId: { exact: deviceId } } : { facingMode: { ideal: "environment" } },
+      video: deviceId ? { deviceId: { exact: deviceId }, ...CAMERA_SIZE } : { facingMode: { ideal: "environment" }, ...CAMERA_SIZE },
     };
     let controls: DecoderControls;
     try {
@@ -130,6 +140,10 @@ export class CameraSession {
     const track = this.track();
     this.torchSupported = !!(track?.getCapabilities?.() as { torch?: boolean } | undefined)?.torch;
     this.torchOn = false;
+    // Keep refocusing on close-up stickers where the camera supports it (many webcams ignore it).
+    await track?.applyConstraints?.({ advanced: [{ focusMode: "continuous" } as MediaTrackConstraintSet] }).catch(() => undefined);
+    const s = track?.getSettings?.();
+    this.resolution = s?.width && s.height ? { width: s.width, height: s.height } : null;
   }
 
   async setTorch(on: boolean): Promise<boolean> {
@@ -158,6 +172,7 @@ export class CameraSession {
     this.stopTracks();
     this.torchSupported = false;
     this.torchOn = false;
+    this.resolution = null;
   }
 
   private stopTracks() {
@@ -174,7 +189,10 @@ export class CameraSession {
 /** The real decoder: @zxing/browser, Code 128 (pack and lot barcodes) and QR (lot stickers). Loaded on demand. */
 export async function zxingDecoder(): Promise<Decoder> {
   const [{ BrowserMultiFormatReader }, { BarcodeFormat, DecodeHintType }] = await Promise.all([import("@zxing/browser"), import("@zxing/library")]);
-  const hints = new Map([[DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.CODE_128, BarcodeFormat.QR_CODE]]]);
+  const hints = new Map<import("@zxing/library").DecodeHintType, unknown>([
+    [DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.CODE_128, BarcodeFormat.QR_CODE]],
+    [DecodeHintType.TRY_HARDER, true],
+  ]);
   const reader = new BrowserMultiFormatReader(hints, { delayBetweenScanAttempts: 150 });
   return {
     start: (constraints, video, onText) =>

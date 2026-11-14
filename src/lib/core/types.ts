@@ -2,23 +2,25 @@
 // Partners and users are keyed by their readable IDs (DB0001, MF0001-OP), lots and packs by their
 // printed code, everything else by a UUID. Timestamps are ISO strings.
 
-export const PARTNER_TYPES = ["MANUFACTURER", "SS", "DB", "RETAILER"] as const;
+export const PARTNER_TYPES = ["MANUFACTURER", "WAREHOUSE", "SS", "DB", "RETAILER"] as const;
 export type PartnerType = (typeof PARTNER_TYPES)[number];
 
 export const PARTNER_TYPE_LABELS: Record<PartnerType, string> = {
   MANUFACTURER: "Manufacturer",
+  WAREHOUSE: "Velza Warehouse",
   SS: "Super Stockist",
   DB: "Distributor",
   RETAILER: "Retailer",
 };
 
-export const ROLES = ["ADMIN", "OPERATOR", "QC", "SS", "DB", "RETAILER", "TRACE_OWNER"] as const;
+export const ROLES = ["ADMIN", "OPERATOR", "QC", "WAREHOUSE", "SS", "DB", "RETAILER", "TRACE_OWNER"] as const;
 export type Role = (typeof ROLES)[number];
 
 export const ROLE_LABELS: Record<Role, string> = {
   ADMIN: "Velza Admin",
   OPERATOR: "Manufacturer Operator",
   QC: "Supervisor/QC",
+  WAREHOUSE: "Velza Warehouse",
   SS: "Super Stockist",
   DB: "Distributor",
   RETAILER: "Retailer",
@@ -33,6 +35,7 @@ export const ROLE_PARTNER_TYPE: Record<Role, PartnerType | null> = {
   ADMIN: null,
   OPERATOR: "MANUFACTURER",
   QC: "MANUFACTURER",
+  WAREHOUSE: "WAREHOUSE",
   SS: "SS",
   DB: "DB",
   RETAILER: "RETAILER",
@@ -48,6 +51,7 @@ export const MAIN_STATUSES = [
   "PRINTED",
   "PACKED",
   "IN_TRANSIT",
+  "AT_WAREHOUSE",
   "AT_SS",
   "AT_DB",
   "AT_RETAILER",
@@ -91,9 +95,17 @@ export interface Partner {
   /** The partner it is assigned to: DB → its SS, Retailer → its DB or (for a few retailers) its SS directly. */
   parentId: string | null;
   active: boolean;
+  /**
+   * Self sign-up approval. Absent / null = approved (every partner the Admin registered, and every Retailer).
+   * PENDING = a Super Stockist or Distributor that signed itself up and waits for Velza Admin; REJECTED = turned
+   * down. A pending or rejected partner is also inactive, so it cannot sign in, receive stock or be dispatched to.
+   */
+  approval?: PartnerApproval | null;
   createdAt: string;
   createdBy: string | null;
 }
+
+export type PartnerApproval = "PENDING" | "REJECTED";
 
 /** A sign-in. `id` is the sign-in ID: the partner ID (DB0001), MF0001-OP / MF0001-QC, or AD0001 / HQ0001. */
 export interface User {
@@ -189,6 +201,36 @@ export interface PrintOrder {
   requestFingerprint?: string | null;
 }
 
+/** Cases and trays one shipping container holds at most. */
+export const CONTAINER_CAPACITY = 2860;
+
+export const CONTAINER_STATUSES = ["LOADING", "IN_TRANSIT", "RECEIVED"] as const;
+export type ContainerStatus = (typeof CONTAINER_STATUSES)[number];
+
+/**
+ * One trip of a shipping container from the manufacturer to the Velza Warehouse. `code` is the container's own
+ * number (e.g. MSCU1234567), entered at the plant; a container is reused for many trips, so a number is unique
+ * only among containers still loading or on the road. The operator scans cases and trays in (LOADING), dispatches
+ * the container to a warehouse (IN_TRANSIT: every lot in it is dispatched), and the warehouse receives everything
+ * still on the way in it with one scan of the container number (RECEIVED).
+ */
+export interface Container {
+  id: string;
+  code: string;
+  manufacturerId: string;
+  status: ContainerStatus;
+  /** Lot (case/tray) codes loaded, in scan order. */
+  lotCodes: string[];
+  toId: string | null;
+  invoice: string | null;
+  createdAt: string;
+  createdBy: string;
+  dispatchedAt: string | null;
+  dispatchedBy: string | null;
+  receivedAt: string | null;
+  receivedBy: string | null;
+}
+
 export interface Lot {
   id: string;
   lotCode: string;
@@ -244,6 +286,10 @@ export const MOVEMENT_TYPES = [
   "PRINT_SHEET_SERVED",
   /** A logged reprint authorization was used to serve its sticker (once; the row id makes reuse impossible). */
   "REPRINT_SERVED",
+  /** HQ acted on a computed alert (itemKind "ALERT", itemCode = the alert id, note = HQ's note). See core/alerts.ts. */
+  "ALERT_ACKNOWLEDGED",
+  "ALERT_CLOSED",
+  "ALERT_REOPENED",
 ] as const;
 export type MovementType = (typeof MOVEMENT_TYPES)[number];
 
@@ -252,7 +298,7 @@ export interface Movement {
   id: string;
   at: string;
   type: MovementType;
-  itemKind: ItemKind | "BATCH" | "DEVICE" | "PRINT_ORDER";
+  itemKind: ItemKind | "BATCH" | "DEVICE" | "PRINT_ORDER" | "ALERT";
   itemCode: string;
   fromId: string | null;
   toId: string | null;
@@ -264,7 +310,7 @@ export interface Movement {
   note: string | null;
 }
 
-export const SCAN_CONTEXTS = ["VERIFY", "DISPATCH", "RECEIVE", "OPEN_LOT", "DAMAGE", "LOOKUP", "PUBLIC_LOOKUP"] as const;
+export const SCAN_CONTEXTS = ["VERIFY", "DISPATCH", "RECEIVE", "OPEN_LOT", "DAMAGE", "LOOKUP", "PUBLIC_LOOKUP", "CONTAINER"] as const;
 export type ScanContext = (typeof SCAN_CONTEXTS)[number];
 
 /** Scan audit row: every scan, success or failure. */
@@ -309,6 +355,10 @@ export interface Settings {
   poolIssueSize: number;
   poolRefillBelow: number;
   defaultCountry: string;
+  /** PROVISIONAL — needs Velza business approval. Public-page scans of one code within the window that raise a SUSPECT_CLONE alert. */
+  publicCloneScanThreshold?: number;
+  /** PROVISIONAL — needs Velza business approval. Sliding window (hours) for publicCloneScanThreshold. */
+  publicCloneWindowHours?: number;
 }
 
 export const DEFAULT_SETTINGS: Omit<Settings, "id"> = {
@@ -321,4 +371,6 @@ export const DEFAULT_SETTINGS: Omit<Settings, "id"> = {
   poolIssueSize: 10,
   poolRefillBelow: 3,
   defaultCountry: "91",
+  publicCloneScanThreshold: 5, // PROVISIONAL — needs Velza business approval
+  publicCloneWindowHours: 24, // PROVISIONAL — needs Velza business approval
 };

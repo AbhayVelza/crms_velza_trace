@@ -12,7 +12,7 @@
 // The server stays authoritative: this component never changes a status itself.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CameraError, CameraSession, cameraErrorMessage, zxingDecoder, type CameraInfo } from "@/lib/scan/camera";
+import { CameraError, CameraSession, cameraErrorMessage, LOW_RES_WIDTH, zxingDecoder, type CameraInfo } from "@/lib/scan/camera";
 import { ScanGate, type ScanSource } from "@/lib/scan/gate";
 import { checkCodeFormat, normalizeScannedCode } from "@/lib/scan/normalize";
 import type { DemoCode, DemoScreen } from "@/lib/services/demo";
@@ -38,11 +38,24 @@ interface Props {
 const OTHER_FIELDS = "input, select, textarea, [contenteditable=true]";
 const coarsePointer = () => typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches;
 
+/**
+ * Whether the camera was left open. A page may re-create the scan box between steps (QC: lot → its packs);
+ * the camera stays open across that instead of closing after every lot.
+ */
+let cameraWanted = false;
+
 export function ScanInput({ onScan, label = "Scan code", placeholder = "Scan or type a code, then Enter", disabled, validate = true, demoScreen, demoLotCode }: Props) {
   const ref = useRef<HTMLInputElement>(null);
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
-  const [camera, setCamera] = useState(false);
+  const [camera, setCameraState] = useState(cameraWanted);
+  const setCamera = useCallback((next: boolean | ((c: boolean) => boolean)) => {
+    setCameraState((c) => {
+      const v = typeof next === "function" ? next(c) : next;
+      cameraWanted = v;
+      return v;
+    });
+  }, []);
   const [formatError, setFormatError] = useState<string | null>(null);
   const gate = useRef(new ScanGate());
   const queue = useRef<{ code: string; source: ScanSource }[]>([]);
@@ -206,6 +219,7 @@ function CameraPanel({ onCode, busy, onClose }: { onCode: (text: string) => void
   const videoRef = useRef<HTMLVideoElement>(null);
   const session = useRef<CameraSession | null>(null);
   const [state, setState] = useState<"starting" | "running" | "stopped">("starting");
+  const [resolution, setResolution] = useState<{ width: number; height: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [cameras, setCameras] = useState<CameraInfo[]>([]);
   const [deviceId, setDeviceId] = useState("");
@@ -226,6 +240,7 @@ function CameraPanel({ onCode, busy, onClose }: { onCode: (text: string) => void
       await session.current.start(id || undefined);
       if (session.current.state !== "running") return;
       setState("running");
+      setResolution(session.current.resolution);
       setTorch({ supported: session.current.torchSupported, on: false });
       // Labels are only available once the user has allowed the camera.
       setCameras(await CameraSession.listCameras(env));
@@ -313,7 +328,13 @@ function CameraPanel({ onCode, busy, onClose }: { onCode: (text: string) => void
           </Button>
         )}
         <span className="flex-1 text-xs text-muted-foreground" aria-live="polite">
-          {running ? "Point the camera at a barcode or QR code inside the frame" : state === "starting" ? "Starting the camera…" : "Camera off"}
+          <span data-testid="camera-status">
+            {running ? "Point the camera at a barcode or QR code inside the frame" : state === "starting" ? "Starting the camera…" : "Camera off"}
+            {running && resolution && ` · camera ${resolution.width}×${resolution.height}`}
+          </span>
+          {running && resolution && Math.max(resolution.width, resolution.height) < LOW_RES_WIDTH && (
+            <span className="block text-warning">Low camera resolution: hold small pack stickers close and steady, or use a USB barcode scanner.</span>
+          )}
         </span>
         <button type="button" onClick={onClose} className="min-h-11 rounded px-2 text-xs underline underline-offset-4 hover:text-foreground">
           Close

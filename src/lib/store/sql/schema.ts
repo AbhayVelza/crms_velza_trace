@@ -9,17 +9,28 @@
 //
 // v3 (4 Nov 2026): print order kind + request fingerprint, reprint → original print order, and triggers
 // that refuse a lot counter moving backwards or an issued code being deleted. Added in place; no data change.
+//
+// v4 (4 Nov 2026): indexes for the plant's queries (print order list, reprint list, unsynced counts and sync,
+// reserved pool codes). Indexes only (CREATE INDEX IF NOT EXISTS); no table, column or data change.
+//
+// v5 (6 Nov 2026): the Velza Warehouse tier (partner type WAREHOUSE, IDs VW0001…, role WAREHOUSE, code status
+// AT_WAREHOUSE) between the Manufacturer and SS/DB/Retailer, and the containers table (shipping containers from
+// the plant to the warehouse). An older database only gains allowed values and a new table: the upgrade section
+// re-applies the checks with the current values.
+//
+// v6 (14 Nov 2026): self sign-up. partners.approval (NULL = approved, PENDING, REJECTED); the one-SS-per-state
+// index leaves rejected sign-ups out. Column added in place; existing rows stay NULL (approved).
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 6;
 
-// Checks whose values changed in v2. Each is named explicitly — with the name PostgreSQL gave it in
+// Checks whose values changed in v2 or v3. Each is named explicitly — with the name PostgreSQL gave it in
 // v1 — so the upgrade can replace it, and is written once here for both CREATE TABLE and the upgrade.
-const PARTNER_TYPE_CHECK = `partner_type IN ('MANUFACTURER', 'SS', 'DB', 'RETAILER')`;
-const PARTNER_ID_CHECK = `partner_id ~ '^(MF|SS|DB|RT)[0-9]{4,}$' AND left(partner_id, 2) = CASE partner_type
-      WHEN 'MANUFACTURER' THEN 'MF' WHEN 'SS' THEN 'SS' WHEN 'DB' THEN 'DB' ELSE 'RT' END`;
-const LOGIN_ID_CHECK = `login_id ~ '^(MF|SS|DB|RT|AD|HQ)[0-9]{4,}(-(OP|QC))?$'`;
-const ROLE_CHECK = `role IN ('ADMIN', 'OPERATOR', 'QC', 'SS', 'DB', 'RETAILER', 'TRACE_OWNER')`;
-const CODE_STATUS_CHECK = `status IN ('GENERATED', 'PRINTED', 'PACKED', 'IN_TRANSIT', 'AT_SS', 'AT_DB', 'AT_RETAILER',
+const PARTNER_TYPE_CHECK = `partner_type IN ('MANUFACTURER', 'WAREHOUSE', 'SS', 'DB', 'RETAILER')`;
+const PARTNER_ID_CHECK = `partner_id ~ '^(MF|VW|SS|DB|RT)[0-9]{4,}$' AND left(partner_id, 2) = CASE partner_type
+      WHEN 'MANUFACTURER' THEN 'MF' WHEN 'WAREHOUSE' THEN 'VW' WHEN 'SS' THEN 'SS' WHEN 'DB' THEN 'DB' ELSE 'RT' END`;
+const LOGIN_ID_CHECK = `login_id ~ '^(MF|VW|SS|DB|RT|AD|HQ)[0-9]{4,}(-(OP|QC))?$'`;
+const ROLE_CHECK = `role IN ('ADMIN', 'OPERATOR', 'QC', 'WAREHOUSE', 'SS', 'DB', 'RETAILER', 'TRACE_OWNER')`;
+const CODE_STATUS_CHECK = `status IN ('GENERATED', 'PRINTED', 'PACKED', 'IN_TRANSIT', 'AT_WAREHOUSE', 'AT_SS', 'AT_DB', 'AT_RETAILER',
                     'OPENED', 'QUARANTINED', 'VOID', 'DAMAGED', 'RETURNED', 'RECALLED')`;
 
 // Values only a v1 database can hold (the Supplier tier, Outlets and their SP / OT IDs).
@@ -61,7 +72,7 @@ CREATE TABLE IF NOT EXISTS partners (
     ${PARTNER_ID_CHECK})
 );
 -- One Super Stockist per state.
-CREATE UNIQUE INDEX IF NOT EXISTS partners_one_ss_per_state ON partners (state) WHERE partner_type = 'SS';
+-- One Super Stockist per state: the index is (re)built in the v6 section below, where the approval column exists.
 CREATE UNIQUE INDEX IF NOT EXISTS partners_email_unique ON partners (lower(email)) WHERE email <> '';
 CREATE INDEX IF NOT EXISTS partners_parent ON partners (parent_id);
 
@@ -174,6 +185,28 @@ CREATE TABLE IF NOT EXISTS print_orders (
   row_no           bigint GENERATED ALWAYS AS IDENTITY
 );
 
+-- ============================================================ containers
+-- One trip of a shipping container from the plant to the Velza Warehouse. container_code is the container's
+-- own number; containers are reused, so it is unique only among containers still loading or on the road.
+CREATE TABLE IF NOT EXISTS containers (
+  container_id     text PRIMARY KEY,
+  container_code   text NOT NULL CHECK (container_code ~ '^[A-Z0-9][A-Z0-9-]{2,19}$'),
+  manufacturer_id  text NOT NULL,
+  status           text NOT NULL CHECK (status IN ('LOADING', 'IN_TRANSIT', 'RECEIVED')),
+  lot_codes        text[] NOT NULL,
+  to_partner_id    text,
+  invoice          text,
+  created_at       timestamptz NOT NULL,
+  created_by       text NOT NULL,
+  dispatched_at    timestamptz,
+  dispatched_by    text,
+  received_at      timestamptz,
+  received_by      text,
+  row_no           bigint GENERATED ALWAYS AS IDENTITY
+);
+CREATE UNIQUE INDEX IF NOT EXISTS containers_one_active_per_code ON containers (container_code) WHERE status <> 'RECEIVED';
+CREATE INDEX IF NOT EXISTS containers_by_manufacturer ON containers (manufacturer_id);
+
 -- ============================================================ codes
 -- One row per sticker: a case or tray (LOT) and each of its packs (PACK). The code must equal its
 -- parts: country (2) + batch (6) + flavour (2) + hex lot number (5) [+ pack size + pack sequence].
@@ -262,9 +295,9 @@ DROP TRIGGER IF EXISTS code_history_no_change ON code_history;
 CREATE TRIGGER code_history_no_change BEFORE UPDATE OR DELETE ON code_history
   FOR EACH ROW EXECUTE FUNCTION code_history_append_only();
 
--- ============================================================ upgrade from v1
+-- ============================================================ upgrade from v1 / v2
 -- CREATE TABLE IF NOT EXISTS leaves an existing table's checks as they were, so the checks that changed
--- in v2 are put back here with the v2 values (on a new database this replaces them with the same).
+-- in v2 and v3 are put back here with the current values (on a new database this replaces them with the same).
 -- Rows from before the change must be converted first; if any are left this stops and says how.
 DO $$
 DECLARE
@@ -342,6 +375,29 @@ DROP TRIGGER IF EXISTS codes_issued_protected ON codes;
 CREATE TRIGGER codes_issued_protected BEFORE UPDATE OF code OR DELETE ON codes
   FOR EACH ROW EXECUTE FUNCTION codes_issued_protected();
 
+-- ============================================================ v4: plant query indexes
+-- A plant's codes, orders and batches (print order list, reprint list); a PC's unsynced rows (device bar counts,
+-- Sync); a PC's reserved batch codes (every print order preview and create). Partial indexes stay small: once
+-- synced, a row leaves them.
+CREATE INDEX IF NOT EXISTS codes_manufacturer ON codes (manufacturer_id, code_type);
+CREATE INDEX IF NOT EXISTS codes_device_unsynced ON codes (device_id) WHERE NOT synced;
+CREATE INDEX IF NOT EXISTS print_orders_manufacturer ON print_orders (manufacturer_id);
+CREATE INDEX IF NOT EXISTS print_orders_device_unsynced ON print_orders (device_id) WHERE NOT synced;
+CREATE INDEX IF NOT EXISTS batches_manufacturer ON batches (manufacturer_id);
+CREATE INDEX IF NOT EXISTS batches_device_unsynced ON batches (device_id) WHERE NOT synced;
+CREATE INDEX IF NOT EXISTS batch_code_pool_device ON batch_code_pool (device_id, status);
+
+-- ============================================================ v6: self sign-up approval
+-- SS, DB and Retailer shops sign themselves up. approval: NULL = approved (every older row, every Retailer),
+-- PENDING = a self-signed-up SS or DB waiting for Velza Admin, REJECTED = turned down (kept; ID never reused).
+-- A rejected SS no longer holds its state, so the one-SS-per-state index leaves it out.
+ALTER TABLE partners ADD COLUMN IF NOT EXISTS approval text;
+ALTER TABLE partners
+  DROP CONSTRAINT IF EXISTS partners_approval_check,
+  ADD CONSTRAINT partners_approval_check CHECK (approval IS NULL OR approval IN ('PENDING', 'REJECTED'));
+DROP INDEX IF EXISTS partners_one_ss_per_state;
+CREATE UNIQUE INDEX partners_one_ss_per_state ON partners (state) WHERE partner_type = 'SS' AND approval IS DISTINCT FROM 'REJECTED';
+
 INSERT INTO schema_info (id, version) VALUES (1, ${SCHEMA_VERSION})
   ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version, applied_at = now();
 `;
@@ -351,6 +407,7 @@ export const ALL_TABLES = [
   "code_history",
   "codes",
   "print_orders",
+  "containers",
   "batches",
   "batch_code_pool",
   "sessions",

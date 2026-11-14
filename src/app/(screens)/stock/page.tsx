@@ -10,11 +10,18 @@ interface Stock {
   inStock: StockItem[];
   outgoing: StockItem[];
   incoming: StockItem[];
+  /** Recalled stock held here (also units recalled while in transit to here): do not sell. */
+  recalled?: StockItem[];
+  /** At the plant: lots not yet finished stock. */
+  pending?: { awaitingQc: number; quarantined: number };
 }
 
 export default function StockPage() {
   const { partner } = useSession();
   const { data, error } = useApi<Stock>("/api/stock", { refreshOnChange: true });
+  const recalled = data?.recalled ?? [];
+  const pending = data?.pending;
+  const pendingHint = pending && (pending.awaitingQc || pending.quarantined) ? [pending.awaitingQc && `${pending.awaitingQc} lot(s) awaiting QC`, pending.quarantined && `${pending.quarantined} quarantined`].filter(Boolean).join(" · ") : null;
   return (
     <>
       <PageTitle title="My stock" subtitle={partner?.name} />
@@ -27,7 +34,17 @@ export default function StockPage() {
             <Stat label="Loose packs" value={data.counts.loosePacks} />
             <Stat label="Incoming" value={data.incoming.length} tone={data.incoming.length ? "warn" : undefined} />
           </div>
+          {pendingHint && (
+            <Notice tone="info" className="mb-4">
+              Not counted as stock yet: {pendingHint}.
+            </Notice>
+          )}
           <div className="space-y-4">
+            {recalled.length > 0 && (
+              <Card title={`Recalled — do not sell (${recalled.length})`}>
+                <StockTable items={recalled} empty="Nothing recalled here" />
+              </Card>
+            )}
             <Card title={`At my location (${data.inStock.length})`}>
               <StockTable items={data.inStock} empty="No stock here" />
             </Card>

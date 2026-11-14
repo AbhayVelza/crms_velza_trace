@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getStore } from "@/lib/store";
-import { createEntity, deleteEntity, registerPartner, updateEntity } from "@/lib/services/admin";
+import { createEntity, deleteEntity, issuePoolCodes, registerPartner, updateEntity } from "@/lib/services/admin";
 import { createPrintOrder } from "@/lib/services/printOrders";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
 
@@ -99,5 +99,36 @@ describe("not-found messages", () => {
   it("name the thing, not the internal table", async () => {
     await expect(deleteEntity(ADMIN, "partners", "RT9999")).rejects.toMatchObject({ status: 404, message: "Partner RT9999 not found" });
     await expect(updateEntity(ADMIN, "devices", "nope", { offline: true })).rejects.toMatchObject({ status: 404, message: "Device nope not found" });
+  });
+});
+
+describe("a device stays with its plant (REF-17)", () => {
+  it("moving a device to another plant is refused and its pool codes are untouched; renaming and Offline still work", async () => {
+    const d = await addDevice(MF1, "Stay Put PC");
+    const before = (await store().batchCodePool.list({ deviceId: d.id })).map((p) => `${p.code}:${p.status}`).sort();
+    expect(before.length).toBeGreaterThan(0);
+    await expect(updateEntity(ADMIN, "devices", d.id, { manufacturerId: MF2 })).rejects.toMatchObject({ status: 400, code: "PLANT_LOCKED" });
+    expect((await store().devices.get(d.id))!.manufacturerId).toBe(MF1);
+    expect((await store().batchCodePool.list({ deviceId: d.id })).map((p) => `${p.code}:${p.status}`).sort()).toEqual(before);
+    // Sending its own plant again (a full-row save) is fine.
+    await expect(updateEntity(ADMIN, "devices", d.id, { manufacturerId: MF1, name: "Stay Put PC 2" })).resolves.toMatchObject({ name: "Stay Put PC 2" });
+    await expect(updateEntity(ADMIN, "devices", d.id, { offline: true })).resolves.toMatchObject({ offline: true });
+  });
+});
+
+describe("an inactive plant", () => {
+  it("gets no new devices and no new pool codes; once active again it does", async () => {
+    const d = await addDevice(MF2, "Before Pause PC");
+    await updateEntity(ADMIN, "partners", MF2, { active: false });
+    await expect(addDevice(MF2, "During Pause PC")).rejects.toMatchObject({ code: "BAD_PARTNER", message: expect.stringMatching(/is inactive/) });
+    const reserved = (await store().batchCodePool.list({ deviceId: d.id, status: "RESERVED" })).length;
+    await expect(issuePoolCodes(ADMIN, d.id, 5)).rejects.toMatchObject({ code: "BAD_PARTNER" });
+    expect((await store().batchCodePool.list({ deviceId: d.id, status: "RESERVED" })).length).toBe(reserved);
+    // Its existing devices can still be edited (e.g. marked offline).
+    await expect(updateEntity(ADMIN, "devices", d.id, { offline: true })).resolves.toMatchObject({ offline: true });
+    await updateEntity(ADMIN, "partners", MF2, { active: true });
+    await updateEntity(ADMIN, "devices", d.id, { offline: false });
+    await expect(issuePoolCodes(ADMIN, d.id, 5)).resolves.toMatchObject({ issued: expect.anything() });
+    await expect(addDevice(MF2, "During Pause PC")).resolves.toMatchObject({ manufacturerId: MF2 });
   });
 });

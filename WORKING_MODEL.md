@@ -28,13 +28,15 @@ Oct 27, 2026 · Abhay Velza · living document, updated 30 Oct 2026 (see [Change
 ## Overview
 
 Velza Traceability gives every case, tray and pack of Velza beverages a unique code and records each hand-over from
-the factory to the retailer. Stickers with a barcode and QR code are printed at the plant, checked by QC, and scanned
-OUT and IN at every step of the chain: **Manufacturer → Super Stockist → Distributor → Retailer**. A few retailers are
-supplied by their Super Stockist directly (**Manufacturer → Super Stockist → Retailer**).
+the factory to the retailer. Stickers with a barcode are printed at the plant, checked by QC, and scanned
+OUT and IN at every step of the chain. Since 6 Nov 2026 the plant ships only to the **Velza Warehouse**, in shipping
+containers: **Manufacturer → Velza Warehouse → Super Stockist, Distributor or Retailer**, and from there the chain goes
+on as before: **Super Stockist → Distributor → Retailer** (a few retailers are supplied by their Super Stockist directly).
 
 Velza Global India runs the system through two central roles: **Velza Admin** sets up the network, and **Velza HQ**
-watches it (status, location, history, alerts, recalls). Each of the 7 roles works in its own portal and sees only its
-own part of the chain. Consumers can scan the QR code on a case to check it is genuine and not recalled.
+watches it (status, location, history, alerts, recalls). Each of the 8 roles works in its own portal and sees only its
+own part of the chain. Lot stickers no longer carry a QR code (6 Nov 2026); cases printed earlier with a QR still open
+the public check page, where consumers see whether the product is genuine and not recalled.
 
 The current build is a working prototype. Sign-in is built and was switched on on 29 Oct 2026; since 30 Oct 2026 it is
 **temporarily off** on the development PC for testing (`SIGN_IN=off` in `.env.local`): the app opens straight on the
@@ -45,24 +47,47 @@ the plant (see [Scale and readiness](#scale-and-readiness-2-crore-stickers)).
 
 ## Working model structure
 
-The model has three parts: a four-tier partner chain, a code on every unit, and a status that moves with each scan.
+The model has three parts: a five-tier partner chain, a code on every unit, and a status that moves with each scan.
 
 ### Partner tiers and assignment
 
 Every Distributor is assigned to one Super Stockist. Every Retailer is assigned to one Distributor, or to its Super
-Stockist directly. A partner sees, and can dispatch to, only the partners assigned to it. The Supplier tier was removed
-and Outlet renamed Retailer on 27 Oct 2026.
+Stockist directly. A partner sees, and can dispatch to, only the partners assigned to it — except the **Velza
+Warehouse**, which is Velza's own and supplies any Super Stockist, Distributor or Retailer. The Supplier tier was removed
+and Outlet renamed Retailer on 27 Oct 2026; the Velza Warehouse tier was added on 6 Nov 2026.
 
 | Tier | Receives from | Dispatches to | Assigned to | Example |
 |---|---|---|---|---|
-| Manufacturer (plant) | — | Any Super Stockist | — | vietnam_plant |
-| Super Stockist (SS) | Manufacturer | Its assigned distributors and its direct retailers | — | pune_stocks |
-| Distributor (DB) | Its Super Stockist | Its assigned retailers | One Super Stockist | fc_road_db, baner_db → pune_stocks |
-| Retailer (RT) | Its Distributor, or its Super Stockist | — (sells to consumers) | One Distributor, or one Super Stockist directly | JW Marriot → fc_road_db; Colaba Kirana → pune_stocks |
+| Manufacturer (plant) | — | Only the Velza Warehouse (in shipping containers, or case by case) | — | vietnam_plant |
+| Velza Warehouse (VW) | Manufacturer | Any Super Stockist, Distributor or Retailer | — (not assigned) | VW0001 Bhiwandi |
+| Super Stockist (SS) | Velza Warehouse | Its assigned distributors and its direct retailers | — | pune_stocks |
+| Distributor (DB) | Velza Warehouse, or its Super Stockist | Its assigned retailers | One Super Stockist | fc_road_db, baner_db → pune_stocks |
+| Retailer (RT) | Velza Warehouse, its Distributor, or its Super Stockist | — (sells to consumers) | One Distributor, or one Super Stockist directly | JW Marriot → fc_road_db; Colaba Kirana → pune_stocks |
 
 Example: assign 50 distributors to the Pune SS, and the Pune SS sees exactly those 50 plus the retailers assigned to it
 directly. Assign 50 retailers to fc_road_db, and fc_road_db sees exactly those 50. An SS never sees the retailers of its
 distributors.
+
+### Velza Warehouse and shipping containers (since 6 Nov 2026)
+
+- There is one Velza Warehouse for now (VW0001, sign-in VW0001, role *Velza Warehouse*). Admin registers more on
+  Partners like any other tier if the company opens more; nothing else changes. A warehouse is not assigned to anyone.
+- Its portal: Receive, Containers, Dispatch, My stock, Damaged. Stock there has the status **At warehouse**. It never
+  opens cases or trays (only Retailers do).
+- **Containers.** The plant ships to the warehouse in shipping containers of up to **2,860 cases and trays**. On the
+  operator's *Containers* page: open a container by its own number as printed on it (e.g. `MSCU1234567`; letters, digits
+  and dashes, 3–20 characters, never a case/tray code) → scan cases and trays into it (each must be Packed by QC, synced,
+  at the plant and in no other loading container; packs are refused; *Take out* removes one) → choose the warehouse and
+  the invoice → **Dispatch container**: every case and tray in it is checked like a normal dispatch and they all go, or
+  none do. A loading container can be cancelled.
+- The warehouse receives a container by scanning its number on **Receive**: every case and tray in it still on its way
+  there becomes At warehouse at once (one received movement each, noting the container). Ones already received singly
+  are left as they are. Anyone else scanning the number gets WRONG_RECEIVER; scanning it again, DUPLICATE_RECEIPT.
+- A container number is reused for many trips: it is unique only while that container is loading or on the road; once
+  received, the next trip can use it again. Each trip is its own record (status Loading → On the way → Received, with
+  invoice, times and who did it). The operator sees its plant's containers, the warehouse those sent to it, Velza HQ all
+  of them (*Containers*). In a code's timeline the dispatch and receipt say "Container MSCU1234567".
+- The plant can still dispatch single cases and trays to the warehouse on Dispatch (no container).
 
 ### Units and codes
 
@@ -77,7 +102,16 @@ distributors.
 
 - Lot numbers run `00001`–`1869F` in hexadecimal, so up to 99,999 lots per batch. A number is never reused, even when a
   lot is voided.
-- Lot stickers (100 × 50 mm) carry a barcode and a QR code; pack stickers (75 × 25 mm) carry a barcode.
+- Every sticker carries a Code 128 barcode only, no QR code. Lot (case and tray) stickers are 100 × 50 mm, pack stickers
+  75 × 25 mm; the lot barcode is a little bigger than the pack one (bars up to 0.4 × 18 mm, about 80 × 18 mm in all,
+  against about 0.3 × 14 mm and 67 × 14 mm on a pack).
+- Cases and trays are printed separately, never in one run: they go on different label rolls and are stuck on
+  differently. The print view has a **Print run** choice (Cases / Trays); each run shows and prints only its own
+  stickers (each lot sticker followed by its packs) and is confirmed on its own with *Mark cases as printed* or
+  *Mark trays as printed*. Both runs use the same sticker sizes.
+- Cases and trays per batch are each **0 or a whole number, with no minimum** (an empty box counts as 0). A batch may
+  even be 0 cases + 0 trays: it takes its batch code now and gets its lots later with *Continue an existing batch*.
+  Only an order (or a continuation) with nothing to print at all is refused.
 - Nobody types or edits a code; the system generates them all.
 - A batch can be printed over several days: see [Continuing a batch](#continuing-a-batch).
 
@@ -88,9 +122,12 @@ on from where the last print order stopped. Day 1 prints lots `00001`–`02710` 
 the same plant and by any operator, carries on at `02711`. The sequence never restarts because of a new day, a
 sign-out, another operator, a refresh, a restart or another device.
 
-**Counter scope (confirmed 30 Oct 2026).** One counter per batch. A batch is one flavour and one production run, so the
-counter is also per batch + flavour; it is never shared between batches or flavours. Cases and trays share the batch's
-counter (cases first, then trays, in each order).
+**Counter scope (confirmed 30 Oct 2026; reconfirmed 6 Nov 2026).** One counter per batch. **One batch, one flavour:** a
+batch is one flavour and one production run, so the counter is also per batch + flavour; it is never shared between
+batches or flavours. Cases and trays share the batch's counter (cases first, then trays, in each order). Continuing a
+batch always keeps its flavour; there is no flavour choice for an existing batch. For another flavour, create a new
+batch. (From 5 to 6 Nov 2026 a continuation could switch flavour; that was removed. Lots printed that way keep their
+flavour, and the screens still show each lot's own flavour, so such a batch lists e.g. "Original, Green Apple".)
 
 **Lot numbers.** Five uppercase hex characters, fixed width, built only by `formatLotNumber` in `src/lib/core/codes.ts`.
 
@@ -122,6 +159,8 @@ every batch in every data file was consistent: `nextLot` = highest lot number + 
 
 - The batch keeps its code, country, flavour, **manufacture and expiry dates**, device, first print order, creator and
   creation time. Only its counter moves. Continued lots carry the batch's dates; for different dates, start a new batch.
+- Flavour: always the batch's own; the *Cases & trays* step has no flavour picker. A request that names another flavour
+  is refused (400 `FLAVOUR_CHANGE_NOT_ALLOWED`) and allocates nothing.
 - The new print order, its lots and their `GENERATED` movements record the PC and operator that continued the batch.
   The movement note says "continues batch ABC123 from 02711".
 - Lot and pack codes, pack suffixes (`61`–`64`, `41`–`46`), stickers, QC, reprint, void, dispatch and public lookup
@@ -138,7 +177,8 @@ every batch in every data file was consistent: `nextLot` = highest lot number + 
 | The batch is synced (a batch made offline must be synced first) | 409 `BATCH_NOT_SYNCED` |
 | Not recalled | 409 `BATCH_RECALLED` |
 | Counter valid / not exhausted | 409 `BATCH_COUNTER_INVALID` / `BATCH_EXHAUSTED` |
-| 1 to 10,000 lots per order (**1,000 on the JSON file store**) | 400 `INVALID_QUANTITY` / `TOO_MANY_LOTS` |
+| A flavour, if sent, is the batch's own (one batch, one flavour) | 400 `FLAVOUR_CHANGE_NOT_ALLOWED` |
+| Cases and trays 0 or a whole number (either may be 0); 1 to 10,000 lots per order in all (**1,000 on the JSON file store**) | 400 `INVALID_QUANTITY` / `TOO_MANY_LOTS` |
 | No more than the lots left in the batch | 409 `INSUFFICIENT_CAPACITY` |
 
 Offline working for new batches, printing and verification is unchanged.
@@ -251,14 +291,14 @@ its packs is still there.
 | Status | Meaning | Set when |
 |---|---|---|
 | Generated | Codes allocated, stickers not printed | Operator creates a print order |
-| Printed | Stickers printed | Operator confirms with **Mark as printed** in the print view. **Print** only opens the browser print dialog; cancelling or closing it, Ctrl+P, downloading the codes CSV or leaving the page record nothing. Until confirmed the print order shows *Printing pending* and QC refuses its lots. An order whose lots are all voided cannot be marked printed |
+| Printed | Stickers printed | Operator confirms each print run (cases, trays) with **Mark cases as printed** / **Mark trays as printed** in the print view; only that run's lots become Printed, so QC can start on the cases while the trays are still printing. **Print** only opens the browser print dialog; cancelling or closing it, Ctrl+P, downloading the codes CSV or leaving the page record nothing. The print order shows *Printing pending* until every run is confirmed, and QC refuses lots of an unconfirmed run. An order whose lots are all voided cannot be marked printed |
 | Packed | QC checked the lot and all its pack stickers | Supervisor/QC confirms |
-| In transit | On its way to the next partner | Sender confirms dispatch |
-| At SS / At DB / At Retailer | Received at that partner | Receiver scans it IN |
+| In transit | On its way to the next partner | Sender confirms dispatch (or the operator dispatches its container) |
+| At warehouse / At SS / At DB / At Retailer | Received at that partner | Receiver scans it IN (the warehouse can scan a whole container's number) |
 | Opened | Case or tray opened; packs now move individually | Retailer opens the lot (only Retailers open cases and trays) |
 | Quarantined | Failed QC check; cannot move. Two ways out: Void (ends as Void for good), or reprint the bad sticker with a reason, which sends the lot back to Printed so QC verifies it again before it becomes Packed | QC confirms with missing or wrong packs |
 | Void | Misprinted or unused stickers cancelled | Operator voids the lot |
-| Damaged | Case, tray or pack damaged; leaves stock, cannot move, HQ alerted, public page says not for sale | Plant, SS, DB or Retailer reports it on its Damaged page, with a reason |
+| Damaged | Case, tray or pack damaged; leaves stock, cannot move, HQ alerted, public page says not for sale | Plant, Velza Warehouse, SS, DB or Retailer reports it on its Damaged page, with a reason, a photo of the item showing its barcode and 1–4 photos of the damage itself |
 | Recalled | Batch withdrawn; cannot move, public page warns consumers | Velza HQ recalls the batch |
 
 ## Tree diagrams
@@ -271,7 +311,9 @@ assigned to it directly; each distributor sees only its own retailers.
 ```
 Velza Admin (builds)            Velza HQ (sees everything)
         │
-Manufacturer (vietnam_plant) ──► any Super Stockist
+Manufacturer (vietnam_plant) ──► only the Velza Warehouse (containers)
+        │
+Velza Warehouse (VW0001) ──► any Super Stockist, Distributor or Retailer
         │
 Super Stockist (pune_stocks)
  ├── Distributor (fc_road_db)
@@ -309,10 +351,11 @@ Operator: New print order ─► Generated ─► Print ─► Printed
 QC: scan lot + every pack ─► all match ─► Packed
                          └─► missing/wrong ─► Quarantined ─► Void
                                                         └─► Reprint (reason) ─► Printed ─► QC again
-Plant: Dispatch (invoice) ─► In transit ─► SS: Receive ─► At SS
+Plant: Container (scan cases/trays in) ─► Dispatch container (invoice) ─► In transit ─► VW: scan container number ─► At warehouse
+VW: Dispatch ─► In transit ─► SS, DB or Retailer: Receive ─► At SS / At DB / At Retailer
 SS: Dispatch ─► In transit ─► DB: Receive ─► At DB ─► Dispatch ─► Retailer: Receive ─► At Retailer ─► Open lot ─► Opened
 SS: Dispatch ─► its direct Retailer ─► At Retailer
-Any stock-holding tier: Damaged (reason) ─► Damaged, HQ alerted
+Any stock-holding tier: Damaged (reason + photo with barcode + 1–4 damage photos) ─► Damaged, HQ alerted
 Velza HQ: Recall batch ─► Recalled everywhere; any later scan ─► BLOCKED_CODE alert
 ```
 
@@ -323,17 +366,34 @@ scanner, camera or keyboard.
 
 ### Onboarding a partner (Velza Admin)
 
-1. **Partners → Register a partner:** tier, site name, contact person, place, address, city, state, PIN, phone and email.
-   The system issues the next ID of the tier (MF0001, SS0001, DB0001, RT0001 …) and a sign-in with that ID; Admin shares
-   the password.
-2. **Assigned to:** link it to its parent in the same form. A distributor goes under a Super Stockist. A retailer goes
-   under a distributor, or, by choosing Super Stockist in *Assigned to tier*, directly under its Super Stockist. Without
+Since 14 Nov 2026 **Super Stockists, Distributors and Retailers create their own account** (see *Self sign-up* below);
+Velza Admin registers only the plant and the Velza Warehouse.
+
+1. **Partners → Register a partner (Manufacturer or Velza Warehouse):** site name, contact person, place, address, city,
+   state, PIN, phone and email. The system issues the next ID of the tier (MF0001, VW0001 …) and the sign-in(s); Admin
+   shares the password. (The Admin-only API can still register SS / DB / Retailers, e.g. for a data import.)
+2. **Assigned to:** a distributor goes under a Super Stockist; a retailer under a distributor, or directly under its
+   Super Stockist. Shops pick this themselves when they sign up; Admin can change it in the partners table. Without
    this link, nobody can send it stock.
 3. **Sign-ins & passwords:** each partner's sign-in is made with it (the plant gets MF0001-OP and MF0001-QC). Add Velza
    staff sign-ins (AD…, HQ…) or reset a forgotten password here.
 4. **Devices (plants only):** register the plant PC. It immediately receives 10 batch codes and is topped up automatically.
-5. **Settings (once):** sticker sizes, the public web address that QR codes open, and the alert threshold (default: not
+5. **Settings (once):** sticker sizes, the public web address of the check page (opened by QR codes on older stickers), and the alert threshold (default: not
    received within 3 days).
+
+### Self sign-up (Super Stockist, Distributor, Retailer)
+
+- **Where:** "Create an account" on the sign-in page → `/signup` (open without signing in). The shop picks its type,
+  fills the same fields as the Admin form, picks who supplies it (DB → its SS; Retailer → its DB or SS; an SS picks its
+  state, one SS per state) and chooses its password. Only approved, active SS / DBs are offered, as name + city.
+- **Result:** the shop sees its sign-in ID at once (e.g. RT0007). A **Retailer** can sign in immediately. A **Super
+  Stockist or Distributor** is saved *waiting for approval* (partner and sign-in inactive); signing in says "Your account
+  is waiting for Velza approval".
+- **Approval:** Admin → Partners → **Pending approvals**: Approve (the account works at once) or Reject (kept on record,
+  the sign-in never works, the ID is never reused; a rejected SS no longer holds its state). The Active box cannot
+  switch on a pending or rejected partner.
+- **Stored:** in the partners and users tables like any partner (`partners.approval` NULL / PENDING / REJECTED, schema
+  v6; `created_by` empty = self sign-up; password as an scrypt hash). At most 5 sign-ups per client IP per hour.
 
 Each later hand-over then connects two partners on its own: the sender scans OUT with an invoice or challan number, and
 only the assigned receiver can scan it IN. Anyone else who scans it gets a WRONG_RECEIVER alert at HQ.
@@ -343,10 +403,11 @@ only the assigned receiver can scan it IN. Anyone else who scans it gets a WRONG
 | Location | Device | Scanning | Volume |
 |---|---|---|---|
 | Manufacturer | Plant PC (registered device) | Webcam or phone camera now; a 2D USB scanner at the QC table is recommended | Highest: QC scans every lot and pack sticker |
-| Super Stockist | Phone or PC | Phone camera on the lot QR code | Low: whole cases only |
+| Velza Warehouse | PC with a barcode scanner | Container number once per container; case/tray barcodes when dispatching onward | High: whole containers in, whole cases out |
+| Super Stockist | Phone or PC | Phone camera on the lot barcode | Low: whole cases only |
 | Distributor | PC, tablet or phone | Barcode scanner (USB or Bluetooth, keyboard mode) | Medium: whole cases only |
 | Retailer | PC, tablet or phone | Barcode scanner | Medium; the only tier that opens cases into packs |
-| Consumer | Own phone | Phone camera on the QR code; opens the public check page | — |
+| Consumer | Own phone | Phone camera on the QR code of older stickers; opens the public check page (new stickers have no QR) | — |
 
 - Scanners act as a keyboard: they type the code and press Enter into the scan box, so no driver or setup is needed.
   Every scan screen also has **Use camera** and accepts typed codes.
@@ -400,24 +461,46 @@ server.
 
 ## Roles and responsibilities
 
-There are seven roles: two central roles at Velza Global India and five in the distribution line. Each role sees only
+There are eight roles: two central roles at Velza Global India and six in the distribution line. Each role sees only
 its own portal, the server refuses anything outside it, and everyone can change their own password on the Account page.
 
 | Role | Belongs to | Responsible for | Portal screens |
 |---|---|---|---|
 | Velza Admin | Velza Global India | Setting up and maintaining the network: registering partners (with their IDs and sign-ins), assignments, passwords, plant devices, country and flavour codes, batch code pools, settings. Deactivates or deletes records that have no history. | Partners (registration form), Sign-ins & passwords, Devices, Countries & flavours, Batch code pools, Settings |
-| Velza HQ | Velza Global India | Watching the whole chain: stock and status everywhere, investigating alerts (not received, wrong receiver, unknown or blocked codes), tracing any code, recalling a batch. Only role with the HQ dashboard. | Dashboard, Search code, Alerts, Batches & recall, Scan audit |
-| Manufacturer Operator | A plant | Creating print orders and printing stickers, seeing every generated code per order, dispatching packed lots to Super Stockists with an invoice, reprinting damaged stickers (same code, reason logged), voiding misprints, keeping the plant PC synced. | New print order, Print orders (with Codes view), Dispatch, Reprint, Void lot, My stock, Damaged |
+| Velza HQ | Velza Global India | Watching the whole chain: stock and status everywhere, investigating alerts (not received, wrong receiver, unknown or blocked codes), tracing any code, following containers, recalling a batch. Only role with the HQ dashboard. | Dashboard, Search code, Alerts, Batches & recall, Containers, Scan audit |
+| Manufacturer Operator | A plant | Creating print orders and printing stickers, seeing every generated code per order, loading packed cases and trays into shipping containers and dispatching them to the Velza Warehouse with an invoice, reprinting damaged stickers (same code, reason logged), voiding misprints, keeping the plant PC synced. | New print order, Print orders (with Codes view), Containers, Dispatch, Reprint, Void lot, My stock, Damaged |
 | Supervisor / QC | A plant | Checking that every pasted pack sticker belongs to its lot before anything leaves the plant: confirms to Packed, or the lot is quarantined. | Verify, My stock |
-| Super Stockist | Its own company (one per state) | Receiving cases from the plant and dispatching them to its assigned distributors and to the retailers assigned to it directly. | Receive, Dispatch, My stock, Damaged, My partners |
-| Distributor | Its own company | Receiving from its Super Stockist and dispatching to its assigned retailers. | Receive, Dispatch, My stock, Damaged, My retailers |
-| Retailer | Its own shop | Receiving from its distributor (or its Super Stockist) and opening cases and trays for sale; the only role that opens them. Cannot dispatch. | Receive, Open lot, My stock, Damaged |
-| Consumer (no login) | — | Scanning the QR code to check a product is genuine and not recalled. Sees no business data. | Public check page |
+| Velza Warehouse | Velza Global India (one warehouse for now) | Receiving containers from the plant (one scan of the container number) and dispatching cases and trays to any Super Stockist, Distributor or Retailer. Never opens cases. | Receive, Containers, Dispatch, My stock, Damaged |
+| Super Stockist | Its own company (one per state) | Receiving cases from the Velza Warehouse and dispatching them to its assigned distributors and to the retailers assigned to it directly. | Receive, Dispatch, My stock, Damaged, My partners |
+| Distributor | Its own company | Receiving from the Velza Warehouse or its Super Stockist and dispatching to its assigned retailers. | Receive, Dispatch, My stock, Damaged, My retailers |
+| Retailer | Its own shop | Receiving from the Velza Warehouse, its distributor or its Super Stockist and opening cases and trays for sale; the only role that opens them. Cannot dispatch. | Receive, Open lot, My stock, Damaged |
+| Consumer (no login) | — | Scanning the QR code on older stickers to check a product is genuine and not recalled (new stickers have no QR). Sees no business data. | Public check page |
 
-Every role that holds stock (plant, Super Stockist, Distributor, Retailer) also reports damaged cases, trays and packs
+Every role that holds stock (plant, Velza Warehouse, Super Stockist, Distributor, Retailer) also reports damaged cases, trays and packs
 on its Damaged page. Scanning the lot code reports a whole case or tray, opened or not (an opened one takes the packs of
 it still at that location); single packs can be reported once the lot is opened. Each Damaged page and the HQ dashboard
 show the count as cases, trays and single packs.
+
+**Photo with the barcode (since 5 Nov 2026).** Every damage report needs one photo of the damaged item in which its
+barcode or QR sticker can be read, plus at least one and at most 4 photos of the damage itself (close-ups of the dent,
+leak or tear, other sides; no barcode needed). The page works in five steps: reason → scan the item → take or choose the barcode
+photo → photos of the damage (added several at a time, each removable; at least one) → Report damaged. In the browser the barcode/QR in the photo is read (ZXing, as the camera scanner) and must be the
+scanned code — a QR's public lookup URL counts as its code; a pack's code is not its case's. The button stays disabled
+until it matches. The server checks again: a photo is required (`PHOTO_REQUIRED`), it must really be a JPEG, PNG or
+WebP of at most 2 MB (`PHOTO_INVALID`, `PHOTO_TOO_LARGE`; the page shrinks photos to 1600 px JPEG first), and the code
+read from it must be the reported code (`PHOTO_NO_BARCODE`, `PHOTO_BARCODE_MISMATCH`). Who may report is checked before
+the photo. Limitation: the server does not decode the image itself — it trusts the code the page read from it, and
+checks it matches. Photos of the damage: at least 1 (`DAMAGE_PHOTO_REQUIRED`), at most 4 (`TOO_MANY_PHOTOS`), each a real JPEG/PNG/WebP of at most 1 MB
+(`PHOTO_INVALID` / `PHOTO_TOO_LARGE`, naming which photo; the page shrinks them to 1280 px JPEG first).
+
+Storage: a file, not a table — `<upload dir>/damage/<report id>.jpg` for the barcode photo and
+`<report id>.<n>.jpg` for damage photo n (1–4), where the report id is the `DAMAGED` movement's
+id, written as the last step of the report's transaction (if any photo can't be written, those already written are removed
+and the report is not saved). Upload dir:
+`VELZA_UPLOAD_DIR`, else `uploads/` next to the JSON data file, else `data/uploads` (git-ignored). Back it up with the
+data. The photos (`GET /api/damaged/photo/<report id>`, damage photo n: `?n=<n>`) are shown on the reporter's Damaged
+page and on the HQ Alerts row, the barcode photo first; only the reporting partner and Velza HQ can open them (others
+get 404). Reports made before this change have no photo.
 
 ## Database design (built, waiting for the database)
 
@@ -1299,6 +1382,19 @@ section above in the same change.
 
 | Date | Who | Change | Verified |
 |---|---|---|---|
+| 14 Nov 2026 | Claude Code on `develop/aditya` (uncommitted, as asked) | **Self sign-up for SS / DB / Retailers; Admin registers only the plant and the Warehouse** (design `docs/superpowers/specs/2026-11-14-self-signup-design.md`, approach A chosen by the user). `/signup` page (link on sign-in); Retailer active at once; SS / DB pending until Admin → Partners → Pending approvals (Approve / Reject); pending or rejected partners cannot sign in (own messages), be dispatched to, be picked as supplier, or be switched on with the Active box. Schema **v6**: `partners.approval` (NULL / PENDING / REJECTED), one-SS-per-state index leaves rejected out. Sign-up limited to 5 per IP per hour. Files: `src/lib/services/signup.ts` (new), `admin.ts` (decideApproval, NOT_APPROVED guard, rejected SS frees its state), `auth.ts` (PENDING_APPROVAL / REJECTED), `src/app/api/signup`, `src/app/api/admin/approvals/[id]`, `src/proxy.ts`, `src/app/signup/page.tsx`, `src/components/AuthShell.tsx` (moved from the sign-in page), `src/app/login/page.tsx`, `src/app/(screens)/admin/partners/page.tsx`, `src/lib/store/sql/{schema,sqlStore}.ts`, `db/schema.sql`, `types.ts`. Note: `features/barcode-history` also uses v6 (Returns) — renumber one when merging. | New `tests/unit/signup.test.ts` (10 tests, json + postgres) written first and failing, then passing; contract test for the v6 index/check; e2e test 11 rewritten (Distributor signs up → waits → Admin approves → signs in; Retailer under SS-1 works at once). Full unit suite 833 passed / 9 skipped; `tsc`, ESLint clean; Playwright 19/19. Browser on a prod build at :3500 with a copy of `data/db.json`: Retailer RT0003 signed up and opened its portal; Distributor DB0002 pending → refused at sign-in → Active box refused → approved → signed in, offered in SS0001's dispatch list and to new Retailers; SS0002 (Goa) rejected → refused at sign-in, Goa free again; Admin tier list = Manufacturer, Velza Warehouse. |
+| 13 Nov 2026 | Claude Code on `develop/aditya` | **Warehouse work merged with `main` (PR #3 / #4); Abhay's 12 Nov merge repaired.** The 6 Nov warehouse/containers work (`2ff5f9e`, also on `feature/velza-warehouse`) was merged with `origin/develop/aditya` @ `23d2836`, where `main` had been merged in on 12 Nov. That merge had kept both sides of its conflicts in `ScanInput.tsx`, `PrintView.tsx`, `printOrders.ts`, `trace.ts`, `damage.ts`, the printed route, the HQ alerts page and two tests (duplicate functions; `tsc` failed on `main` too). Re-merged from the two parents, keeping both behaviours: cases and trays still print and confirm as **separate runs** (`{ lotType }`) on top of PR #3's print-once sheet, one-time reprints and bulk `markPrinted` (`{ deviceId }` accepted too; the order is PRINTED only when no run is waiting). Camera: PR #3's `CameraSession` now asks for 1920×1080, `TRY_HARDER` and continuous focus, exposes the resolution, and the scan box keeps the camera open between QC steps and warns below 1280 px. Damage reports keep the required photos and take the cleaned scan code. HQ alert rows carry both the alert state and `photoUrls`. PostgreSQL schema renumbered: warehouse + containers are **v5** (v3 = code integrity, v4 = indexes, from `main`); `containers` added to the clear-activity list. `AT_WAREHOUSE` added to the public "Genuine" and sellable status lists. Receive page: no client-side 15/17-character check for the warehouse (container numbers). Tests from `main` that shipped plant → SS directly now go through the warehouse; `reportDamaged` calls send the photos. | typecheck + eslint clean; vitest 823 passed + 9 skipped (55 files, JSON and PostgreSQL, 2 workers); Playwright e2e 19/19 (`demo.spec.ts` 12 + `scanning.spec.ts` 7; the dispatch/receive checklist test now ships to VW-1). Not tested: in-place upgrade of a real PostgreSQL database from v4 to v5 |
+| 6 Nov 2026 | Claude Code on `develop/aditya` | **Velza Warehouse tier and shipping containers** (Overview, "Working model structure" incl. new "Velza Warehouse and shipping containers", Statuses, Partner tree, Workflow, onboarding, "How each location connects" and Roles updated). At the user's request the pipeline changed: the plant dispatches containers to the Velza Warehouse, which distributes to SS, DB and Retailers. Decisions (user, 6 Nov): a container holds up to 2,860 cases/trays and carries its own number, entered in the system for container tracking; after the warehouse the old chain continues (SS → DB → Retailer, SS → direct Retailer); the warehouse may supply any SS, DB or Retailer (no assignment); one warehouse for now, more can be registered later. **Tier:** partner type `WAREHOUSE` (IDs VW0001…, label Velza Warehouse), role `WAREHOUSE` (sign-in = partner ID; Receive, Containers, Dispatch, My stock, Damaged), status `AT_WAREHOUSE`; `DESTINATION_TYPES`: Manufacturer → Warehouse only, Warehouse → SS/DB/Retailer; `isAssignedDestination` lets the warehouse supply anyone; Admin Partners texts and the Dispatch subtitle updated. **Containers:** new `containers` table/collection (one row per trip: number, plant, status LOADING/IN_TRANSIT/RECEIVED, lot codes, warehouse, invoice, who/when); `src/lib/services/containers.ts` + `/api/containers` (list, open, detail, cancel, load, unload, dispatch); Receive accepts a container number (`receiveContainer`); dispatch and receive steps shared with single scans (`dispatchItems`, `receiveItem` in `movement.ts`); movements note "Container <number>"; scan context `CONTAINER`; permission `container` (Operator, Warehouse, HQ); new *Containers* page. **PostgreSQL:** schema v3 (renumbered v5 on 13 Nov, after the code-integrity v3 and index v4 from `main`) — new allowed values in the partner type, ID, sign-in, role and code status checks (re-applied by the upgrade section), and the `containers` table with a unique index on the number among unfinished trips; `db/schema.sql` regenerated. Existing stock already at or on its way to an SS is unaffected. QA script `tests/qa/qaRun.ts`: role matrix skips WAREHOUSE (the QA dataset has no warehouse sign-in yet). | typecheck + eslint clean; vitest JSON store 378/378 (rules: MF → VW only, VW → any SS/DB/RT, AT_WAREHOUSE; demo script via VW incl. VW → DB/Retailer directly; new `containers.test.ts`: number checks, loading rules, all-or-nothing dispatch, receive by number incl. partial/wrong receiver/duplicate, HQ timeline, number reuse; QA dataset: registered VW is the plant's only destination); PostgreSQL: containers, demo script and damage tests 28/28; `playwright demo.spec.ts` 13/13 (plant → VW → SS-1 in the UI, new step 12: container loaded, dispatched and received by its number). Not yet: a real v2 PostgreSQL database upgraded in place (the upgrade re-applies the checks the same way as v1 → v2) |
+| 6 Nov 2026 | Claude Code on `develop/aditya` | **No minimum for cases or trays** (Part 1 "Units and codes" and continuation checks updated). At the user's request, cases and trays are each 0 or a whole number with no compulsion. Before, a batch with 0 cases and 0 trays was refused ("enter at least 1 case or 1 tray (both are 0)") and an emptied box was an error. Decision (user, 6 Nov): 0 + 0 is allowed for a batch — it takes its batch code, gets no lot numbers (the counter stays at 00001) and is filled later with *Continue an existing batch*. Still refused, because nothing would print: a whole new order where every batch is 0 + 0 (400 `INVALID_ORDER`, "Nothing to print") and a continuation of 0 + 0 (400 `INVALID_QUANTITY`). New batches and Continue: an empty box counts as 0; negative or fractional counts still say "must be 0 or a whole number". Files: `src/lib/core/printOrder.ts`, `src/lib/services/printOrders.ts`, `src/app/(screens)/operator/new/page.tsx`, tests. | typecheck + eslint clean; vitest JSON store 369/369 (new: 0-tray and 0 + 0 batches plan fine, all-zero order refused, 0 + 0 batch created with no lots and continued from 00001, 0 + 0 continuation refused); `playwright demo.spec.ts` 12/12 |
+| 6 Nov 2026 | Claude Code on `develop/aditya` | **Cases and trays printed as separate runs** (Part 1 "Working model structure" and "Statuses" updated). At the user's request: case and tray stickers go on different label rolls and are stuck on differently, so they are never printed in one run. Decisions (user, 6 Nov): same sticker sizes for both rolls; each run confirmed on its own. Print view: new **Print run** choice (Cases · n lots, m stickers / Trays · …, each marked *To print* or *Printed*; the first run still to print is selected); the preview, **Print n case/tray stickers** and the size warnings cover the chosen run only; **Mark cases as printed** / **Mark trays as printed**. Server: every sticker carries `lotType`; the order's sheet has `runs` (`lotType`, lots, stickers, pending); `POST /api/print-orders/<id>/printed` takes `{ lotType }` — only that run's GENERATED lots (and packs) become PRINTED, and the order becomes PRINTED with its time only when no lot of any run is waiting; repeating a run changes nothing; a run the order lacks is 400 `NOTHING_TO_PRINT`. Without `lotType` (or with no body) the whole order is confirmed as before, so scripts keep working. Reprints are unchanged (one sticker). Files: `src/lib/core/stickers.ts`, `src/lib/services/printOrders.ts`, `src/app/api/print-orders/[id]/printed/route.ts`, `src/components/PrintView.tsx`, tests. | typecheck + eslint clean; vitest JSON store 366/366 (new: runs on the sheet, cases confirmed alone → order still pending, QC verifies the cases and refuses the trays, then trays → order PRINTED; missing/bad run refused); `playwright demo.spec.ts` 12/12 — cases run (10 stickers) and trays run (14) each decoded, printed and confirmed separately |
+| 6 Nov 2026 | Claude Code on `develop/aditya` | **One batch, one flavour: flavour change on existing batches removed** (Part 1 "Continuing a batch" updated; reverses the 5 Nov flavour switch, 5938ed1). At the user's request a batch carries one flavour only. *Continue an existing batch*: step 2 is "Cases & trays" again, with no flavour picker; new lots always take the batch's flavour. Server: `POST /api/print-orders/continue` no longer takes a flavour choice — a request naming another flavour gets 400 `FLAVOUR_CHANGE_NOT_ALLOWED` (preview too) and allocates nothing; the batch's own flavour is accepted. Kept on purpose: screens show each lot's own flavour (lot lookup, Batches, batch report, Print orders) and a flavour used by lots cannot be deleted, so lots already printed with a switched flavour still display and stay consistent; the whole-row click on *Choose batch* (also from 5938ed1) stays. Files: `src/lib/services/printOrders.ts`, `src/app/(screens)/operator/new/page.tsx`, `tests/unit/continuation.test.ts`. | typecheck + eslint clean; `continuation.test.ts` 54 pass / 2 skipped on JSON and PostgreSQL (new: another flavour refused without allocating, own flavour accepted); full vitest: all JSON-store tests pass, the 7 PostgreSQL files that time out in setup on this branch (no `9a9fc53`) unchanged. Not clicked through in a browser |
+| 6 Nov 2026 | Claude Code on `develop/aditya` | **QR code removed from lot (case/tray) stickers; barcode only, a little bigger than the pack barcode** (Overview, "Working model structure", "Connection establishment" and roles table updated). At the user's request, lot stickers now carry just the header, the Code 128 barcode and the code text, laid out like a pack sticker. The lot barcode may grow to 0.4 mm bars × 18 mm (SPEC `lotMaxModuleMm`, `lotMaxBarHeightMm`), so at the default sizes it is ≈ 80 × 18 mm against ≈ 67 × 14 mm on a pack. Unchanged on purpose: scanners and the damage-photo check still read QR codes, so cases already printed with a QR keep working; the public page `/t/<code>` and the "Public base URL" setting stay (card renamed "Public page"). New stickers therefore give consumers no QR to scan. Files: `src/lib/stickerLayout.ts`, `src/components/Stickers.tsx`, `src/lib/core/stickers.ts`, `src/lib/barcode.ts`, `src/lib/services/printOrders.ts`, admin settings page, tests. | typecheck + eslint clean; `vitest src/lib` 216/216 (new: lot barcode bigger than pack by at most 40 %, no QR on lot sticker); `playwright demo.spec.ts` 12/12, every printed barcode decodes and no sticker has a QR |
+| 5 Nov 2026 | Claude Code on `develop/aditya` | **Photos of the damage required** (4942408; Part 1 damage paragraph, statuses and workflow updated). Besides the required barcode photo, a damage report must add 1 to 4 photos of the damage itself (close-ups, other sides), without a barcode — compulsory at the user's request (first built as optional). Damaged page: new step 4 "Photos of the damage" (report button disabled until at least one is added) — several at a time, thumbnails with a remove button; the report button is now step 5. Server: `damagePhotos` (array of data URLs): at least 1 (`DAMAGE_PHOTO_REQUIRED`), at most 4 (`TOO_MANY_PHOTOS`), each a real JPEG/PNG/WebP ≤ 1 MB (`PHOTO_INVALID` / `PHOTO_TOO_LARGE` naming the photo); stored as `<report id>.<n>.<ext>` with the barcode photo in the same last step of the transaction (a failed write removes the files already written); served by `GET /api/damaged/photo/<id>?n=<n>` to the reporter and HQ only. `listDamaged` and HQ alerts now return `photoUrls` (barcode photo first) instead of `photoUrl`; Damaged list and HQ Alerts show every photo. Body limit of the damage route raised to fit 2 MB + 4 × 1 MB. Files: `src/lib/services/damagePhotos.ts`, `src/lib/services/damage.ts`, `src/lib/services/trace.ts`, `src/lib/damagePhotoClient.ts`, `src/app/api/damaged/route.ts`, `src/app/api/damaged/photo/[id]/route.ts`, `src/app/(screens)/damaged/page.tsx`, `src/app/(screens)/hq/alerts/page.tsx`, `tests/fixtures/damagePhoto.ts` (every test report sends one damage photo), `tests/unit/damage.test.ts` (+1 test), `tests/e2e/demo.spec.ts` (step 10: button stays disabled with only the barcode photo; two damage photos added, one removed, 2 photos on Damaged and HQ Alerts). | Typecheck, lint; damage unit tests (JSON and PostgreSQL): no / empty / blank damage photos → `DAMAGE_PHOTO_REQUIRED`, 5 photos refused, non-image and > 1 MB refused naming the photo, case unchanged; 2 extra photos stored after the barcode photo, URLs in order on Damaged and HQ alerts, PNG/JPEG served, photo 3 and n=1.5 → 404, other SS → 404. Full unit suite 511 passed + 4 skipped (37 files, JSON and PostgreSQL, 2 workers; optional version), damage + scalability tests 62/62 after making them required; E2E 12 of 12 passed |
+| 5 Nov 2026 | Claude Code on `develop/aditya` | **Pack barcodes could not be scanned from the screen** (f914e5b; follow-up to the camera fix below). After the camera fix the camera ran at 1280×720 and the case still scanned, but packs did not. Cause: not the camera. The sticker sheet draws stickers at real size, so a narrow bar (0.25–0.33 mm) is about 1 screen pixel; the browser rounds each bar edge to a whole pixel, the bars come out uneven, and Code 128 cannot be decoded even from a perfect screenshot (checked: real-size screenshots at screen scaling 100 % and 125 % → no code; user's phone photos of the screen → only the case QR, which is coarse enough). The case "worked" only through its QR. Printed stickers are not affected (a label printer draws 0.25 mm as 2–3 dots). Fix: the print view has "Enlarge on screen to scan from the monitor" (on by default): on screen only (`@media screen`, CSS `zoom`), each sticker is enlarged so a narrow bar is a whole number of screen pixels, at least 3, following browser zoom and screen scaling. Printing is unchanged (real size). Files: `src/components/Stickers.tsx`, `src/components/PrintView.tsx`. | Typecheck, lint; Edge screenshots of the real print page on the test system: real size → not decodable, enlarged → `914BCSZLOR0000B61` decoded at 100 % and 125 % scaling, also after shrinking to 640 px; print media → sticker still 75 mm wide. E2E 12 of 12 passed |
+| 5 Nov 2026 | Claude Code on `develop/aditya` | **QC could scan the case but not its packs with the camera** (f914e5b). Scan log of the test system: the lot scanned, then no pack scan ever reached the server, so the packs were never decoded. Cause: the camera was opened without a size, so browsers gave 640×480; a pack sticker's Code 128 bars (≈0.33 mm on 75 mm) were then ≈1.8 px wide — below what ZXing can read — while the lot sticker's QR still read. Simulated decode of the real symbols: 640×480 pack NOT read / QR read; 1280×720 and 1920×1080 both read. Fix in `src/components/ScanInput.tsx`: ask for 1920×1080 (ideal) with continuous autofocus where supported, ZXing `TRY_HARDER`, show the camera's resolution with a hint below 1280 px, and keep the camera open when the page re-creates the scan box (QC lot → packs closed it every time). Stickers unchanged, so printed stickers keep working. | Typecheck, lint; decode simulation above; e2e regression: 12 of 12 passed. Not checked with a physical camera (the browser's permission prompt can't be automated here) |
+| 5 Nov 2026 | Claude Code on `develop/aditya` | **Damage reports need a photo with the barcode** (Part 1 "Roles and responsibilities" damage paragraph, statuses and workflow updated). Damaged page: reason → scan → photo (camera on phones, file on PCs) → Report; the barcode/QR in the photo is read in the browser and must match the scanned code. Server: photo required, real JPEG/PNG/WebP ≤ 2 MB, code read from it = reported code (400 `PHOTO_REQUIRED` / `PHOTO_INVALID` / `PHOTO_TOO_LARGE` / `PHOTO_NO_BARCODE` / `PHOTO_BARCODE_MISMATCH`), checked after the permission check; stored on disk as `<upload dir>/damage/<report id>.<ext>` as the last step of the transaction (no schema change); served to the reporter and HQ only. Photo shown on Damaged and HQ Alerts. Damage route body limit raised to fit one photo (`jsonBody(req, maxBytes)`). The browser reader tries 1200/800/1600 px and a light blur: at full size alone, sensor noise around the sticker made ZXing miss clean codes. Files: `src/lib/services/damagePhotos.ts` (new), `src/lib/damagePhotoClient.ts` (new), `src/app/api/damaged/photo/[id]/route.ts` (new), `src/lib/services/damage.ts`, `src/lib/services/trace.ts`, `src/lib/api.ts`, `src/app/api/damaged/route.ts`, `src/app/(screens)/damaged/page.tsx`, `src/app/(screens)/hq/alerts/page.tsx`, `tests/unit/damage.test.ts` (+3 tests, existing reports now send a photo), `tests/unit/scalability.test.ts`, `tests/fixtures/damagePhoto.ts` (new), `tests/e2e/demo.spec.ts` (step 10: wrong-code photo refused, sticker QR photo accepted, photo on Damaged and HQ Alerts), `playwright.config.ts` + `tests/e2e/global-setup.ts` (e2e photos in `data/e2e-uploads`). | Typecheck, lint; unit 509 passed + 4 skipped (37 files, JSON and PostgreSQL, 2 workers); live browser test on an isolated dev server (throwaway sample data, packed Green Apple cases): noisy, rotated JPEG "phone photos" built from the real sticker symbols — wrong case's Code 128 refused in the page, own QR at 15° accepted, report saved, photo served 200 (1600 px JPEG) and shown on Damaged and HQ Alerts; direct API calls without photo / wrong code / no barcode / not an image → 400, case still packed; photo: Super Stockist 404, QC 403, reporter 200. Production build + e2e 12/12 on the JSON store (step 10 with real sticker-symbol photos; photos in data/e2e-uploads, nothing in data/uploads) |
+| 5 Nov 2026 | Claude Code on `develop/aditya` | **Switch flavour when continuing a batch** (5938ed1; **removed 6 Nov 2026**, see above; Part 1 "Continuing a batch" updated). Replaces the 30 Oct rule "a batch is one flavour". The continue request takes an optional `flavour` (default: the batch's), checked as an active flavour (400 `INVALID_FLAVOUR`); new lots and packs get that flavour in their code and row; the counter stays per batch. Idempotent replay also compares the flavour. Display fixes for mixed-flavour batches: lot lookup shows the lot's flavour (was the batch's), Batches / batch report list all flavours, Print orders show each order's flavour; deleting a flavour is refused while continued lots use it. UI: step 2 is now *Flavour, cases & trays* with a flavour picker (shared `FlavourPicker`, also used by New batches), switch notice, summary "was …", result names the flavour. Files: `src/lib/services/printOrders.ts`, `src/lib/services/trace.ts`, `src/lib/services/admin.ts`, `src/app/(screens)/operator/new/page.tsx`, `tests/unit/continuation.test.ts` (+3 tests). | Typecheck (no errors outside stale `.next` types), lint; continuation tests 58 passed + 2 skipped on JSON and PostgreSQL; full unit suite 423 passed — 6 PostgreSQL files hit the 10 s setup-hook timeout under full parallelism and pass 160/160 when re-run with 2 workers (fix `9a9fc53` is on `feature/barcode-scanner`, not on this branch). Browser click-through on an isolated `next dev` (port 3500, throwaway sample data, sign-in off): batch P1VUEF Original lots 00001–00002, continued as Green Apple → `…GA00003`–`00004` (packs GA), switch notice and summary "was Original" shown, sticker header "CASE \| GREEN APPLE", Print orders per-order flavour, HQ Batches "Original, Green Apple", HQ search shows Green Apple. A stale `.next/dev` cache from the other branch caused a dev reload loop; removed. Follow-up: on *Choose batch* only the 13 px radio selected a batch (clicking the row did nothing, so Next stayed disabled); the whole row is now clickable, radio enlarged; checked live on :3500 |
+| 5 Nov 2026 | Claude Code (7 agents) on `feature/traceability-flow-completion` (from `feature/barcode-scanner` @ `9a9fc53`) | **Traceability flow completion: fixes from the 4 Nov "Tested Application Flows" report** (uncommitted). **Admin:** sign-in lockout per ID + client IP, with the count reset when a lock expires; when `CLIENT_IP_HEADER` is unset (X-Forwarded-For can be spoofed), an extra per-ID limit of 20 failures from any IP applies; clientIp uses the rightmost X-Forwarded-For hop and warns in production. Deactivation refused for a partner with stock in transit to it (`IN_TRANSIT`) and for the default or a used country (`IN_USE`). Devices locked to their plant (`PLANT_LOCKED`). Inactive parent or plant refused. Phone numbers with and without +91 or a leading 0 count as one. QR base URL must be https (http only for localhost/LAN). Pool refill level ≤ issue size. A staff sign-in with a partner is refused. Bootstrap settings go to Admin only (`session.tsx` `settings?`). **HQ:** recalled, void, quarantined and unverified (GENERATED/PRINTED) stock is left out of normal stock and shown in its own Recalled / awaiting-QC lines; a lot recalled in transit shows at the intended receiver. Recall keeps DAMAGED; no recall report for a batch that is not recalled; VOID lots not counted in the recall confirmation; recall reads packs once per batch, reason bounded. Alerts: HQ-only acknowledge / close / reopen (append-only `ALERT_*` movement rows), paging, repeated failures grouped per hour, HQ's own searches raise no alert. Opened lots with no packs left are no longer listed; the lot timeline includes pack events. **Plant:** mark-as-printed in bulk (`Repo.updateWhere`, `StoreTx.appendMovements`); preview and create send a summary, not every code. New-order lot cap = the continuation cap (10,000 PostgreSQL / 1,000 JSON), refused whole. Print / reprint / void / sync / mark-printed need a PC at multi-PC plants (`DEVICE_REQUIRED`, "This PC" in the DeviceBar). Void needs a reason. Date checks: manufacture date at most 1 day ahead, shelf life at most 5 years (provisional). PostgreSQL schema v4 (7 indexes, `IF NOT EXISTS`). **Chain:** receive, dispatch and open-lot accept a full QR link, lower case and padding (server-side); location is checked before status, so a non-holder learns no status; open-lot wording fixed. **Public / security:** the public page uses an allowlist: only QC-passed stock is "Genuine"; GENERATED/PRINTED say "Not yet released"; VOID shows no details; DAMAGED is logged not-OK; RECALLED says "Recalled — do not consume". Junk input is not logged; one log per client per 10 minutes; `SUSPECT_CLONE` alert (provisional 5 scans / 24 h, Admin settings); unknown and blocked public scans give one summary alert each. The live route `/api/lookup/<code>?view=public` now delegates to `verify.ts publicCheck`. demo-codes filtered by role; a malformed `%` in `/t/<code>` no longer throws; `clear-activity` guarded (shows target, `--force`, backup, refuses production / ambiguous targets). Already fixed before this change: print-order idempotency (#1), JSON lock (#5), sticker serving (#14). **Deferred (business decision):** return-to-plant / write-off (#8), cancel / redirect of stranded consignments, SOLD state, loose-pack QR. Device binding to the session at sign-in is deferred (technical). New files: `scripts/clearActivityGuard.ts`, `src/app/t/[code]/codeParam.ts`, `src/lib/publicUrl.ts`, `src/lib/scan/scannedCode.ts`, `tests/qa/printBench.ts`; tests `src/lib/core/publicSafety.test.ts`, `tests/unit/{adminValidation,clearActivity,printOperations,publicSecurity,traceFlow}.test.ts`. | Typecheck, lint pass; unit (JSON + PGlite) 783 passed + 9 skipped in 53 files (baseline 590 + 7 in 42); e2e 18/18 JSON and 18/18 PostgreSQL (port 3100). Benchmarks (`tests/qa/printBench.ts`, service layer, throwaway stores): 5,000-lot mark printed 13.0 s → 0.32 s JSON, 115 s → 2.1 s PGlite; preview 939 KB → < 1 KB. Independent QA found 2 P1 issues (lockout bypass by faking X-Forwarded-For; the live public route not using the new checks); both fixed and covered by tests. Not tested: real reverse proxy, index build time on a large database, multi-PC picker in a browser, physical printers / scanners |
 | 4 Nov 2026 | Claude Code (isolated copy `crms_velza_trace_serialfix`, from `feature/barcode-scanner` with its uncommitted work) | **Serial uniqueness and duplicate-print protection** (audit P0–P2; uncommitted; Part 1 "Serial integrity and duplicate-print protection" added). P0: the JSON store gets an exclusive `<file>.lock` held by one process (a second process gets 503 `STORE_LOCKED`), stale-lock takeover and a changed-on-disk check before each write (`src/lib/store/jsonStore.ts`). P1: sticker sheets only while CREATED, only GENERATED lots, each serving logged; 409 once PRINTED; single stickers only through a logged reprint, served once (`POST /api/reprint/<id>/stickers`; `GET /api/stickers` → 410); new-batch orders need an idempotency key with a request fingerprint. P2: a continuation replays only a continuation with the same fingerprint; per-manufacturer advisory lock before `BEGIN`, contention → 409 (no raw 500); every transaction query runs one at a time; PostgreSQL schema v3: `print_orders.order_kind`, `request_fingerprint`, `code_history.print_order_id`, triggers `batches_counter_forward_only` and `codes_issued_protected` (the JSON store has the same guards). Files: `src/lib/core/types.ts`, `src/lib/store/{Store,index,jsonStore}.ts`, `src/lib/store/sql/{driver,schema,sqlStore}.ts`, `db/schema.sql`, `src/lib/services/{printOrders,operator}.ts`, `src/lib/api.ts`, `src/app/api/stickers/route.ts`, `src/app/api/reprint/[id]/stickers/route.ts` (new), `src/app/print/code/[code]/page.tsx`, `src/app/print/reprint/[id]/page.tsx` (new), `src/components/PrintView.tsx`, `(screens)/operator/{new,orders,reprint}/page.tsx`. Tests: `tests/unit/serialIntegrity.test.ts` (new, 21), `tests/fixtures/jsonLockProbe.ts` (new), `tests/qa/serialMultiProcess.ts` (new); adapted: idempotency keys in every order-creating test/QA script, `continuation.test.ts` (no counter rewinds), `printConfirmation.test.ts` (sheet serving logged), `demoScript.test.ts`, `store.contract.test.ts`, `tests/e2e/demo.spec.ts` (printed sheet refused, reprint prints once). | Lint, typecheck; unit JSON 418 passed + 1 skipped (28 files); PGlite 172 passed + 6 skipped (14 files); real PostgreSQL 17 (throwaway, port 5499): `serialIntegrity` + `continuation` 44 passed + 4 skipped, whole unit suite 170 passed (2 `access.test.ts` failures that the original code also has on a real server); v2 → v3 upgrade of a database made by the original code: data unchanged, legacy continuation replays, triggers active; two processes × 20 requests: PostgreSQL 40/40 allocated, 0 duplicates (before: 23/40, 17 refused), JSON second process refused, 0 duplicates (before: 19 lots handed out twice, 20 orders lost); HTTP on ports 3470/3471 (sign-in on): every case answered as designed, 715 codes / 0 duplicates; production build + e2e 18/18 (port 3100) |
 | 4 Nov 2026 | Claude Code on `feature/barcode-scanner` (from `0a1b09b`) | **Camera / USB / Bluetooth scanning and live scan checklists** (uncommitted; Part 1 "Scanning" added under "How each location connects"). Reused: `@zxing/browser`, the scan APIs, services, rules and scan audit (no new dependency, API or log). New: `src/lib/scan/normalize.ts` (control-character stripping, upper-casing, 15/17-character format check), `src/lib/scan/gate.ts` (one scan at a time, camera repeat-frame suppression), `src/lib/scan/camera.ts` (camera session: rear camera, camera choice, torch, permission/unavailable/busy/insecure messages, one session per page, every track stopped), `src/lib/scan/checklist.ts`, `src/components/ScanChecklist.tsx`; `src/components/ScanInput.tsx` rewritten on top (same selectors, labels and `onScan` contract; queue for fast scanners). Screens: QC Verify (pack checklist, Confirm only at 100%; fixed: a pack scanned right after the lot was lost because the scan box re-mounted), Dispatch (eligible-stock checklist, Remove), Receive (incoming checklist with invoice). Server: incoming stock items carry their dispatch `invoice` (`src/lib/services/trace.ts` `myStock`). Tests: `src/lib/scan/scan.test.ts` (26, mocked camera), `tests/unit/scanWorkflows.test.ts` (14: QC, dispatch/receive, audit, invoice, role × scan-API matrix incl. anonymous), `tests/e2e/scanning.spec.ts` (6: fake-camera video of a real Code 128 decoded by zxing, keyboard-wedge burst, partial input, duplicates, permission refused, camera released on navigation, phone width, dispatch/receive checklists); `tests/qa/scanPerf.mjs` (results `docs/qa/scan-perf-results.json`). Manual hardware guide: `docs/MANUAL_QA_GUIDE.md` §8. | Unit JSON 397 passed + 1 skipped (27 files); PostgreSQL (PGlite, serial) 154 passed + 3 skipped (13 files); lint, typecheck; production build + e2e 18/18 (port 3100, isolated copy); performance on a throwaway server (port 3430, 1,000 cases, JSON store, write rate limit raised for the test only): QC pack-scan API p50 57–68 ms / p95 85–112 ms (10/100/500 scans), dispatch checklist with 1,000 units loads in 1.8 s with 50 rows in the DOM, scan → SCANNED in the browser p50 247 ms / p95 270 ms over 100 scans, 100 requests for 100 scans, JS heap 4.7 → 5.8 MB, filter + search 183 ms. **Not run:** physical phones, USB/Bluetooth scanners; responsive pass of the scan screens in light/dark at 5 sizes (stopped: low memory); camera tested only through the browser's fake camera |
 | 4 Nov 2026 | Claude Code | **System readiness review and management demo** (uncommitted). Audit by re-running and extending the test harnesses on isolated instances (never `data/db.json`, never :3000). Fixed: **DEF-001** settings readable without sign-in → Velza Admin only (`src/lib/services/admin.ts` `getSettings(userId)`, `src/app/api/admin/settings/route.ts`, test in `tests/unit/access.test.ts`); **phone-width sideways scrolling** on Admin → Partners ("Show" filter wider than the screen) and Countries & flavours (grid column without `min-w-0`) (`admin/partners/page.tsx`, `AdminCrud.tsx`). New tooling: `tests/qa/demoSetup.ts` (builds the DEMO- network and stock story through the real API with 31 lifecycle checks; refuses `db.json` and :3000), `tests/qa/demoUi.mjs` (every page of every role at 1440/1366/768/390 px: title, errors, overflow, raw errors, dev controls, focus, sign-out; refuses :3000). New doc `docs/MANAGEMENT_DEMO.md` (functionality matrix, 30–45 min script, demo sign-ins without passwords, architecture, limitations, start/stop/reset); `docs/CRMS_STATUS.md` updated. Demo workspace `C:\Users\ADMIN\velza-demo` (own app copy, data, random passwords, 127.0.0.1:3400). Still open: AUTH-1, DEF-002, DEF-004, INFO-1 (decision), no 2FA, session expiry untested, hardware untested. | Unit JSON 357 passed + 1 skipped; PostgreSQL (PGlite, serial) 140 passed + 3 skipped; lint, typecheck; build + e2e 12/12 (port 3100); API harness 101 PASS / 0 FAIL / 1 decision (port 3410, throwaway data); demo build-up 31/31; demo browser check 873/873; script steps 5–16 rehearsed 16/16 on a data copy (port 3420) |

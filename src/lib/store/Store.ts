@@ -4,6 +4,7 @@
 import type {
   Batch,
   BatchCodePoolEntry,
+  Container,
   Country,
   Device,
   Flavour,
@@ -37,6 +38,12 @@ export interface Repo<T extends Row> {
   create(row: T): Promise<T>;
   createMany(rows: T[]): Promise<void>;
   update(id: string, patch: Partial<Omit<T, "id">>): Promise<T>;
+  /**
+   * Apply one patch to every row matching `where`, in one statement (bulk status changes: mark printed, sync).
+   * Returns the ids of the changed rows, in insertion order. `where` must name at least one field (an empty
+   * filter is refused rather than updating the whole table); an empty "any of" list matches nothing.
+   */
+  updateWhere(where: Where<T>, patch: Partial<Omit<T, "id">>): Promise<string[]>;
   /** Hard delete. Callers check references first; ledger tables have no delete. */
   delete(id: string): Promise<void>;
 }
@@ -59,6 +66,7 @@ export interface StoreTx {
   batchCodePool: Repo<BatchCodePoolEntry>;
   batches: Repo<Batch>;
   printOrders: Repo<PrintOrder>;
+  containers: Repo<Container>;
   lots: Repo<Lot>;
   packs: Repo<Pack>;
   movements: AppendOnlyRepo<Movement>;
@@ -67,6 +75,8 @@ export interface StoreTx {
   sessions: Repo<Session>;
 
   appendMovement(m: NewMovement): Promise<Movement>;
+  /** Append several movements at once (multi-row inserts on PostgreSQL), in the given order. */
+  appendMovements(ms: NewMovement[]): Promise<Movement[]>;
   appendScan(s: NewScan): Promise<Scan>;
   /**
    * Atomically reserve `count` consecutive lot numbers for a batch.
@@ -88,6 +98,7 @@ export interface DbSnapshot {
   batchCodePool: BatchCodePoolEntry[];
   batches: Batch[];
   printOrders: PrintOrder[];
+  containers: Container[];
   lots: Lot[];
   packs: Pack[];
   movements: Movement[];
@@ -107,6 +118,7 @@ export const COLLECTIONS = [
   "batchCodePool",
   "batches",
   "printOrders",
+  "containers",
   "lots",
   "packs",
   "movements",

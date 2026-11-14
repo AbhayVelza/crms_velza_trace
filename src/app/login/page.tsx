@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { ActAsPicker, useDevUsers } from "@/components/ActAs";
-import { VelzaLogo, VelzaSymbol } from "@/components/brand";
-import { ThemeSwitcher } from "@/components/ThemeSwitcher";
+import { AuthShell } from "@/components/AuthShell";
 import { api, errorText } from "@/lib/client";
 import { Button, Field, Input, Notice } from "@/components/ui";
 
@@ -60,7 +59,7 @@ export default function LoginPage() {
       <form onSubmit={submit} className="space-y-5">
         <div>
           <h1 className="text-xl font-bold tracking-tight text-foreground">Sign in</h1>
-          <p className="mt-1.5 text-sm text-muted-foreground">Use the sign-in ID and password given to you by Velza Admin.</p>
+          <p className="mt-1.5 text-sm text-muted-foreground">Use your sign-in ID and password.</p>
         </div>
         {error && <Notice tone="error">{error}</Notice>}
         <Field label="Sign-in ID">
@@ -72,35 +71,14 @@ export default function LoginPage() {
         <Button type="submit" className="w-full" loading={busy} disabled={busy || !loginId || !password}>
           {busy ? "Signing in…" : "Sign in"}
         </Button>
-        <p className="text-xs text-muted-foreground">No account, or forgot your password? Ask Velza Admin.</p>
+        <p className="text-sm text-muted-foreground">
+          Super Stockist, Distributor or Retailer without an account?{" "}
+          <a href="/signup" className="font-semibold text-foreground underline underline-offset-2">
+            Create an account
+          </a>
+        </p>
+        <p className="text-xs text-muted-foreground">Forgot your password, or at the plant? Ask Velza Admin.</p>
       </form>
     </AuthShell>
-  );
-}
-
-/** Sign-in layout: black brand panel (wide screens) beside the form; the logo sits above the form on phones. */
-function AuthShell({ children }: { children: ReactNode }) {
-  return (
-    <main className="flex flex-1">
-      <aside className="theme-dark brand-bar relative hidden w-[42%] max-w-xl flex-col justify-between overflow-hidden bg-surface p-12 text-foreground lg:flex">
-        {/* Watermark device: the V as a tonal, cropped form (brand book p. 7 and 19). */}
-        <VelzaSymbol height={520} tone="on-dark" className="pointer-events-none absolute -bottom-24 -right-40 h-[520px] w-auto max-w-none opacity-[0.07]" />
-        <VelzaLogo height={128} tone="on-dark" className="relative h-32 w-auto self-start" />
-        <div className="relative space-y-3">
-          <p className="text-[0.6875rem] font-semibold uppercase tracking-[0.2em] text-muted-foreground">Velza Traceability</p>
-          <p className="max-w-sm text-2xl font-bold leading-snug tracking-tight">Every case, tray and pack — from plant to retailer.</p>
-          <p className="text-xs uppercase tracking-[0.16em] text-subtle-foreground">Driven by passion, defined by luxury</p>
-        </div>
-      </aside>
-      <div className="relative flex flex-1 flex-col items-center justify-center bg-background px-4 py-10">
-        <ThemeSwitcher className="absolute right-4 top-4" />
-        <div className="w-full max-w-sm animate-rise-in">
-          <div className="mb-8 flex justify-center lg:hidden">
-            <VelzaLogo height={88} className="h-[88px] w-auto" />
-          </div>
-          <div className="rounded-card border border-line bg-surface p-6 shadow-card sm:p-7">{children}</div>
-        </div>
-      </div>
-    </main>
   );
 }

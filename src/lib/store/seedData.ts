@@ -49,6 +49,7 @@ export function buildBaseSeed(passwords: StaffPasswords = staffPasswords(), now 
     batchCodePool: [],
     batches: [],
     printOrders: [],
+    containers: [],
     lots: [],
     packs: [],
     movements: [],

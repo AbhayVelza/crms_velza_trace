@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { thisPcId } from "@/components/DeviceBar";
 import { ScanInput } from "@/components/ScanInput";
 import { useAction } from "@/components/useAction";
 import { IconPrinter } from "@/components/icons";
@@ -23,7 +24,7 @@ export default function ReprintPage() {
   async function submit() {
     setMsg(null);
     try {
-      const r = await api<{ message: string; reprint: Reprint }>("/api/reprint", { body: { code, reason } });
+      const r = await api<{ message: string; reprint: Reprint }>("/api/reprint", { body: { code, reason, deviceId: thisPcId() } });
       setMsg({ tone: "ok", text: r.message });
       setReady({ id: r.reprint.id, code });
       setReason("");

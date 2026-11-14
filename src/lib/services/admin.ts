@@ -27,11 +27,12 @@ import {
   type User,
 } from "@/lib/core/types";
 import { hashPassword } from "@/lib/passwords";
+import { isSafePublicUrl, PUBLIC_URL_RULE } from "@/lib/publicUrl";
 import { getStore, type StoreTx } from "@/lib/store";
 import { badRequest, loadActor, notFound, nowIso, publicUser, requireAction, type Actor } from "./common";
 import { autoRefill, issueCodes, reservedCodes } from "./pool";
 
-const partnerFields = {
+export const partnerFields = {
   type: z.enum(PARTNER_TYPES),
   name: z.string().trim().min(1, "Name is required").max(100),
   place: z.string().trim().min(1, "Place (locality) is required").max(80),
@@ -92,9 +93,20 @@ export function isAdminEntity(s: string): s is AdminEntity {
 
 const isIndianState = (s: string) => (INDIAN_STATES as readonly string[]).includes(s);
 const digits = (phone: string | undefined) => (phone ?? "").replace(/[^0-9]/g, "");
+/** One key per Indian number: "+91 98765 43210", "098765 43210" and "9876543210" are the same phone. */
+export const phoneKey = (phone: string | undefined) => {
+  const d = digits(phone);
+  if (d.length === 12 && d.startsWith("91")) return d.slice(2);
+  if (d.length === 11 && d.startsWith("0")) return d.slice(1);
+  return d;
+};
 
-/** Partner checks that need the other partners: address, contact, one SS per state, assignment. */
-async function validatePartner(tx: StoreTx, data: Partial<Partner> & { type: PartnerType }, selfId?: string) {
+/**
+ * Partner checks that need the other partners: address, contact, one SS per state, assignment.
+ * `currentParentId` is the saved assignment when editing: an inactive parent is refused only when it is
+ * newly picked, so older rows under a since-deactivated parent can still be edited.
+ */
+export async function validatePartner(tx: StoreTx, data: Partial<Partner> & { type: PartnerType }, selfId?: string, currentParentId?: string | null) {
   const type = data.type;
   const label = PARTNER_TYPE_LABELS[type];
   const state = data.state ?? "";
@@ -105,11 +117,13 @@ async function validatePartner(tx: StoreTx, data: Partial<Partner> & { type: Par
 
   const others = (await tx.partners.list()).filter((p) => p.id !== selfId);
   if (type === "SS") {
-    const taken = others.find((p) => p.type === "SS" && p.state === state);
+    // A rejected self sign-up no longer holds its state (same rule as the database index).
+    const taken = others.find((p) => p.type === "SS" && p.state === state && p.approval !== "REJECTED");
     if (taken) throw badRequest("STATE_TAKEN", `${state} already has a Super Stockist: ${taken.name} (${taken.id}). There is one Super Stockist per state.`);
   }
   if (data.phone) {
-    const same = others.find((p) => digits(p.phone) === digits(data.phone!));
+    const key = phoneKey(data.phone);
+    const same = others.find((p) => phoneKey(p.phone) === key);
     if (same) throw badRequest("DUPLICATE", `Phone ${data.phone} is already used by ${same.name} (${same.id})`);
   }
   if (data.email) {
@@ -123,13 +137,16 @@ async function validatePartner(tx: StoreTx, data: Partial<Partner> & { type: Par
     if (!parent || !parentTypes.includes(parent.type)) {
       throw badRequest("BAD_PARENT", `A ${label} must be assigned to a ${parentTypes.map((t) => PARTNER_TYPE_LABELS[t]).join(" or ")}`);
     }
+    if (!parent.active && data.parentId !== currentParentId) {
+      throw badRequest("BAD_PARENT", `${parent.name} (${parent.id}) is inactive — pick an active ${PARTNER_TYPE_LABELS[parent.type]}`);
+    }
   }
 }
 
 /** Device names are compared trimmed, with runs of spaces as one, ignoring case. */
 export const deviceNameKey = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCase();
 
-async function validateEntity(tx: StoreTx, entity: AdminEntity, data: Record<string, unknown>, selfId?: string) {
+async function validateEntity(tx: StoreTx, entity: AdminEntity, data: Record<string, unknown>, selfId?: string, current?: Record<string, unknown>) {
   if (entity === "users") {
     const role = data.role as Role;
     const needType = ROLE_PARTNER_TYPE[role];
@@ -145,6 +162,7 @@ async function validateEntity(tx: StoreTx, entity: AdminEntity, data: Record<str
   if (entity === "devices") {
     const m = await tx.partners.get(String(data.manufacturerId));
     if (!m || m.type !== "MANUFACTURER") throw badRequest("BAD_PARTNER", "Devices belong to a manufacturer");
+    if (!selfId && !m.active) throw badRequest("BAD_PARTNER", `${m.name} (${m.id}) is inactive — activate the plant before adding a device`);
     // Each PC of a plant needs a name its operators can tell apart (spaces and case don't count).
     // Checked when a name is set or changed, so older look-alike names don't block other edits (e.g. Offline).
     const key = deviceNameKey(String(data.name ?? ""));
@@ -158,7 +176,10 @@ async function validateEntity(tx: StoreTx, entity: AdminEntity, data: Record<str
     const rows = await tx[entity].list({ code: data.code as string });
     if (rows.some((r) => r.id !== selfId)) throw badRequest("DUPLICATE", `Code ${data.code} already exists`);
   }
-  if (entity === "partners") await validatePartner(tx, data as Partial<Partner> & { type: PartnerType }, selfId);
+  if (entity === "partners") {
+    const currentParentId = current ? ((current.parentId as string | null | undefined) ?? null) : undefined;
+    await validatePartner(tx, data as Partial<Partner> & { type: PartnerType }, selfId, currentParentId);
+  }
 }
 
 /** Never let the Admin lock everyone out. */
@@ -171,13 +192,13 @@ async function guardAdmins(tx: StoreTx, actor: Actor, target: User, next: Partia
   }
 }
 
-function requirePassword(pw: string | undefined, whose: string): string {
+export function requirePassword(pw: string | undefined, whose: string): string {
   const problem = pw === undefined || pw === "" ? "a password is required" : checkPassword(pw);
   if (problem) throw badRequest("WEAK_PASSWORD", `${whose}: ${problem}`);
   return pw!;
 }
 
-async function newUser(tx: StoreTx, id: string, name: string, role: Role, partnerId: string | null, passwordHash: string): Promise<User> {
+export async function newUser(tx: StoreTx, id: string, name: string, role: Role, partnerId: string | null, passwordHash: string): Promise<User> {
   if (await tx.users.get(id)) throw badRequest("DUPLICATE", `Sign-in ${id} already exists`);
   const at = nowIso();
   return tx.users.create({ id, name, role, partnerId, active: true, passwordHash, passwordChangedAt: at, createdAt: at, lastLoginAt: null });
@@ -242,7 +263,8 @@ async function createLogin(userId: string | null, body: unknown) {
   const passwordHash = await hashPassword(requirePassword(data.password, "Password"));
   return getStore().transaction(async (tx) => {
     requireAction(await loadActor(tx, userId), "admin");
-    const partnerId = ROLE_PARTNER_TYPE[data.role] ? (data.partnerId ?? null) : null;
+    // Not silently dropped for staff: validateEntity refuses a partner on a Velza staff sign-in (before any ID is used up).
+    const partnerId = data.partnerId || null;
     await validateEntity(tx, "users", { ...data, partnerId });
     const staffPrefix = STAFF_ID_PREFIX[data.role];
     const id = staffPrefix ? formatSequenceId(staffPrefix, await tx.nextSequence(staffPrefix)) : partnerLoginId(data.role, partnerId!);
@@ -282,11 +304,79 @@ export async function updateEntity(userId: string | null, entity: AdminEntity, i
       }
       return publicUser(await repo.update(id, patch));
     }
-    await validateEntity(tx, entity, { ...current, ...patch }, id);
+    if (entity === "devices" && patch.manufacturerId !== undefined && patch.manufacturerId !== current.manufacturerId) {
+      throw badRequest("PLANT_LOCKED", "A device stays with its plant (its batch codes are issued to that plant) — add a new device at the other plant instead");
+    }
+    // A self-signed-up SS / DB is switched on only by Approve (decideApproval), never by the Active box.
+    if (entity === "partners" && patch.active === true && (current as Partner).approval) {
+      const what = (current as Partner).approval === "PENDING" ? "is waiting for approval — use Approve" : "was rejected and cannot be activated";
+      throw badRequest("NOT_APPROVED", `${current.name} (${id}) ${what}`);
+    }
+    if (patch.active === false && current.active) await guardDeactivate(tx, entity, current);
+    await validateEntity(tx, entity, { ...current, ...patch }, id, current);
     const updated = await repo.update(id, patch);
     if (entity === "devices" && current.offline && patch.offline === false) await autoRefill(tx, id);
     return updated;
   });
+}
+
+export const approvalDecisionSchema = z.object({ decision: z.enum(["approve", "reject"]) });
+
+/**
+ * Velza Admin approves or rejects a self-signed-up Super Stockist or Distributor (status PENDING).
+ * Approve: the partner and its sign-in become active and the approval mark is cleared (a normal partner).
+ * Reject: the record stays (approval REJECTED, inactive), so the ID is never reused and the sign-in never works;
+ * a rejected Super Stockist no longer holds its state.
+ */
+export async function decideApproval(userId: string | null, partnerId: string, body: unknown) {
+  const { decision } = approvalDecisionSchema.parse(body);
+  return getStore().transaction(async (tx) => {
+    const actor = await loadActor(tx, userId);
+    requireAction(actor, "admin");
+    const partner = await tx.partners.get(partnerId);
+    if (!partner) throw notFound(`Partner ${partnerId} not found`);
+    if (partner.approval !== "PENDING") {
+      throw badRequest("NOT_PENDING", `${partner.name} (${partner.id}) is not waiting for approval`);
+    }
+    const label = PARTNER_TYPE_LABELS[partner.type];
+    if (decision === "approve") {
+      // The parent may have been deactivated since the sign-up: the usual partner checks run again.
+      await validatePartner(tx, { ...partner, approval: null }, partner.id, partner.parentId);
+      const updated = await tx.partners.update(partner.id, { active: true, approval: null });
+      for (const u of await tx.users.list({ partnerId: partner.id })) await tx.users.update(u.id, { active: true });
+      return { partner: updated, message: `${partner.name} (${partner.id}) approved — the ${label} can sign in now` };
+    }
+    const updated = await tx.partners.update(partner.id, { active: false, approval: "REJECTED" });
+    for (const u of await tx.users.list({ partnerId: partner.id })) {
+      await tx.users.update(u.id, { active: false });
+      for (const s of await tx.sessions.list({ userId: u.id })) await tx.sessions.delete(s.id);
+    }
+    return { partner: updated, message: `${partner.name} (${partner.id}) rejected — the sign-up stays on record; ${partner.id} is not reused` };
+  });
+}
+
+/**
+ * Deactivating must not strand stock or make printed codes unreadable:
+ * - a partner with lots/packs still on the way to it (only it can receive them);
+ * - the default country, or a country used by batches (codes are parsed against active countries only).
+ */
+async function guardDeactivate(tx: StoreTx, entity: AdminEntity, current: { id: string; name?: string; code?: unknown }) {
+  if (entity === "partners") {
+    const [lots, packs] = await Promise.all([
+      tx.lots.list({ inTransitToId: current.id, status: "IN_TRANSIT" }),
+      tx.packs.list({ inTransitToId: current.id, status: "IN_TRANSIT" }),
+    ]);
+    const lotCodes = new Set(lots.map((l) => l.lotCode));
+    const loosePacks = packs.filter((p) => !lotCodes.has(p.lotCode)).length;
+    if (lots.length || loosePacks) {
+      const what = [lots.length && `${lots.length} lot(s)`, loosePacks && `${loosePacks} pack(s)`].filter(Boolean).join(" and ");
+      throw badRequest("IN_TRANSIT", `${current.name} (${current.id}) has ${what} on the way to it — it must receive them before it is deactivated`);
+    }
+  }
+  if (entity === "countries") {
+    const refs = await referencesTo(tx, "countries", current);
+    if (refs.length) throw badRequest("IN_USE", `Country ${String(current.code)} cannot be deactivated: still used by ${refs.join(", ")} (its codes would stop being readable)`);
+  }
 }
 
 // ---------------------------------------------------------------- delete
@@ -335,6 +425,8 @@ async function referencesTo(tx: StoreTx, entity: AdminEntity, row: { id: string;
     const code = String(row.code);
     const batches = await tx.batches.list(entity === "countries" ? { country: code } : { flavour: code });
     add(batches.length, "batch(es)");
+    // A continued batch can print lots in another flavour than its own.
+    if (entity === "flavours" && !batches.length) add((await tx.lots.list({ flavour: code })).length, "lot(s) in continued batches");
     if (entity === "countries" && (await tx.getSettings()).defaultCountry === code) found.push("the default country setting");
   }
   return found;
@@ -412,6 +504,8 @@ export async function issuePoolCodes(userId: string | null, deviceId: string, co
     requireAction(actor, "admin");
     const device = await tx.devices.get(deviceId);
     if (!device) throw notFound(`Device ${deviceId}`);
+    const plant = await tx.partners.get(device.manufacturerId);
+    if (!plant?.active) throw badRequest("BAD_PARTNER", `${plant?.name ?? device.manufacturerId} is inactive — no batch codes are issued to its devices`);
     const settings = await tx.getSettings();
     const issued = await issueCodes(tx, device, count ?? settings.poolIssueSize, actor.user.id);
     return { issued, reserved: (await reservedCodes(tx, deviceId)).length };
@@ -425,10 +519,14 @@ export const settingsSchema = z
     demoThresholdMinutes: z.number().min(1).max(10_000),
     lotSticker: z.object({ widthMm: z.number().min(30).max(300), heightMm: z.number().min(15).max(300) }),
     packSticker: z.object({ widthMm: z.number().min(30).max(300), heightMm: z.number().min(15).max(300) }),
-    publicBaseUrl: z.string().url(),
+    publicBaseUrl: z.string().trim().max(200).url().refine(isSafePublicUrl, PUBLIC_URL_RULE),
     poolIssueSize: z.number().int().min(1).max(100),
     poolRefillBelow: z.number().int().min(0).max(100),
     defaultCountry: z.string().regex(/^[0-9]{2}$/),
+    /** PROVISIONAL (awaiting Velza approval): consumer scans of one code within the window that raise SUSPECT_CLONE. */
+    publicCloneScanThreshold: z.number().int().min(2).max(1000),
+    /** PROVISIONAL (awaiting Velza approval): the window, in hours. */
+    publicCloneWindowHours: z.number().min(1).max(720),
   })
   .partial();
 
@@ -445,6 +543,10 @@ export async function updateSettings(userId: string | null, body: unknown): Prom
     requireAction(await loadActor(tx, userId), "admin");
     if (patch.defaultCountry && !(await tx.countries.findOne({ code: patch.defaultCountry, active: true }))) {
       throw badRequest("BAD_COUNTRY", `Country ${patch.defaultCountry} is not in the active country list`);
+    }
+    const next = { ...(await tx.getSettings()), ...patch };
+    if (next.poolRefillBelow > next.poolIssueSize) {
+      throw badRequest("BAD_POOL", "Refill pool below must not be more than the codes issued per refill");
     }
     return tx.updateSettings(patch);
   });
@@ -464,5 +566,6 @@ export async function bootstrap(userId: string | null) {
   const staff = can(actor.role, "admin") || can(actor.role, "dashboard");
   const partners: Partner[] = staff ? allPartners : allPartners.filter((p) => p.id === actor.partner?.id);
   const devices = staff ? allDevices : allDevices.filter((d) => d.manufacturerId === actor.partner?.id);
-  return { countries, flavours, partners, devices, settings };
+  // Settings are Admin configuration (see getSettings): other roles don't receive them.
+  return can(actor.role, "admin") ? { countries, flavours, partners, devices, settings } : { countries, flavours, partners, devices };
 }

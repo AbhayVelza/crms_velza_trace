@@ -43,7 +43,8 @@ beforeAll(async () => {
   ids.qc2 = `${r.partner.id}-QC`;
   await createEntity("AD0001", "devices", { manufacturerId: r.partner.id, name: "Plant Two PC" });
 
-  // Plant 1: three cases, verified; case 1 → SS0001 → DB0001 → RT0001 (opened); case 2 → SS0001 → RT0004.
+  // Plant 1: three cases, verified; all via the Velza Warehouse VW0001: case 1 → SS0001 → DB0001 → RT0001
+  // (opened); case 2 → SS0001 → RT0004.
   const order = await createPrintOrder(ids.op, { idempotencyKey: crypto.randomUUID(), batches: [{ flavour: "OR", mfgDate: "2026-10-01", expiryDate: "2027-10-01", cases: 3, trays: 0 }] });
   if (order.preview) throw new Error("expected an order");
   lots = order.printOrder.lotCodes;
@@ -52,7 +53,10 @@ beforeAll(async () => {
     await verify(ids.qc, { action: "scanLot", code: l });
     await verify(ids.qc, { action: "confirm", lotCode: l, packCodes: await packsOf(l) });
   }
-  await send(ids.op, "SS0001", "INV-D1", [lots[0], lots[1]]);
+  await send(ids.op, "VW0001", "INV-D0", [lots[0], lots[1]]);
+  await receive("VW0001", { code: lots[0] });
+  await receive("VW0001", { code: lots[1] });
+  await send("VW0001", "SS0001", "INV-D1", [lots[0], lots[1]]);
   await receive("SS0001", { code: lots[0] });
   await receive("SS0001", { code: lots[1] });
   await send("SS0001", "DB0001", "INV-D2", [lots[0]]);

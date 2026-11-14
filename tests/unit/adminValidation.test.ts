@@ -44,7 +44,10 @@ afterAll(async () => {
 describe("deactivating a partner (REF-9)", () => {
   it("is refused while a consignment is on the way to it, and allowed once it is received", async () => {
     const lot = await qcPassedLot();
-    await dispatch(OP, { action: "confirm", toPartnerId: "SS0002", invoice: "INV-ADM-1", codes: [lot] });
+    // The plant ships only to the Velza Warehouse (VW0001); the warehouse sends it on to SS-2.
+    await dispatch(OP, { action: "confirm", toPartnerId: "VW0001", invoice: "INV-ADM-0", codes: [lot] });
+    expect(await receive("VW0001", { code: lot })).toMatchObject({ ok: true });
+    await dispatch("VW0001", { action: "confirm", toPartnerId: "SS0002", invoice: "INV-ADM-1", codes: [lot] });
     await expect(updateEntity(ADMIN, "partners", "SS0002", { active: false })).rejects.toMatchObject({
       status: 400,
       code: "IN_TRANSIT",

@@ -25,6 +25,7 @@ import { ITEM_STATUSES, PARTNER_TYPE_LABELS, type ItemStatus, type Lot, type Mov
 import { MAX_SCAN_INPUT, normalizeScannedCode } from "@/lib/scan/normalize";
 import { getStore, type StoreTx } from "@/lib/store";
 import { damagedCounts, damagedUnits, wasOpened } from "./damage";
+import { damagePhotoUrls } from "./damagePhotos";
 import { badRequest, findItem, isVisible, loadActor, logScan, notFound, nowIso, partnerName, requireAction, requirePartner } from "./common";
 import { batchDisplayStatus } from "./printOrders";
 import { publicCheck } from "./verify";
@@ -43,7 +44,7 @@ const MAX_LOGGED_CODE = 64;
 const cleanCode = (raw: string) => normalizeScannedCode(String(raw ?? "").slice(0, MAX_RAW_CODE)).slice(0, MAX_LOGGED_CODE);
 
 /** Sellable stock: QC-passed at the plant (PACKED) and received down the chain. Everything else is not stock. */
-export const SELLABLE_STATUSES: readonly ItemStatus[] = ["PACKED", "AT_SS", "AT_DB", "AT_RETAILER"];
+export const SELLABLE_STATUSES: readonly ItemStatus[] = ["PACKED", "AT_WAREHOUSE", "AT_SS", "AT_DB", "AT_RETAILER"];
 const sellable = (s: ItemStatus) => SELLABLE_STATUSES.includes(s);
 
 type Placed = { status: ItemStatus; statusBeforeRecall: ItemStatus | null; locationId: string; inTransitToId: string | null };
@@ -70,6 +71,11 @@ async function names(tx: StoreTx, only?: { partners: Ids; users: Ids; devices: I
     device: (id: string | null | undefined) => (id ? devices.find((d) => d.id === id)?.name ?? id : null),
     flavour: (code: string) => flavours.find((f) => f.code === code)?.name ?? code,
   };
+}
+
+/** The batch's flavour first, then any other flavours its continued lots use: "Original, Green Apple". */
+function flavoursLabel(batch: { flavour: string }, lots: { flavour: string }[], name: (code: string) => string) {
+  return [...new Set([batch.flavour, ...lots.map((l) => l.flavour)])].map(name).join(", ");
 }
 
 function locationLabel(partners: Partner[], item: { status: ItemStatus; statusBeforeRecall?: ItemStatus | null; locationId: string; inTransitToId: string | null }) {
@@ -146,7 +152,8 @@ export async function lookup(userId: string | null, rawCode: string) {
     quarantineReason: item.lot.quarantineReason,
     batch: batch && {
       code: batch.code,
-      flavour: n.flavour(batch.flavour),
+      // The lot's own flavour: a continued batch may hold lots of several flavours.
+      flavour: n.flavour(item.lot.flavour),
       mfgDate: batch.mfgDate,
       expiryDate: batch.expiryDate,
       status: batch.status,
@@ -219,12 +226,17 @@ async function namedAlerts(tx: StoreTx, input: AlertSources) {
   );
   const actions = await tx.movements.list({ type: ALERT_ACTION_MOVEMENT_TYPES, itemKind: "ALERT" });
   const n = await names(tx, { partners: list.map((a) => a.partnerId), users: [...list.map((a) => a.userId), ...actions.map((m) => m.userId)], devices: [] });
+  // A damage alert's id is "DM-<report id>"; its photos are served by /api/damaged/photo/<report id>.
+  const reportId = (a: { id: string; type: string }) => (a.type === "DAMAGED" && a.id.startsWith("DM-") ? a.id.slice(3) : null);
+  const photos = await damagePhotoUrls(list.flatMap((a) => reportId(a) ?? []));
   return applyAlertState(list, actions).map((a) => ({
     ...a,
     partner: n.partner(a.partnerId),
     user: n.user(a.userId),
     stateByName: n.user(a.stateBy),
     history: a.history.map((h) => ({ ...h, user: n.user(h.userId) })),
+    // Damage alerts: the barcode photo first, then the extra photos of the damage.
+    photoUrls: (reportId(a) && photos.get(reportId(a)!)) || [],
   }));
 }
 
@@ -520,7 +532,7 @@ export async function listBatches(userId: string | null) {
       const bl = lotsOf.get(b.code) ?? [];
       return {
         ...b,
-        flavourName: n.flavour(b.flavour),
+        flavourName: flavoursLabel(b, bl, n.flavour),
         manufacturer: n.partner(b.manufacturerId),
         counter: batchCounter(b),
         displayStatus: batchDisplayStatus(b),
@@ -544,7 +556,7 @@ export async function batchReport(userId: string | null, batchCode: string) {
   const ever = (type: Movement["type"]) => new Set(movements.filter((m) => m.type === type).map((m) => m.itemCode)).size;
   const reprints = (await store.reprints.list()).filter((r) => lotCodes.has(r.code.slice(0, 15)));
   return {
-    batch: { ...batch, flavourName: n.flavour(batch.flavour), manufacturer: n.partner(batch.manufacturerId), counter: batchCounter(batch), displayStatus: batchDisplayStatus(batch) },
+    batch: { ...batch, flavourName: flavoursLabel(batch, lots, n.flavour), manufacturer: n.partner(batch.manufacturerId), counter: batchCounter(batch), displayStatus: batchDisplayStatus(batch) },
     summary: {
       lots: lots.length,
       cases: lots.filter((l) => l.lotType === "CASE").length,

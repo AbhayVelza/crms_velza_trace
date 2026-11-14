@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { lotStickerHeader, packStickerHeader, qrUrlFor, stickerForCode, stickersForLots } from "./stickers";
+import { lotStickerHeader, packStickerHeader, stickerForCode, stickersForLots } from "./stickers";
 
 describe("stickers", () => {
   it("headers match the spec", () => {
@@ -9,8 +9,9 @@ describe("stickers", () => {
     expect(packStickerHeader("TRAY", 6)).toBe("PACK 6 of 6 | 4 CANS");
   });
 
-  it("QR encodes base URL + /t/ + lot code", () => {
-    expect(qrUrlFor("http://localhost:3000/", "91ABC123OR00001")).toBe("http://localhost:3000/t/91ABC123OR00001");
+  it("lot sticker carries no QR code", () => {
+    const [lot] = stickersForLots([{ lotCode: "91ABC123OR00001", lotType: "CASE", flavourName: "Original" }]);
+    expect(Object.keys(lot).sort()).toEqual(["code", "header", "kind", "lotType"]);
   });
 
   it("orders lot sticker first then its packs; case = 5, tray = 7", () => {
@@ -19,17 +20,18 @@ describe("stickers", () => {
         { lotCode: "91ABC123OR00001", lotType: "CASE", flavourName: "Original" },
         { lotCode: "91ABC123OR00002", lotType: "TRAY", flavourName: "Original" },
       ],
-      "http://x",
     );
     expect(s).toHaveLength(12);
     expect(s.map((x) => x.kind).join(",")).toBe("LOT,PACK,PACK,PACK,PACK,LOT,PACK,PACK,PACK,PACK,PACK,PACK");
     expect(s[1].code).toBe("91ABC123OR0000161");
     expect(s[6].code).toBe("91ABC123OR0000241");
+    // every sticker knows its lot type, so cases and trays can be printed as separate runs
+    expect(s.map((x) => x.lotType).join(",")).toBe("CASE,CASE,CASE,CASE,CASE,TRAY,TRAY,TRAY,TRAY,TRAY,TRAY,TRAY");
   });
 
   it("reprint returns the same code", () => {
     const lot = { lotCode: "91ABC123OR00001", lotType: "CASE" as const, flavourName: "Original" };
-    expect(stickerForCode("91ABC123OR0000163", lot, "http://x")?.header).toBe("PACK 3 of 4 | 6 CANS");
-    expect(stickerForCode("91ABC123OR00001", lot, "http://x")?.kind).toBe("LOT");
+    expect(stickerForCode("91ABC123OR0000163", lot)?.header).toBe("PACK 3 of 4 | 6 CANS");
+    expect(stickerForCode("91ABC123OR00001", lot)?.kind).toBe("LOT");
   });
 });

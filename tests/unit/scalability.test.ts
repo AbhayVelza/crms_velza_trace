@@ -17,6 +17,7 @@ import { setDeviceOffline } from "@/lib/services/operator";
 import { codesForOrder, createPrintOrder, markPrinted } from "@/lib/services/printOrders";
 import { alerts, batchReport, dashboard, listBatches, lookup, myStock, recall, recallReport, stockCounts, timelineOrder } from "@/lib/services/trace";
 import { verify } from "@/lib/services/verify";
+import { photoOf } from "../fixtures/damagePhoto";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
 
 let dir: string;
@@ -112,11 +113,13 @@ async function reference() {
 beforeAll(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "velza-scale-"));
   process.env.VELZA_DB_PATH = path.join(dir, "db.json");
+  process.env.VELZA_UPLOAD_DIR = path.join(dir, "uploads");
   await store().reset(buildSampleSeed());
   for (const [k, role, tag] of [
     ["admin", "ADMIN"],
     ["operator", "OPERATOR"],
     ["qc", "QC"],
+    ["vw", "WAREHOUSE"],
     ["ss1", "SS", "SS-1"],
     ["ss2", "SS", "SS-2"],
     ["db1", "DB", "DB-1"],
@@ -126,12 +129,13 @@ beforeAll(async () => {
   ] as [string, Role, string?][]) {
     ids[k] = await user(role, tag);
   }
-  for (const [k, prefix] of [["SS1", "SS-1"], ["SS2", "SS-2"], ["DB1", "DB-1"], ["DB2", "DB-2"], ["RT1", "Retailer-1"], ["RT2", "Retailer-2"], ["RT4", "Retailer-4"]]) {
+  for (const [k, prefix] of [["VW", "VW-1"], ["SS1", "SS-1"], ["SS2", "SS-2"], ["DB1", "DB-1"], ["DB2", "DB-2"], ["RT1", "Retailer-1"], ["RT2", "Retailer-2"], ["RT4", "Retailer-4"]]) {
     ids[k] = await partner(prefix);
   }
 });
 afterAll(async () => {
   delete process.env.VELZA_DB_PATH;
+  delete process.env.VELZA_UPLOAD_DIR;
   await fs.rm(dir, { recursive: true, force: true });
 });
 
@@ -163,14 +167,16 @@ describe("a network with stock at every tier", () => {
     const order = await printAndVerify(6);
     lots = order.lotCodes;
     orderId = order.id;
-    await send("operator", "SS1", [lots[0], lots[1], lots[2], lots[3]]);
+    // Manufacturer → Velza Warehouse → SS-1
+    await send("operator", "VW", [lots[0], lots[1], lots[2], lots[3]], "vw");
+    await send("vw", "SS1", [lots[0], lots[1], lots[2], lots[3]]);
     for (const code of [lots[0], lots[1], lots[2]]) await receive(ids.ss1, { code }); // lots[3] stays in transit
     await send("ss1", "DB1", [lots[1]], "db1");
     await send("db1", "RT1", [lots[1]], "rt1");
     await openLot(ids.rt1, { lotCode: lots[1] });
-    await reportDamaged(ids.rt1, { code: `${lots[1]}63`, reason: "Leaking" });
+    await reportDamaged(ids.rt1, { code: `${lots[1]}63`, reason: "Leaking", ...photoOf(`${lots[1]}63`) });
     await send("ss1", "RT4", [lots[2]]); // in transit to a retailer the SS supplies directly
-    await reportDamaged(ids.ss1, { code: lots[0], reason: "Crushed" });
+    await reportDamaged(ids.ss1, { code: lots[0], reason: "Crushed", ...photoOf(lots[0]) });
     // Failed scans that raise alerts: a code for someone else, and a code never generated.
     await receive(ids.rt1, { code: lots[2] });
     await receive(ids.rt1, { code: "91ZZZZZZOR00001" });
@@ -183,7 +189,7 @@ describe("a network with stock at every tier", () => {
     await setDeviceOffline(ids.operator, device.id, { offline: true });
     unsynced = (await printAndVerify(1)).lotCodes[0];
     expect((await store().lots.findOne({ lotCode: unsynced }))?.synced).toBe(false);
-    expect(await reportDamaged(ids.operator, { code: `${unsynced}`, reason: "Dropped at the plant" })).toMatchObject({ ok: true });
+    expect(await reportDamaged(ids.operator, { code: `${unsynced}`, reason: "Dropped at the plant", ...photoOf(`${unsynced}`) })).toMatchObject({ ok: true });
   });
 
   describe("exact code lookup (HQ trace)", () => {
@@ -219,7 +225,8 @@ describe("a network with stock at every tier", () => {
 
     it("the answer does not change when unrelated history is added", async () => {
       const before = await lookup(ids.hq, lots[1]);
-      await send("operator", "SS1", [lots[4]], "ss1");
+      await send("operator", "VW", [lots[4]], "vw");
+      await send("vw", "SS1", [lots[4]], "ss1");
       await store().appendMovement({ type: "REPRINTED", itemKind: "LOT", itemCode: lots[5], fromId: null, toId: null, fromStatus: null, toStatus: null, userId: ids.operator, deviceId: null, invoice: null, note: "unrelated" });
       expect(await lookup(ids.hq, lots[1])).toEqual(before);
     });

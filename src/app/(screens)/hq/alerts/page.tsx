@@ -18,6 +18,8 @@ interface AlertRow {
   message: string;
   partner: string | null;
   user: string | null;
+  /** Damage alerts: the photo of the damaged item with its barcode, then the extra photos of the damage. */
+  photoUrls?: string[];
   count?: number;
   firstAt?: string;
   state: AlertState;
@@ -125,7 +127,19 @@ export default function AlertsPage() {
                   <span className="text-subtle-foreground">—</span>
                 )}
               </Td>
-              <Td>{a.message}</Td>
+              <Td>
+                {a.message}
+                {!!a.photoUrls?.length && (
+                  <div className="mt-1 flex flex-wrap gap-1.5">
+                    {a.photoUrls.map((url, i) => (
+                      <a key={url} href={url} target="_blank" rel="noreferrer" className="block w-fit" data-testid="alert-photo">
+                        {/* eslint-disable-next-line @next/next/no-img-element -- private photo from our own API */}
+                        <img src={url} alt={i ? `Damage photo ${i} of ${a.code}` : `Photo of damaged ${a.code} with its barcode`} className="h-16 w-16 rounded-md border border-line object-cover" loading="lazy" />
+                      </a>
+                    ))}
+                  </div>
+                )}
+              </Td>
               <Td className="text-xs text-muted-foreground">
                 {a.partner}
                 {a.user && <div>{a.user}</div>}

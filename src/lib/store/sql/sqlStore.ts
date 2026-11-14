@@ -210,6 +210,26 @@ const SPECS = {
       ["requestFingerprint", "request_fingerprint"],
     ),
   },
+  containers: {
+    table: "containers",
+    key: "container_id",
+    order: "row_no",
+    cols: T(
+      ["id", "container_id"],
+      ["code", "container_code"],
+      ["manufacturerId", "manufacturer_id"],
+      ["status", "status"],
+      ["lotCodes", "lot_codes", "textarr"],
+      ["toId", "to_partner_id"],
+      ["invoice", "invoice"],
+      ["createdAt", "created_at", "ts"],
+      ["createdBy", "created_by"],
+      ["dispatchedAt", "dispatched_at", "ts"],
+      ["dispatchedBy", "dispatched_by"],
+      ["receivedAt", "received_at", "ts"],
+      ["receivedBy", "received_by"],
+    ),
+  },
   lots: {
     table: "codes",
     key: "code",
@@ -464,6 +484,7 @@ function makeTx(q: Query): StoreTx {
     batchCodePool: repo("batchCodePool"),
     batches: repo("batches"),
     printOrders: repo("printOrders"),
+    containers: repo("containers"),
     lots: {
       ...lots,
       // Pack rows carry their lot's sync flag too (every code row shows whether it is synced).
@@ -539,7 +560,7 @@ async function schemaVersion(d: SqlDriver): Promise<number> {
   }
 }
 
-const COLLECTION_REPOS = ["countries", "flavours", "partners", "users", "sessions", "devices", "batchCodePool", "batches", "printOrders", "lots", "packs"] as const;
+const COLLECTION_REPOS = ["countries", "flavours", "partners", "users", "sessions", "devices", "batchCodePool", "batches", "printOrders", "containers", "lots", "packs"] as const;
 const LEDGERS = ["movements", "scans", "reprints"] as const;
 
 export class SqlStore implements Store {
@@ -686,6 +707,7 @@ export class SqlStore implements Store {
   batchCodePool = this.repo<DbSnapshot["batchCodePool"][number]>("batchCodePool");
   batches = this.repo<DbSnapshot["batches"][number]>("batches");
   printOrders = this.repo<DbSnapshot["printOrders"][number]>("printOrders");
+  containers = this.repo<DbSnapshot["containers"][number]>("containers");
   lots = this.repo<DbSnapshot["lots"][number]>("lots");
   packs = this.repo<DbSnapshot["packs"][number]>("packs");
   movements = this.ledger<DbSnapshot["movements"][number]>("movements");

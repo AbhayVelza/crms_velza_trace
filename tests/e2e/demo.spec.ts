@@ -3,6 +3,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import { BarcodeFormat, BinaryBitmap, DecodeHintType, HybridBinarizer, MultiFormatReader, RGBLuminanceSource } from "@zxing/library";
 import { PNG } from "pngjs";
+import bwipjs from "bwip-js/node";
+import { CODE128_OPTIONS, QR_OPTIONS } from "../../src/lib/barcode";
 
 let lots: string[] = []; // [OR 00001 case, OR 00002 case, OR 00003 tray, GA 00001 tray]
 let offlineLot = ""; // the No Sugar case made while the device was offline (step 8)
@@ -53,9 +55,9 @@ function decode(buf: Buffer, format: BarcodeFormat): string {
 }
 
 const PASSWORD = "Sample2026pass"; // every sample sign-in (tests/fixtures/sampleNetwork.ts)
-const PREFIX: Record<string, string> = { SS: "SS", DB: "DB", RETAILER: "RT" };
+const PREFIX: Record<string, string> = { WAREHOUSE: "VW", SS: "SS", DB: "DB", RETAILER: "RT" };
 
-/** Sign-in ID of a sample person: AD0001, HQ0001, MF0001-OP, MF0001-QC, or the partner ID ("SS-2" → SS0002). */
+/** Sign-in ID of a sample person: AD0001, HQ0001, MF0001-OP, MF0001-QC, or the partner ID ("SS-2" → SS0002, "VW-1" → VW0001). */
 function loginIdOf(role: string, tag: string | null): string {
   if (role === "ADMIN") return "AD0001";
   if (role === "TRACE_OWNER") return "HQ0001";
@@ -80,6 +82,12 @@ async function scan(page: Page, code: string) {
   await expect(items).toHaveCount(before + 1);
   const first = items.first();
   return { ok: (await first.getAttribute("data-ok")) === "true", text: await first.innerText() };
+}
+
+/** A stand-in photo of a damaged item: its sticker's QR (the public lookup URL) or its Code 128 barcode, as a PNG. */
+function stickerPhoto(code: string, kind: "qr" | "code128") {
+  const opts = kind === "qr" ? { ...QR_OPTIONS, text: `http://localhost/t/${code}`, scale: 8 } : { ...CODE128_OPTIONS, text: code, scale: 4, height: 14 };
+  return bwipjs.toBuffer({ ...opts, paddingwidth: 30, paddingheight: 30, backgroundcolor: "FFFFFF" });
 }
 
 async function dispatch(page: Page, role: string, tag: string | null, to: string, invoice: string, codes: string[]) {
@@ -197,15 +205,24 @@ test.describe.serial("Velza demo script (9.1)", () => {
     await expect(page.getByText("PRINTING PENDING", { exact: true })).toBeVisible();
     await finish.click();
     await expect(page.getByText("PRINTING PENDING", { exact: true })).toBeVisible();
+    // Cases and trays are separate print runs (separate label rolls): the cases run comes first.
+    await expect(page.getByTestId("print-run-CASE")).toContainText("Cases · 2 lots, 10 stickers");
+    await expect(page.getByTestId("print-run-TRAY")).toContainText("Trays · 2 lots, 14 stickers");
+    await expect(page.getByTestId("print-run-CASE")).toHaveAttribute("aria-checked", "true");
     const stickers = page.locator(".sticker");
-    await expect(stickers).toHaveCount(24);
-    lots = await page.locator('.sticker[data-kind="LOT"]').evaluateAll((els) => els.map((e) => e.getAttribute("data-code")!));
+    const lotCodesShown = () => page.locator('.sticker[data-kind="LOT"]').evaluateAll((els) => els.map((e) => e.getAttribute("data-code")!));
+    await expect(stickers).toHaveCount(10);
+    const caseLots = await lotCodesShown();
+    await page.getByTestId("print-run-TRAY").click();
+    await expect(stickers).toHaveCount(14);
+    const trayLots = await lotCodesShown();
+    lots = [...caseLots, ...trayLots];
     expect(lots).toHaveLength(4);
     expect(lots[0]).toMatch(/^91[A-Z0-9]{6}OR00001$/);
     expect(lots.slice(1, 3).map((l) => l.slice(-5))).toEqual(["00002", "00003"]);
     expect(lots[3]).toMatch(/^91[A-Z0-9]{6}GA00001$/);
 
-    // Every printed barcode and QR decodes back to its code. A screenshot taken while the page is still
+    // Every printed barcode decodes back to its code. A screenshot taken while the page is still
     // scrolling or laying out can come back blurred, so each one gets up to 3 captures; a real misprint fails all 3.
     const decodeShot = async (target: ReturnType<Page["locator"]>, format: BarcodeFormat, what: string, scale?: "device") => {
       let lastError: unknown;
@@ -219,36 +236,54 @@ test.describe.serial("Velza demo script (9.1)", () => {
       }
       throw new Error(`${what} did not decode after 3 captures: ${lastError}`);
     };
-    for (let i = 0; i < 24; i++) {
-      const el = stickers.nth(i);
+    const decodeRun = async (lotType: "CASE" | "TRAY", count: number) => {
+      await page.getByTestId(`print-run-${lotType}`).click();
+      await expect(stickers).toHaveCount(count);
+      for (let i = 0; i < count; i++) {
+        const el = stickers.nth(i);
+        expect(await el.getAttribute("data-code")).toBeTruthy();
+        await decodeOne(el);
+      }
+    };
+    const decodeOne = async (el: ReturnType<Page["locator"]>) => {
       const code = (await el.getAttribute("data-code"))!;
       const bars = el.locator('[aria-label^="Barcode"]').locator("xpath=..");
       expect(await decodeShot(bars, BarcodeFormat.CODE_128, `Barcode ${code}`, "device")).toBe(code);
-      if ((await el.getAttribute("data-kind")) === "LOT") {
-        const qr = el.locator('[aria-label^="QR"]').locator("xpath=..");
-        expect(await decodeShot(qr, BarcodeFormat.QR_CODE, `QR ${code}`, "device")).toMatch(new RegExp(`/t/${code}$`));
-      }
-    }
+      expect(await el.locator('[aria-label^="QR"]').count(), `no QR on ${code}`).toBe(0);
+    };
+    await decodeRun("CASE", 10);
+    await decodeRun("TRAY", 14);
+    await page.getByTestId("print-run-CASE").click();
     // Print only opens the browser dialog; printing, cancelling or closing it records nothing.
     await page.evaluate(() => {
       const w = window as unknown as { print: () => void; printCalls: number };
       w.printCalls = 0;
       w.print = () => void w.printCalls++; // stands in for the dialog being opened and cancelled
     });
-    await page.getByRole("button", { name: /^Print 24 stickers/ }).click();
+    await page.getByRole("button", { name: /^Print 10 case stickers/ }).click();
     expect(await page.evaluate(() => (window as unknown as { printCalls: number }).printCalls)).toBe(1);
     await expect(page.getByText(/Nothing has been recorded yet/)).toBeVisible();
     await expect(page.getByText("PRINTING PENDING", { exact: true })).toBeVisible();
     expect(await orderStatus()).toMatchObject({ status: "CREATED", printedAt: null });
     expect(confirmations).toEqual([]);
 
-    // The explicit confirmation, double-clicked: one request, one transaction, status and time shown.
-    await page.getByRole("button", { name: "Mark as printed" }).dblclick();
-    await expect(page.getByText(/^4 lot\(s\) marked PRINTED at .+ — ready for QC verification$/)).toBeVisible();
+    // The explicit confirmation of the cases run, double-clicked: one request; the order waits for the trays.
+    await page.getByRole("button", { name: "Mark cases as printed" }).dblclick();
+    await expect(page.getByText(/^2 case lot\(s\) marked PRINTED at .+ — ready for QC verification\. Now print the other run\.$/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Mark cases as printed" })).toHaveCount(0);
+    await expect(page.getByTestId("print-run-CASE")).toContainText("Printed");
+    expect(confirmations).toHaveLength(1);
+    expect(await orderStatus()).toMatchObject({ status: "CREATED", printedAt: null });
+
+    // The trays run on its own roll, then its own confirmation: now the whole order is PRINTED.
+    await page.getByTestId("print-run-TRAY").click();
+    await page.getByRole("button", { name: /^Print 14 tray stickers/ }).click();
+    await page.getByRole("button", { name: "Mark trays as printed" }).click();
+    await expect(page.getByText(/^2 tray lot\(s\) marked PRINTED at .+ — ready for QC verification$/)).toBeVisible();
     await expect(page.getByText("PRINTED", { exact: true })).toBeVisible();
     await expect(page.getByText(/^Printed \S/)).toBeVisible();
-    await expect(page.getByRole("button", { name: "Mark as printed" })).toHaveCount(0);
-    expect(confirmations).toHaveLength(1);
+    await expect(page.getByRole("button", { name: /^Mark .* as printed$/ })).toHaveCount(0);
+    expect(confirmations).toHaveLength(2);
     expect(await orderStatus()).toMatchObject({ status: "PRINTED", printedAt: expect.any(String) });
     // Once confirmed, the stickers are not printed again from here: no Print button, and the sheet is refused.
     await expect(page.getByRole("button", { name: /^Print \d+ sticker/ })).toHaveCount(0);
@@ -272,8 +307,22 @@ test.describe.serial("Velza demo script (9.1)", () => {
     await verifyLot(page, lots[3], packsOf(lots[3], "TRAY"));
   });
 
-  test("3. operator dispatches the 2 Original cases to SS-1 with INV-001", async ({ page }) => {
-    await dispatch(page, "OPERATOR", null, "SS-1", "INV-001", [lots[0], lots[1]]);
+  test("3. operator dispatches the 2 Original cases to the Velza Warehouse (INV-001); the warehouse receives them and sends them to SS-1 (VW-001)", async ({ page }) => {
+    // The plant ships only to the Velza Warehouse: it is the only destination offered.
+    await as(page, "OPERATOR", null, "/dispatch");
+    const destination = page.getByLabel("Destination");
+    await expect(destination.locator("option", { hasText: "VW-1 Velza Warehouse" })).toHaveCount(1);
+    await expect(destination.locator("option", { hasText: /SS-|DB-|Retailer-/ })).toHaveCount(0);
+    await dispatch(page, "OPERATOR", null, "VW-1", "INV-001", [lots[0], lots[1]]);
+    for (const c of [lots[0], lots[1]]) {
+      const r = await receive(page, "VW-1", "WAREHOUSE", c);
+      expect(r.ok).toBe(true);
+      expect(r.text).toContain("AT_WAREHOUSE");
+    }
+    // The warehouse never opens a case: it has no Open lot screen.
+    await page.goto("/open-lot");
+    await expect(page.getByText("This page is not part of the Velza Warehouse portal")).toBeVisible();
+    await dispatch(page, "WAREHOUSE", "VW-1", "SS-1", "VW-001", [lots[0], lots[1]]);
   });
 
   test("4. SS-2 receive → WRONG_RECEIVER alert; SS-1 receives both → AT_SS", async ({ page }) => {
@@ -311,9 +360,14 @@ test.describe.serial("Velza demo script (9.1)", () => {
   test("6. HQ search: case timeline shows every step; pack …62 is AT_RETAILER; the direct case is at Retailer-4", async ({ page }) => {
     await as(page, "TRACE_OWNER", null, `/hq/search?code=${lots[0]}`);
     const rows = page.getByTestId("timeline-row");
-    await expect(rows).toHaveCount(10);
+    await expect(rows).toHaveCount(12);
     expect(await rows.locator("td:nth-child(2)").allInnerTexts()).toEqual([
-      "GENERATED", "PRINTED", "VERIFIED", "DISPATCHED", "RECEIVED", "DISPATCHED", "RECEIVED", "DISPATCHED", "RECEIVED", "OPENED",
+      "GENERATED", "PRINTED", "VERIFIED",
+      "DISPATCHED", "RECEIVED", // plant → Velza Warehouse
+      "DISPATCHED", "RECEIVED", // Velza Warehouse → SS-1
+      "DISPATCHED", "RECEIVED", // SS-1 → DB-1
+      "DISPATCHED", "RECEIVED", // DB-1 → Retailer-1
+      "OPENED",
     ]);
     await as(page, "TRACE_OWNER", null, `/hq/search?code=${lots[0]}62`);
     await expect(page.getByTestId("search-result")).toContainText("AT RETAILER");
@@ -359,15 +413,15 @@ test.describe.serial("Velza demo script (9.1)", () => {
     await expect(page.getByText(/offline — unsynced/)).toBeVisible();
     await page.getByRole("button", { name: "Open print view" }).click();
     const lot = (offlineLot = (await page.locator(".sticker").first().getAttribute("data-code"))!);
-    await page.getByRole("button", { name: /^Print 5 stickers/ }).click();
+    await page.getByRole("button", { name: /^Print 5 case stickers/ }).click();
     await expect(page.getByText("PRINTING PENDING", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Mark as printed" }).click();
-    await expect(page.getByText(/^1 lot\(s\) marked PRINTED at /)).toBeVisible();
+    await page.getByRole("button", { name: "Mark cases as printed" }).click();
+    await expect(page.getByText(/^1 case lot\(s\) marked PRINTED at /)).toBeVisible();
     await verifyLot(page, lot, packsOf(lot, "CASE"));
 
     await as(page, "OPERATOR", null, "/dispatch");
     const sel = page.getByLabel("Destination");
-    await sel.selectOption((await sel.locator("option", { hasText: "SS-1" }).getAttribute("value"))!);
+    await sel.selectOption((await sel.locator("option", { hasText: "VW-1" }).getAttribute("value"))!);
     await page.getByLabel("Invoice").fill("INV-009");
     const blocked = await scan(page, lot);
     expect(blocked.ok).toBe(false);
@@ -378,7 +432,7 @@ test.describe.serial("Velza demo script (9.1)", () => {
     await expect(bar).toContainText("Synced 1 batch(es) and 1 lot(s)");
     expect((await scan(page, lot)).ok).toBe(true);
     await page.getByRole("button", { name: /Confirm dispatch/ }).click();
-    await expect(page.getByText(/Dispatched 1 item\(s\) to .*SS-1.* on INV-009/)).toBeVisible();
+    await expect(page.getByText(/Dispatched 1 item\(s\) to .*VW-1.* on INV-009/)).toBeVisible();
   });
 
   test("9. reprint a sticker → same code, logged with reason", async ({ page }) => {
@@ -404,18 +458,51 @@ test.describe.serial("Velza demo script (9.1)", () => {
   });
 
   test("10. SS-1 receives the synced case and reports it damaged → it leaves stock, shows in Damaged, HQ is alerted", async ({ page }) => {
+    // The synced case reaches SS-1 through the Velza Warehouse.
+    expect((await receive(page, "VW-1", "WAREHOUSE", offlineLot)).text).toContain("AT_WAREHOUSE");
+    await dispatch(page, "WAREHOUSE", "VW-1", "SS-1", "VW-009", [offlineLot]);
     expect((await receive(page, "SS-1", "SS", offlineLot)).text).toContain("AT_SS");
     await as(page, "SS", "SS-1", "/damaged");
     await expect(page.locator("#scan-input")).toBeDisabled(); // reason first
     await page.getByRole("button", { name: "Crushed / dented" }).click();
-    const r = await scan(page, offlineLot);
-    expect(r.ok, r.text).toBe(true);
+    await page.locator("#scan-input").fill(offlineLot);
+    await page.locator("#scan-input").press("Enter");
+    await expect(page.getByTestId("damage-code")).toContainText(offlineLot);
+    const reportButton = page.getByRole("button", { name: "5. Report damaged" });
+    await expect(reportButton).toBeDisabled(); // no photo yet
+    // A photo of another item's barcode is refused in the page.
+    await page.locator("#damage-photo").setInputFiles({ name: "wrong.png", mimeType: "image/png", buffer: await stickerPhoto(lots[0], "code128") });
+    await expect(page.getByTestId("damage-photo-check")).toContainText(`The photo shows ${lots[0]}, not the scanned ${offlineLot}`);
+    await expect(reportButton).toBeDisabled();
+    // The item's own QR (an older lot sticker printed with the public lookup URL) still matches.
+    await page.locator("#damage-photo").setInputFiles({ name: "damaged.png", mimeType: "image/png", buffer: await stickerPhoto(offlineLot, "qr") });
+    await expect(page.getByTestId("damage-photo-check")).toContainText(`Barcode in the photo matches ${offlineLot}`);
+    await expect(reportButton).toBeDisabled(); // no photo of the damage itself yet
+    // Photos of the damage (no barcode needed, at least one): two added, one removed again.
+    const extra = { mimeType: "image/png", buffer: await stickerPhoto(offlineLot, "code128") };
+    await page.locator("#damage-extra-photos").setInputFiles([{ name: "side.png", ...extra }, { name: "top.png", ...extra }]);
+    await expect(page.getByTestId("damage-extra-photos").locator("img")).toHaveCount(2);
+    await page.getByRole("button", { name: "Remove damage photo 2" }).click();
+    await expect(page.getByTestId("damage-extra-photos").locator("img")).toHaveCount(1);
+    const items = page.getByTestId("scan-log").locator("li");
+    await reportButton.click();
+    await expect(items).toHaveCount(1);
+    expect(await items.first().getAttribute("data-ok"), await items.first().innerText()).toBe("true");
+    await expect(page.getByTestId("damage-code")).toHaveCount(0); // ready for the next item
     await expect(page.getByTestId("damaged-row")).toHaveCount(1);
+    const photos = page.getByTestId("damaged-photo").locator("img");
+    await expect(photos).toHaveCount(2); // the barcode photo and one photo of the damage
+    for (const photo of await photos.all()) {
+      await expect(photo).toBeVisible();
+      expect(await photo.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
+    }
     await expect(page.getByTestId("damaged-row")).toContainText("Crushed / dented");
     await expect(page.getByTestId("damaged-counts")).toContainText(/1s*Cases/);
 
     await as(page, "TRACE_OWNER", null, "/hq/alerts");
-    await expect(page.getByTestId("alert-row").filter({ hasText: "DAMAGED" }).filter({ hasText: offlineLot })).toHaveCount(1);
+    const alert = page.getByTestId("alert-row").filter({ hasText: "DAMAGED" }).filter({ hasText: offlineLot });
+    await expect(alert).toHaveCount(1);
+    await expect(alert.getByTestId("alert-photo").locator("img")).toHaveCount(2);
     await page.goto("/hq");
     await expect(page.getByRole("row", { name: /^Super Stockist SS-1/ })).toContainText("1 case");
   });
@@ -481,5 +568,31 @@ test.describe.serial("Velza demo script (9.1)", () => {
     await expect(page.getByText("Password changed")).toBeVisible();
     await page.getByRole("button", { name: "Sign out" }).click();
     await expect(page).toHaveURL(/\/login$/);
+  });
+
+  test("12. a shipping container: the operator loads a tray and dispatches the container; the warehouse receives it by its number", async ({ page }) => {
+    const tray = lots[2]; // the Original tray, still packed at the plant
+    await as(page, "OPERATOR", null, "/containers");
+    await page.getByLabel("Container number").fill("mscu1234567");
+    await page.getByRole("button", { name: "Open container" }).click();
+    await expect(page.getByText("Container MSCU1234567 · Loading")).toBeVisible();
+    expect((await scan(page, `${tray}41`)).ok).toBe(false); // a pack: scan the tray sticker
+    expect((await scan(page, tray)).ok).toBe(true);
+    await expect(page.getByTestId("container-count")).toContainText("1 / 2,860 cases & trays (0 cases, 1 trays)");
+    await expect(page.getByTestId("container-lot")).toHaveCount(1);
+    await page.getByLabel("Container invoice").fill("INV-020");
+    await page.getByRole("button", { name: "Dispatch container (1)" }).click();
+    await expect(page.getByText(/Container MSCU1234567 dispatched to .*VW-1.* on INV-020: 1 case\(s\)\/tray\(s\)/)).toBeVisible();
+    await expect(page.getByTestId("container-MSCU1234567")).toContainText("On the way");
+
+    // The warehouse receives the whole container with one scan of its number.
+    const r = await receive(page, "VW-1", "WAREHOUSE", "MSCU1234567");
+    expect(r.ok).toBe(true);
+    expect(r.text).toContain("Container MSCU1234567 received: 1 case(s)/tray(s) → AT_WAREHOUSE");
+    await page.goto("/containers");
+    await expect(page.getByTestId("container-MSCU1234567")).toContainText("Received");
+    await as(page, "TRACE_OWNER", null, `/hq/search?code=${tray}`);
+    await expect(page.getByTestId("search-result")).toContainText("AT WAREHOUSE");
+    await expect(page.getByTestId("search-location")).toContainText("VW-1");
   });
 });

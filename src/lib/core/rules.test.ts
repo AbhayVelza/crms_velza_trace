@@ -40,6 +40,7 @@ const partner = (id: string, type: PartnerType, parentId: string | null = null):
   createdBy: null,
 });
 const MFG = partner("mfg", "MANUFACTURER");
+const VW = partner("vw", "WAREHOUSE");
 const SS1 = partner("ss1", "SS");
 const SS2 = partner("ss2", "SS");
 const DB1 = partner("db1", "DB", "ss1");
@@ -60,15 +61,30 @@ const lot = (over: Partial<MovableItem> = {}): MovableItem => ({
 });
 
 describe("canDispatch", () => {
-  const base = { parentLotStatus: null, sender: MFG, receiver: SS1, invoice: "INV-001" };
+  const base = { parentLotStatus: null, sender: MFG, receiver: VW, invoice: "INV-001" };
 
-  it("allows a packed, synced lot at the manufacturer to go to an SS", () => {
+  it("allows a packed, synced lot at the manufacturer to go to the Velza Warehouse", () => {
     expect(canDispatch({ ...base, item: lot() })).toEqual({ ok: true });
   });
 
-  it("enforces the destination tiers: MF → SS → DB or Retailer, DB → Retailer", () => {
-    expect(canDispatch({ ...base, item: lot(), receiver: DB1 })).toMatchObject({ ok: false, code: "WRONG_DESTINATION" });
-    expect(canDispatch({ ...base, item: lot(), receiver: RT3 })).toMatchObject({ ok: false, code: "WRONG_DESTINATION", message: expect.stringMatching(/MANUFACTURER can only dispatch to SS, not RETAILER/) });
+  it("the manufacturer ships only to the Velza Warehouse; the warehouse supplies any SS, DB or Retailer", () => {
+    for (const receiver of [SS1, DB1, RT3]) {
+      expect(canDispatch({ ...base, item: lot(), receiver })).toMatchObject({ ok: false, code: "WRONG_DESTINATION", message: expect.stringMatching(/MANUFACTURER can only dispatch to WAREHOUSE/) });
+    }
+    const atVW = lot({ status: "AT_WAREHOUSE", locationId: "vw" });
+    // any partner of those tiers, assigned to anyone or to no one
+    for (const receiver of [SS1, SS2, DB1, DB2, RT1, RT2, RT3, { ...DB1, parentId: null }]) {
+      expect(canDispatch({ ...base, sender: VW, receiver, item: atVW })).toEqual({ ok: true });
+    }
+    for (const receiver of [MFG, partner("vw2", "WAREHOUSE")]) {
+      expect(canDispatch({ ...base, sender: VW, receiver, item: atVW })).toMatchObject({ code: "WRONG_DESTINATION", message: expect.stringMatching(/WAREHOUSE can only dispatch to SS or DB or RETAILER/) });
+    }
+    // stock at the warehouse must be AT_WAREHOUSE
+    expect(canDispatch({ ...base, sender: VW, receiver: SS1, item: lot({ locationId: "vw" }) })).toMatchObject({ code: "WRONG_STATUS", message: expect.stringMatching(/must be AT_WAREHOUSE/) });
+    expect(receivePatch(VW)).toEqual({ status: "AT_WAREHOUSE", locationId: "vw", inTransitToId: null, dispatchedAt: null });
+  });
+
+  it("enforces the onward tiers: SS → DB or Retailer, DB → Retailer", () => {
     const atSS = lot({ status: "AT_SS", locationId: "ss1" });
     expect(canDispatch({ ...base, sender: SS1, receiver: SS2, item: atSS })).toMatchObject({ code: "WRONG_DESTINATION", message: expect.stringMatching(/SS can only dispatch to DB or RETAILER, not SS/) });
     expect(canDispatch({ ...base, sender: SS1, receiver: MFG, item: atSS })).toMatchObject({ code: "WRONG_DESTINATION" });
@@ -91,8 +107,10 @@ describe("canDispatch", () => {
     expect(canDispatch({ ...base, sender: SS1, receiver: { ...DB1, parentId: null }, item: atSS1 })).toMatchObject({ code: "WRONG_DESTINATION" });
     expect(isAssignedDestination(SS2, DB2)).toBe(true);
     expect(isAssignedDestination(SS2, DB1)).toBe(false);
-    // The manufacturer may supply any Super Stockist
-    expect(isAssignedDestination(MFG, SS2)).toBe(true);
+    // The Velza Warehouse may supply any Super Stockist, Distributor or Retailer
+    expect(isAssignedDestination(VW, SS2)).toBe(true);
+    expect(isAssignedDestination(VW, DB2)).toBe(true);
+    expect(isAssignedDestination(VW, RT1)).toBe(true);
   });
 
   it("never dispatches to an inactive partner, even an assigned one", () => {
@@ -126,6 +144,7 @@ describe("canDispatch", () => {
     expect(assignedTypesOf("SS")).toEqual(["DB", "RETAILER"]);
     expect(assignedTypesOf("DB")).toEqual(["RETAILER"]);
     expect(assignedTypesOf("MANUFACTURER")).toEqual([]);
+    expect(assignedTypesOf("WAREHOUSE")).toEqual([]);
     expect(assignedTypesOf("RETAILER")).toEqual([]);
     expect(assignedPluralOf("SS")).toBe("distributors and retailers");
     expect(assignedPluralOf("DB")).toBe("retailers");

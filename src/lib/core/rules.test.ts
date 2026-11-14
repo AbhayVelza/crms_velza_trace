@@ -279,6 +279,13 @@ describe("open, void, reprint, recall", () => {
     expect(canOpenLot(lot(), MFG)).toMatchObject({ code: "NOT_ALLOWED" });
   });
 
+  it("open lot: recalled, void and quarantined lots are blocked; a damaged lot cannot be opened", () => {
+    for (const status of ["RECALLED", "VOID", "QUARANTINED"] as const) {
+      expect(canOpenLot(lot({ status, locationId: "rt1" }), RT1), status).toMatchObject({ ok: false, code: "BLOCKED_CODE" });
+    }
+    expect(canOpenLot(lot({ status: "DAMAGED", locationId: "rt1" }), RT1)).toMatchObject({ ok: false, code: "WRONG_STATUS" });
+  });
+
   it("void: only unpasted/misprinted lots", () => {
     expect(canVoid({ lotCode: "x", status: "PRINTED" })).toEqual({ ok: true });
     expect(canVoid({ lotCode: "x", status: "GENERATED" })).toEqual({ ok: true });

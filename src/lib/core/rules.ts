@@ -328,7 +328,8 @@ export function lotStatusAfterReprint(lotStatus: ItemStatus): ItemStatus {
 
 /** Recall moves every lot/pack of the batch to RECALLED, except VOID ones which never left the factory. */
 export function recallPatch(status: ItemStatus): { status: ItemStatus; statusBeforeRecall: ItemStatus } | null {
-  if (status === "VOID" || status === "RECALLED") return null;
+  // RETURNED stock has already left the chain (withdrawn); a recall must not overwrite that classification.
+  if (status === "VOID" || status === "RECALLED" || status === "RETURNED") return null;
   return { status: "RECALLED", statusBeforeRecall: status };
 }
 
@@ -337,11 +338,35 @@ export function packStatusForLot(lotStatus: ItemStatus, currentPackStatus: ItemS
   return lotStatus === "OPENED" ? currentPackStatus : lotStatus;
 }
 
+/**
+ * The only statuses the public page calls genuine: QC-passed stock (PACKED) and everything after it in the chain.
+ * An allowlist, so a new or unexpected status is never shown to a consumer as genuine.
+ */
+export const PUBLIC_GENUINE_STATUSES: readonly ItemStatus[] = ["PACKED", "IN_TRANSIT", "AT_WAREHOUSE", "AT_SS", "AT_DB", "AT_RETAILER", "OPENED"];
+
 /** Customer-facing status line for the public lookup page. */
 export function publicStatus(found: boolean, status: ItemStatus | null): { label: string; tone: "ok" | "danger" | "warn" } {
   if (!found || !status) return { label: "Unregistered code", tone: "warn" };
+  if (PUBLIC_GENUINE_STATUSES.includes(status)) return { label: "Genuine Velza product", tone: "ok" };
   if (status === "RECALLED") return { label: "Recalled — do not consume", tone: "danger" };
-  if (status === "VOID") return { label: "Unregistered code", tone: "warn" };
+  if (status === "RETURNED") return { label: "Withdrawn — do not consume", tone: "danger" };
   if (status === "QUARANTINED" || status === "DAMAGED") return { label: "Not for sale — do not consume", tone: "danger" };
-  return { label: "Genuine Velza product", tone: "ok" };
+  // Printed but not yet through QC: it has not left the plant, so it is not a released product.
+  if (status === "GENERATED" || status === "PRINTED") return { label: "Not yet released", tone: "warn" };
+  return { label: "Unregistered code", tone: "warn" }; // VOID, or anything unexpected
+}
+
+/**
+ * How a public (consumer) scan is written to the scan audit. Only genuine stock is ok. The other results are
+ * public-only codes that are NOT in ALERT_RESULT_CODES, so one consumer scan never raises its own HQ alert: HQ gets
+ * aggregated alerts from computePublicSummaryAlerts (alerts.ts) instead, which cannot be flooded with made-up codes.
+ */
+export const PUBLIC_SCAN_RESULTS = ["PUBLIC_UNKNOWN", "PUBLIC_BLOCKED", "PUBLIC_UNRELEASED"] as const;
+export type PublicScanResult = (typeof PUBLIC_SCAN_RESULTS)[number];
+
+export function publicScanOutcome(code: string, status: ItemStatus | null): { ok: boolean; result: "OK" | PublicScanResult; message: string } {
+  if (!status) return { ok: false, result: "PUBLIC_UNKNOWN", message: `Public scan of unknown code ${code}` };
+  if (PUBLIC_GENUINE_STATUSES.includes(status)) return { ok: true, result: "OK", message: publicStatus(true, status).label };
+  if (status === "GENERATED" || status === "PRINTED") return { ok: false, result: "PUBLIC_UNRELEASED", message: `Public scan of ${status} code ${code} (not yet released from the plant)` };
+  return { ok: false, result: "PUBLIC_BLOCKED", message: `Public scan of ${status} code ${code}` };
 }

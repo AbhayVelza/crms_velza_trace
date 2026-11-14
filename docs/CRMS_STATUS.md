@@ -72,7 +72,7 @@ Alerts: NOT_RECEIVED (in transit > 3 days, configurable), WRONG_RECEIVER, UNKNOW
 | Framework | **Next.js 16.4.3** (App Router, Turbopack) — note: this version has breaking changes vs. older Next.js; agents must read `node_modules/next/dist/docs/` before writing code (see `AGENTS.md`). Middleware is `src/proxy.ts` |
 | UI | React 19.3, TypeScript, Tailwind CSS 4, Open Sans (bundled), Velza Global brand tokens, light/dark/system themes, left sidebar shell |
 | Validation | zod 4 |
-| Barcodes / scanning | bwip-js (render), @zxing/browser (camera); USB/Bluetooth scanners work as keyboards |
+| Barcodes / scanning | bwip-js (render), @zxing/browser (camera: rear camera, camera choice, torch, repeat-frame suppression, released on leave); USB/Bluetooth scanners work as keyboards (Enter suffix, fast-scan queue); manual entry with format check; live scan checklists on QC Verify, Dispatch, Receive (branch `feature/barcode-scanner`, 4 Nov 2026) |
 | Layers | `src/app/api/*` route handlers (37 routes) → `src/lib/services/*` → `src/lib/core/*` (pure rules: codes, rules, alerts, permissions, ids, print plan) → `Store` interface (`src/lib/store`) |
 | Storage | JSON file by default (`data/db.json`); **PostgreSQL** when `DATABASE_URL` is set (hand-written SQL, no ORM, schema v2, `db/schema.sql`, `npm run db:migrate`); embedded PGlite for tests |
 | Auth | `velza_session` cookie (HttpOnly, SameSite=Lax, 12 h), scrypt hashes, 5-fail lockout for 5 min. `SIGN_IN=on/off`: **off by default under `npm run dev`** (opens on the Velza Admin portal as AD0001; the header's Role/User selects switch person, no password), on by default under `npm start` (unset, empty or misspelled = on). `npm start` also reads `.env.local` |
@@ -139,6 +139,31 @@ scale by design (rewrites whole file per write). Target scale for go-live is **2
 beyond 100k. Still whole-table: HQ dashboard, batch list, scan audit (loads all to show latest 300).
 
 ---
+
+## 4c. Scanning (4 Nov 2026, branch `feature/barcode-scanner`, uncommitted)
+
+Unit JSON 397 passed + 1 skipped; PostgreSQL (PGlite, serial) 154 passed + 3 skipped; lint, typecheck, build pass;
+e2e 18/18 (12 demo + 6 scanning, incl. a fake-camera video of a real barcode decoded by zxing). Performance with 1,000
+expected units: checklist loads in 1.8 s, 50 rows in the DOM, scan → ticked p50 247 ms. **Not tested on real phones or
+scanners** (manual guide: `docs/MANUAL_QA_GUIDE.md` §8, all rows NOT RUN). Details: `WORKING_MODEL.md` → "Scanning".
+
+## 4d. Serial integrity (4 Nov 2026, isolated copy `crms_velza_trace_serialfix`, uncommitted)
+
+The serial-uniqueness audit found duplicate allocation when two processes shared one JSON file (P0), unaudited
+sticker re-serving and new-batch orders without idempotency (P1), and replay, contention and storage-guard gaps (P2).
+All are fixed in the isolated copy:
+- the JSON store is owned by one process;
+- print orders are idempotent with a request fingerprint;
+- sheets are served only until the order is confirmed printed;
+- single stickers are printed only through a logged, single-use reprint;
+- a per-manufacturer allocation lock on PostgreSQL;
+- schema v3 triggers stop counter rewinds and issued-code deletion.
+
+Verified on JSON, PGlite and a real PostgreSQL 17 server, including a v2 → v3 upgrade, two processes, HTTP checks and
+e2e 18/18.
+
+**Production must use PostgreSQL.** Printing physical copies (the printer's copy count, a photocopier) can't be
+controlled by software. Details: `WORKING_MODEL.md` → "Serial integrity and duplicate-print protection".
 
 ## 4b. Verified state (4 Nov 2026)
 

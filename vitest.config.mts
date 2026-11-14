@@ -10,6 +10,8 @@ export default defineConfig({
   test: {
     environment: "node",
     testTimeout: 30000,
+    // Embedded PostgreSQL (PGlite) can take >10s to boot when every test file starts at once.
+    hookTimeout: 60000,
     projects: [
       { extends: true, test: { name: "json", include: ["src/**/*.test.ts", "tests/unit/**/*.test.ts"], env: { STORE: "json" } } },
       { extends: true, test: { name: "postgres", include: ["tests/unit/**/*.test.ts"], env: { STORE: "pglite" } } },

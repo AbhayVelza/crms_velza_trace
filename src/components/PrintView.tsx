@@ -1,29 +1,21 @@
 "use client";
 
-// Print view: preview at real size (or enlarged on screen so codes scan from the monitor), choose label roll or
-// A4 sheet, window.print(), then mark PRINTED. Cases and trays are separate print runs on separate label rolls:
-// the operator picks a run, prints only its stickers and confirms it on its own.
+// Print view: preview at real size, choose label roll or A4 sheet, window.print(), then mark PRINTED.
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, errorText } from "@/lib/client";
 import type { Sticker } from "@/lib/core/stickers";
 import type { LotType, PrintOrder } from "@/lib/core/types";
 import { notifyDataChanged } from "@/lib/events";
 import type { Box } from "@/lib/stickerLayout";
 import { PrintStyles, StickerSheetView, stickerWarnings, type PrintMode } from "./Stickers";
+import { thisPcId } from "./DeviceBar";
 import { useAction } from "./useAction";
 import { IconArrowLeft, IconPrinter } from "./icons";
 import { PRINT_CONFIRMATION_NOTE, PrintOrderStatus } from "./PrintOrderStatus";
 import { Button, cx, fmtTime, Loading, Notice } from "./ui";
 import { useApi } from "./useApi";
-
-interface PrintRun {
-  lotType: LotType;
-  lots: number;
-  stickers: number;
-  pending: number;
-}
 
 interface Sheet {
   title: string;
@@ -31,13 +23,58 @@ interface Sheet {
   lotSize: Box;
   packSize: Box;
   printOrder: PrintOrder | null;
-  runs: PrintRun[];
+  withheldLots?: number;
+  /** Cases first, then trays; only the types the order has. Empty for a reprint. */
+  runs?: PrintRun[];
+}
+
+/** One print run: the cases or the trays of an order, printed on their own label roll and confirmed on their own. */
+interface PrintRun {
+  lotType: LotType;
+  lots: number;
+  stickers: number;
+  pending: number;
 }
 
 const RUN = { CASE: { one: "case", many: "cases", title: "Cases" }, TRAY: { one: "tray", many: "trays", title: "Trays" } } as const;
 
-export function PrintView({ path, backHref, backLabel }: { path: string; backHref: string; backLabel: string }) {
-  const { data: sheet, error, reload } = useApi<Sheet>(path);
+// One-time sheets (a logged reprint) are fetched with a POST that uses the authorization up. Kept per page
+// load so a re-render or React's development double effect doesn't ask twice.
+const onceSheets = new Map<string, Promise<Sheet>>();
+
+function useOnceSheet(path: string | null): { data: Sheet | undefined; error: string | null } {
+  const [state, setState] = useState<{ data?: Sheet; error: string | null }>({ error: null });
+  useEffect(() => {
+    if (!path) return;
+    let cancelled = false;
+    let p = onceSheets.get(path);
+    if (!p) {
+      p = api<Sheet>(path, { body: {} });
+      onceSheets.set(path, p);
+    }
+    p.then(
+      (data) => !cancelled && setState({ data, error: null }),
+      (e) => !cancelled && setState({ error: errorText(e) }),
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [path]);
+  return state.data || state.error ? { data: state.data, error: state.error } : { data: undefined, error: null };
+}
+
+/**
+ * `path` = GET a print order's sheet (first-time printing; refused once the order is PRINTED).
+ * `oncePath` = POST a logged reprint's sticker (served once).
+ */
+export function PrintView({ path, oncePath, backHref, backLabel }: { path?: string; oncePath?: string; backHref: string; backLabel: string }) {
+  const fetched = useApi<Sheet>(path ?? null);
+  const once = useOnceSheet(oncePath ?? null);
+  const loaded = oncePath ? once.data : fetched.data;
+  const error = oncePath ? once.error : fetched.error;
+  // After the last run's "Mark as printed" the order is updated here; the sheet is not fetched again (the server no
+  // longer serves it). After an earlier run the sheet is fetched again: it then serves only the runs still waiting.
+  const [confirmedOrder, setConfirmedOrder] = useState<PrintOrder | null>(null);
   const [mode, setMode] = useState<PrintMode>("roll");
   // On screen only: real-size bars are about 1 screen pixel wide, too fine to scan from a monitor.
   const [scannable, setScannable] = useState(true);
@@ -45,34 +82,54 @@ export function PrintView({ path, backHref, backLabel }: { path: string; backHre
   // The run being printed; null = the first run still waiting, else the first run.
   const [chosenRun, setChosenRun] = useState<LotType | null>(null);
   // The only way lots become PRINTED: the operator's explicit confirmation of a run. One request at a time.
-  const [confirming, confirmPrinted] = useAction(async (orderId: string, lotType: LotType) => {
+  const [confirming, confirmPrinted] = useAction(async (orderId: string, lotType?: LotType) => {
     try {
-      const r = await api<{ lotsPrinted: number; printOrder: PrintOrder }>(`/api/print-orders/${orderId}/printed`, { body: { lotType } });
-      const names = RUN[lotType];
-      const rest = r.printOrder.status === "PRINTED" ? " — ready for QC verification" : ` — ready for QC verification. Now print the other run.`;
-      setMsg({ tone: "ok", text: r.lotsPrinted ? `${r.lotsPrinted} ${names.one} lot(s) marked PRINTED at ${fmtTime(r.printOrder.printedAt ?? new Date().toISOString())}${rest}` : `The ${names.many} were already marked PRINTED` });
-      reload();
+      const r = await api<{ lotsPrinted: number; printOrder: PrintOrder }>(`/api/print-orders/${orderId}/printed`, { body: { deviceId: thisPcId(), ...(lotType ? { lotType } : {}) } });
+      const done = r.printOrder.status === "PRINTED";
+      const names = lotType ? RUN[lotType] : { one: "", many: "stickers" };
+      const when = fmtTime(r.printOrder.printedAt ?? new Date().toISOString());
+      const rest = done ? " — ready for QC verification" : " — ready for QC verification. Now print the other run.";
+      setMsg({ tone: "ok", text: r.lotsPrinted ? `${r.lotsPrinted} ${names.one ? `${names.one} ` : ""}lot(s) marked PRINTED at ${when}${rest}` : `The ${names.many} were already marked PRINTED` });
+      if (done) setConfirmedOrder(r.printOrder);
+      else {
+        setChosenRun(null);
+        fetched.reload();
+      }
       notifyDataChanged();
     } catch (e) {
       setMsg({ tone: "error", text: `Not marked as printed: ${errorText(e)}` });
     }
   });
 
-  if (error) return <Notice tone="error">{error}</Notice>;
-  if (!sheet) return <Loading>Loading stickers…</Loading>;
+  if (error) {
+    return (
+      <div className="space-y-3">
+        <Notice tone="error">{error}</Notice>
+        <Link href={backHref} className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground">
+          <IconArrowLeft size={17} />
+          {backLabel}
+        </Link>
+      </div>
+    );
+  }
+  if (!loaded) return <Loading>Loading stickers…</Loading>;
 
-  const order = sheet.printOrder;
-  const runs = sheet.runs ?? [];
+  const sheet = loaded;
+  const order = confirmedOrder ?? sheet.printOrder;
+  const printed = order?.status === "PRINTED";
+  const runs = printed ? [] : (sheet.runs ?? []);
   const run = runs.find((r) => r.lotType === chosenRun) ?? runs.find((r) => r.pending > 0) ?? runs[0] ?? null;
   // An order prints one run at a time; a reprint (no runs) prints its single sticker.
   const stickers = run ? sheet.stickers.filter((s) => s.lotType === run.lotType) : sheet.stickers;
   const what = run ? `${RUN[run.lotType].one} sticker` : "sticker";
+  const runPending = run ? run.pending > 0 : !printed;
 
   /** Opens the browser print dialog only. Printing, cancelling or closing it records nothing. */
   function print() {
     window.print();
-    if (order && run && run.pending > 0) {
-      setMsg({ tone: "info", text: `Nothing has been recorded yet. When every ${RUN[run.lotType].one} sticker has printed correctly, press Mark ${RUN[run.lotType].many} as printed.` });
+    if (order && runPending) {
+      const how = run ? `every ${RUN[run.lotType].one} sticker has printed correctly, press Mark ${RUN[run.lotType].many} as printed` : "every sticker has printed correctly, press Mark as printed";
+      setMsg({ tone: "info", text: `Nothing has been recorded yet. When ${how}.` });
     }
   }
 
@@ -141,12 +198,14 @@ export function PrintView({ path, backHref, backLabel }: { path: string; backHre
             <input type="checkbox" className="h-4 w-4" checked={scannable} onChange={(e) => setScannable(e.target.checked)} data-testid="scannable-preview" />
             Enlarge on screen to scan from the monitor
           </label>
-          <Button onClick={print}>
-            <IconPrinter size={17} />
-            Print {stickers.length} {what}{stickers.length === 1 ? "" : "s"}</Button>
-          {order && run && run.pending > 0 && (
-            <Button variant="secondary" loading={confirming} onClick={() => void confirmPrinted(order.id, run.lotType)}>
-              Mark {RUN[run.lotType].many} as printed
+          {!printed && runPending && stickers.length > 0 && (
+            <Button onClick={print}>
+              <IconPrinter size={17} />
+              Print {stickers.length} {what}{stickers.length === 1 ? "" : "s"}</Button>
+          )}
+          {order && !printed && runPending && (
+            <Button variant="secondary" loading={confirming} onClick={() => void confirmPrinted(order.id, run?.lotType)}>
+              {run ? `Mark ${RUN[run.lotType].many} as printed` : "Mark as printed"}
             </Button>
           )}
         </div>
@@ -154,7 +213,18 @@ export function PrintView({ path, backHref, backLabel }: { path: string; backHre
           {run && runs.length > 1 && `Cases and trays print separately: load the ${RUN[run.lotType].one} label roll for this run. `}
           {lots} {run ? RUN[run.lotType].one : "lot"} sticker(s) {sheet.lotSize.widthMm}×{sheet.lotSize.heightMm} mm, {stickers.length - lots} pack sticker(s) {sheet.packSize.widthMm}×{sheet.packSize.heightMm} mm. Order: {run ? RUN[run.lotType].one : "lot"} sticker first, then its packs. Set the browser print scale to 100% (no &quot;fit to page&quot;).{scannable ? " The preview is enlarged on screen so its barcodes can be scanned from the monitor; printed stickers are real size." : ""}
         </p>
-        {order && order.status !== "PRINTED" && <Notice tone="info">{PRINT_CONFIRMATION_NOTE}</Notice>}
+        {order && !printed && <Notice tone="info">{PRINT_CONFIRMATION_NOTE}</Notice>}
+        {printed && (
+          <Notice tone="info">
+            This order is confirmed printed, so its stickers are not printed again from here. To replace a damaged sticker, use{" "}
+            <Link href="/operator/reprint" className="font-semibold underline">
+              Reprint
+            </Link>{" "}
+            (a reason is required and every reprint is logged).
+          </Notice>
+        )}
+        {!!sheet.withheldLots && <Notice tone="warn">{sheet.withheldLots} voided or recalled lot(s) of this order are not printed.</Notice>}
+        {oncePath && <Notice tone="info">This logged reprint prints once: print it now. To print the sticker again later, log a new reprint.</Notice>}
         {warnings.map((w) => (
           <Notice key={w} tone="warn">
             {w} — change sticker sizes in Admin → Settings.

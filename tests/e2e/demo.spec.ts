@@ -196,7 +196,8 @@ test.describe.serial("Velza demo script (9.1)", () => {
     await page.getByRole("button", { name: "Open print view" }).click();
     await expect(page.getByText("PRINTING PENDING", { exact: true })).toBeVisible();
     const orderId = page.url().split("/print/")[1];
-    const orderStatus = async () => (await (await page.request.get(`/api/print-orders/${orderId}`)).json()).printOrder;
+    // The order's status, read from its codes list (the sticker sheet itself is not served once PRINTED).
+    const orderStatus = async () => (await (await page.request.get(`/api/print-orders/${orderId}/codes`)).json()).printOrder;
     // Leaving the print view and coming back records nothing.
     await page.goto("/operator/orders");
     const finish = page.locator(`a[href="/print/${orderId}"]`);
@@ -284,6 +285,13 @@ test.describe.serial("Velza demo script (9.1)", () => {
     await expect(page.getByRole("button", { name: /^Mark .* as printed$/ })).toHaveCount(0);
     expect(confirmations).toHaveLength(2);
     expect(await orderStatus()).toMatchObject({ status: "PRINTED", printedAt: expect.any(String) });
+    // Once confirmed, the stickers are not printed again from here: no Print button, and the sheet is refused.
+    await expect(page.getByRole("button", { name: /^Print \d+ sticker/ })).toHaveCount(0);
+    await expect(page.getByText(/confirmed printed, so its stickers are not printed again/)).toBeVisible();
+    const again = await page.request.get(`/api/print-orders/${orderId}`);
+    expect(again.status()).toBe(409);
+    expect((await again.json()).error.code).toBe("ORDER_ALREADY_PRINTED");
+    expect((await page.request.get(`/api/stickers?code=${lots[0]}`)).status()).toBe(410);
   });
 
   test("2. supervisor verifies every lot; a pack from another lot is rejected", async ({ page }) => {
@@ -436,10 +444,17 @@ test.describe.serial("Velza demo script (9.1)", () => {
     await page.getByRole("button", { name: "Log reprint" }).click();
     await expect(page.getByText(`Reprint of ${code} logged (same code)`)).toBeVisible();
     await expect(page.locator("tbody tr").first()).toContainText("Sticker torn while pasting");
-    await page.getByRole("link", { name: `Open print view for ${code}` }).click();
+    await page.getByRole("link", { name: `Print ${code} (once)` }).click();
     await expect(page.locator(".sticker")).toHaveCount(1);
     await expect(page.locator(".sticker")).toHaveAttribute("data-code", code);
     await expect(page.locator(".sticker")).toContainText("PACK 3 of 6 | 4 CANS");
+    // The logged reprint prints once: opening its print view again is refused.
+    expect(page.url()).toMatch(/\/print\/reprint\/[0-9a-f-]{36}$/);
+    await page.reload();
+    await expect(page.getByText(/already printed\. To print the sticker again, log a new reprint/)).toBeVisible();
+    await expect(page.locator(".sticker")).toHaveCount(0);
+    await page.goto("/operator/reprint");
+    await expect(page.locator("tbody tr").first()).not.toContainText("Not yet");
   });
 
   test("10. SS-1 receives the synced case and reports it damaged → it leaves stock, shows in Damaged, HQ is alerted", async ({ page }) => {
@@ -492,45 +507,60 @@ test.describe.serial("Velza demo script (9.1)", () => {
     await expect(page.getByRole("row", { name: /^Super Stockist SS-1/ })).toContainText("1 case");
   });
 
-  test("11. Admin registers a distributor and a retailer under SS-1 directly; the sign-in works, sees only its portal, changes its password", async ({ page }) => {
+  test("11. shops sign themselves up: a distributor waits for Admin approval, a retailer under SS-1 works at once; the sign-in sees only its portal, changes its password", async ({ page }) => {
+    /** Fill the public sign-up form (no session). */
+    const signup = async (type: "Distributor" | "Retailer", f: { name: string; contact: string; place: string; address: string; phone: string; supplier: string; password: string }) => {
+      await page.context().clearCookies();
+      await page.goto("/login");
+      await page.getByRole("link", { name: "Create an account" }).click();
+      await expect(page).toHaveURL(/\/signup$/);
+      await page.getByRole("radio", { name: new RegExp(`^${type}`) }).click();
+      await page.getByLabel("Shop / business name").fill(f.name);
+      await page.getByLabel("Your name").fill(f.contact);
+      await page.getByLabel("Place").fill(f.place);
+      await page.getByLabel("Address").fill(f.address);
+      await page.getByLabel("City", { exact: true }).fill("Pune");
+      await page.getByLabel("State", { exact: true }).selectOption("Maharashtra");
+      await page.getByLabel("Phone", { exact: true }).fill(f.phone);
+      await page.getByLabel("Supplied by").selectOption(f.supplier);
+      await page.getByLabel("Password", { exact: true }).fill(f.password);
+      await page.getByLabel("Repeat password").fill(f.password);
+      await page.getByRole("button", { name: "Create account" }).click();
+    };
+
+    // The Admin form registers only the plant and the Velza Warehouse.
     await as(page, "ADMIN", null, "/admin/partners");
     const form = page.locator("section", { hasText: "Register a partner" });
-    await form.getByLabel("Tier", { exact: true }).selectOption("DB");
-    await form.getByLabel("Site name").fill("FC Road Distributors");
-    await form.getByLabel("Contact person").fill("Asha Patil");
-    await form.getByLabel("Place").fill("FC Road");
-    await form.getByLabel("Address").fill("Shop 12, FC Road");
-    await form.getByLabel("City").fill("Pune");
-    await form.getByLabel("State").selectOption("Maharashtra");
-    await form.getByLabel("PIN code").fill("411004");
-    await form.getByLabel("Phone").fill("+91 98765 43210");
-    await expect(form.getByLabel("Assigned to tier")).toHaveCount(0); // a Distributor is always assigned to a Super Stockist
-    await form.getByLabel("Assigned to", { exact: true }).selectOption("SS0001");
-    await form.getByLabel("Sign-in password").fill("Fresh2026pass");
-    await form.getByRole("button", { name: "Register" }).click();
-    await expect(page.getByTestId("register-result")).toHaveText("Registered FC Road Distributors as DB0003 — sign-in DB0003");
+    await expect(form.getByLabel("Tier", { exact: true }).locator("option")).toHaveText(["Choose…", "Manufacturer (MF…)", "Velza Warehouse (VW…)"]);
 
-    // A Retailer is assigned to a Distributor, or (for a few) to its Super Stockist directly.
-    await form.getByLabel("Tier", { exact: true }).selectOption("RETAILER");
-    await form.getByLabel("Site name").fill("Camp Kirana");
-    await form.getByLabel("Contact person").fill("Ravi Shah");
-    await form.getByLabel("Place").fill("Camp");
-    await form.getByLabel("Address").fill("7 MG Road, Camp");
-    await form.getByLabel("City").fill("Pune");
-    await form.getByLabel("State").selectOption("Maharashtra");
-    await form.getByLabel("Phone").fill("+91 98765 43211");
-    await form.getByLabel("Assigned to tier").selectOption("SS");
-    await form.getByLabel("Assigned to", { exact: true }).selectOption("SS0001");
-    await form.getByLabel("Sign-in password").fill("Kirana2026pass");
-    await form.getByRole("button", { name: "Register" }).click();
-    await expect(page.getByTestId("register-result")).toHaveText("Registered Camp Kirana as RT0005 — sign-in RT0005");
+    // A Distributor signs up: it gets its ID at once but waits for approval.
+    await signup("Distributor", { name: "FC Road Distributors", contact: "Asha Patil", place: "FC Road", address: "Shop 12, FC Road", phone: "+91 98765 43210", supplier: "SS0001", password: "Fresh2026pass" });
+    await expect(page.getByTestId("signup-login-id")).toHaveText("DB0003");
+    await expect(page.getByTestId("signup-done")).toContainText("waiting for Velza approval");
+    await page.goto("/login");
+    await page.getByLabel("Sign-in ID").fill("DB0003");
+    await page.getByLabel("Password").fill("Fresh2026pass");
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await expect(page.getByText("Your account is waiting for Velza approval")).toBeVisible();
+
+    // Velza Admin approves it.
+    await as(page, "ADMIN", null, "/admin/partners");
+    await page.getByTestId("pending-DB0003").getByRole("button", { name: "Approve" }).click();
+    await expect(page.getByText("FC Road Distributors (DB0003) approved")).toBeVisible();
+    await expect(page.getByTestId("no-pending")).toBeVisible();
+
+    // A Retailer supplied directly by SS-1 signs up and can work at once.
+    await signup("Retailer", { name: "Camp Kirana", contact: "Ravi Shah", place: "Camp", address: "7 MG Road, Camp", phone: "+91 98765 43211", supplier: "SS0001", password: "Kirana2026pass" });
+    await expect(page.getByTestId("signup-login-id")).toHaveText("RT0005");
+    await expect(page.getByTestId("signup-done")).toContainText("You can sign in now");
     // SS-1 can now supply it; DB-1 can't.
     await as(page, "SS", "SS-1", "/dispatch");
     await expect(page.getByLabel("Destination").locator("option", { hasText: "Camp Kirana" })).toHaveCount(1);
+    await expect(page.getByLabel("Destination").locator("option", { hasText: "FC Road Distributors" })).toHaveCount(1);
     await as(page, "DB", "DB-1", "/dispatch");
     await expect(page.getByLabel("Destination").locator("option", { hasText: "Camp Kirana" })).toHaveCount(0);
 
-    // The person signs in on the sign-in page with what the Admin shared.
+    // The approved distributor signs in with the password it chose.
     await page.context().clearCookies();
     await page.goto("/dispatch");
     await expect(page).toHaveURL(/\/login\?next=%2Fdispatch$/);

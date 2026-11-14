@@ -18,13 +18,13 @@
 // the plant to the warehouse). An older database only gains allowed values and a new table: the upgrade section
 // re-applies the checks with the current values.
 //
-// v6 (14 Nov 2026): self sign-up. partners.approval (NULL = approved, PENDING, REJECTED); the one-SS-per-state
-// index leaves rejected sign-ups out. Column added in place; existing rows stay NULL (approved).
-
 // v6 (13 Nov 2026): returns — role VELZA_FIELD (sign-ins VF0001…) and code statuses RETURN_IN_TRANSIT and EXPIRED.
 // Only allowed values change: the upgrade section re-applies the checks with the current values.
+//
+// v7 (14 Nov 2026): self sign-up. partners.approval (NULL = approved, PENDING, REJECTED); the one-SS-per-state
+// index leaves rejected sign-ups out. Column added in place; existing rows stay NULL (approved).
 
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 // Checks whose values changed in v2 or v3. Each is named explicitly — with the name PostgreSQL gave it in
 // v1 — so the upgrade can replace it, and is written once here for both CREATE TABLE and the upgrade.
@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS partners (
     ${PARTNER_ID_CHECK})
 );
 -- One Super Stockist per state.
--- One Super Stockist per state: the index is (re)built in the v6 section below, where the approval column exists.
+-- One Super Stockist per state: the index is (re)built in the v7 section below, where the approval column exists.
 CREATE UNIQUE INDEX IF NOT EXISTS partners_email_unique ON partners (lower(email)) WHERE email <> '';
 CREATE INDEX IF NOT EXISTS partners_parent ON partners (parent_id);
 
@@ -390,7 +390,7 @@ CREATE INDEX IF NOT EXISTS batches_manufacturer ON batches (manufacturer_id);
 CREATE INDEX IF NOT EXISTS batches_device_unsynced ON batches (device_id) WHERE NOT synced;
 CREATE INDEX IF NOT EXISTS batch_code_pool_device ON batch_code_pool (device_id, status);
 
--- ============================================================ v6: self sign-up approval
+-- ============================================================ v7: self sign-up approval
 -- SS, DB and Retailer shops sign themselves up. approval: NULL = approved (every older row, every Retailer),
 -- PENDING = a self-signed-up SS or DB waiting for Velza Admin, REJECTED = turned down (kept; ID never reused).
 -- A rejected SS no longer holds its state, so the one-SS-per-state index leaves it out.

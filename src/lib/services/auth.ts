@@ -18,30 +18,74 @@ const LOCK_MINUTES = 5;
 export const loginSchema = z.object({ loginId: z.string().min(1).max(100), password: z.string().min(1).max(200) });
 export const changePasswordSchema = z.object({ currentPassword: z.string().min(1).max(200), newPassword: z.string().max(200) });
 
-// Failed attempts per sign-in ID, kept in memory (resets when the server restarts).
+// Failed attempts per sign-in ID AND client IP, kept in memory (resets when the server restarts). Keyed by both,
+// so someone guessing from one place can't keep a real person (e.g. AD0001) locked out everywhere else.
+const MAX_FAILURE_KEYS = 10_000;
 const g = globalThis as unknown as { __velzaLoginFailures?: Map<string, { count: number; lockedUntil: number }> };
 const failures = (g.__velzaLoginFailures ??= new Map());
 
 const badCredentials = () => new ServiceError(401, "BAD_CREDENTIALS", "Wrong sign-in ID or password");
 
-export async function login(body: unknown): Promise<{ token: string; expiresAt: string; user: Awaited<ReturnType<typeof me>> }> {
+/** Bounded memory: drop expired locks and not-yet-locked counts when the map gets large; still too large → start over. */
+function sweepFailures(now: number) {
+  if (failures.size < MAX_FAILURE_KEYS) return;
+  for (const [k, v] of failures) if (v.lockedUntil <= now) failures.delete(k);
+  if (failures.size >= MAX_FAILURE_KEYS) failures.clear();
+}
+
+/**
+ * Backstop per sign-in ID from ANY client, used only while the client IP can't be trusted (CLIENT_IP_HEADER unset:
+ * X-Forwarded-For is kept as the client sent it, so a new fake IP per guess would dodge the per-ID+IP lock).
+ * Higher than MAX_FAILURES so one person's typos never trip it; bounds brute force to ~20 guesses per lock period.
+ * Behind a trusted proxy header it is off, so nobody elsewhere can lock AD0001 out.
+ */
+export const MAX_FAILURES_PER_ID_UNTRUSTED_IP = 20;
+const ipIsTrusted = () => Boolean(process.env.CLIENT_IP_HEADER);
+
+/** The live entry for a key: an expired lock is dropped, so the count starts again (no instant re-lock). */
+function liveEntry(key: string, now: number) {
+  const f = failures.get(key);
+  if (f && f.lockedUntil > 0 && f.lockedUntil <= now) {
+    failures.delete(key);
+    return undefined;
+  }
+  return f;
+}
+
+function recordFailure(key: string, f: { count: number } | undefined, max: number, now: number) {
+  const count = (f?.count ?? 0) + 1;
+  if (!f) sweepFailures(now);
+  failures.set(key, { count, lockedUntil: count >= max ? now + LOCK_MINUTES * 60000 : 0 });
+}
+
+export async function login(body: unknown, ip = "unknown"): Promise<{ token: string; expiresAt: string; user: Awaited<ReturnType<typeof me>> }> {
   const { loginId: raw, password } = loginSchema.parse(body);
   const loginId = normalizeLoginId(raw);
-  const f = failures.get(loginId);
-  if (f && f.lockedUntil > Date.now()) {
-    throw new ServiceError(429, "LOCKED", `Too many wrong passwords — try again in ${Math.ceil((f.lockedUntil - Date.now()) / 60000)} minute(s)`);
+  const key = `${loginId}|${ip}`;
+  const idKey = `${loginId}|*any*`;
+  const perIdBackstop = !ipIsTrusted();
+  const now = Date.now();
+  const f = liveEntry(key, now);
+  const fId = perIdBackstop ? liveEntry(idKey, now) : undefined;
+  const lockedUntil = Math.max(f?.lockedUntil ?? 0, fId?.lockedUntil ?? 0);
+  if (lockedUntil > now) {
+    throw new ServiceError(429, "LOCKED", `Too many wrong passwords — try again in ${Math.ceil((lockedUntil - now) / 60000)} minute(s)`);
   }
 
   const store = getStore();
   const user = await store.users.get(loginId);
   if (!(await verifyPassword(password, user?.passwordHash ?? null)) || !user) {
-    const count = (f?.count ?? 0) + 1;
-    failures.set(loginId, { count, lockedUntil: count >= MAX_FAILURES ? Date.now() + LOCK_MINUTES * 60000 : 0 });
+    recordFailure(key, f, MAX_FAILURES, Date.now());
+    if (perIdBackstop) recordFailure(idKey, fId, MAX_FAILURES_PER_ID_UNTRUSTED_IP, Date.now());
     throw badCredentials();
   }
-  failures.delete(loginId);
+  failures.delete(key);
+  failures.delete(idKey);
 
   const partner = user.partnerId ? await store.partners.get(user.partnerId) : null;
+  // Self-signed-up SS / DB: the password is right, but Velza has not approved the account (or turned it down).
+  if (partner?.approval === "PENDING") throw new ServiceError(403, "PENDING_APPROVAL", "Your account is waiting for Velza approval");
+  if (partner?.approval === "REJECTED") throw new ServiceError(403, "REJECTED", "This sign-up was not approved. Contact Velza.");
   if (!user.active || (partner && !partner.active)) {
     throw new ServiceError(403, "DISABLED", "This sign-in is disabled. Contact Velza Admin.");
   }
@@ -85,6 +129,14 @@ export async function devLogin(body: unknown) {
   const { userId } = devLoginSchema.parse(body);
   await loadActor(getStore(), userId); // must exist and be active, with an active partner
   return startSession(userId);
+}
+
+/** While sign-in is off: who a request without a valid session acts as — the first active Velza Admin, so the
+ * app opens straight on the Admin portal. No session is created and nothing is written. null when sign-in is on. */
+export async function devDefaultUserId(): Promise<string | null> {
+  if (signInRequired()) return null;
+  const admins = await getStore().users.list({ role: "ADMIN", active: true });
+  return admins.map((u) => u.id).sort()[0] ?? null;
 }
 
 /** Resolve a session cookie to a user id (null if missing, unknown or expired). */

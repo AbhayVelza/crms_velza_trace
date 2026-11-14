@@ -2,9 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { useSession } from "@/components/session";
-import { Button, Card, Field, Input, Notice, PageTitle, Select } from "@/components/ui";
+import { useAction } from "@/components/useAction";
+import { Button, Card, Field, Input, Loading, Notice, PageTitle, Select } from "@/components/ui";
 import { api, errorText } from "@/lib/client";
 import type { Settings } from "@/lib/core/types";
+import { isSafePublicUrl, PUBLIC_URL_RULE } from "@/lib/publicUrl";
 
 export default function SettingsPage() {
   const { data, refresh } = useSession();
@@ -14,14 +16,18 @@ export default function SettingsPage() {
   useEffect(() => {
     api<Settings>("/api/admin/settings").then(setS, (e) => setMsg({ tone: "error", text: errorText(e) }));
   }, []);
+  const [saving, runSave] = useAction(save);
 
-  if (!s) return msg ? <Notice tone="error">{msg.text}</Notice> : <p className="text-sm text-slate-500">Loading…</p>;
+  if (!s) return msg ? <Notice tone="error">{msg.text}</Notice> : <Loading />;
 
   const num = (v: string) => (v === "" ? NaN : Number(v));
   const size = (k: "lotSticker" | "packSticker", dim: "widthMm" | "heightMm", v: string) => setS({ ...s, [k]: { ...s[k], [dim]: num(v) } });
 
   async function save() {
     setMsg(null);
+    // Same rules as the server (which stays authoritative): a safe QR base URL, refill level within the issue size.
+    if (!isSafePublicUrl(s!.publicBaseUrl.trim())) return setMsg({ tone: "error", text: PUBLIC_URL_RULE });
+    if (s!.poolRefillBelow > s!.poolIssueSize) return setMsg({ tone: "error", text: "Refill pool below must not be more than the codes issued per refill" });
     try {
       const { id: _id, ...patch } = s!;
       void _id;
@@ -37,7 +43,7 @@ export default function SettingsPage() {
     <>
       <PageTitle title="Settings" />
       {msg && <Notice tone={msg.tone} className="mb-4">{msg.text}</Notice>}
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-2 lg:gap-5">
         <Card title="NOT_RECEIVED alert">
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Threshold (days)" hint="Lots in transit longer than this raise an alert">
@@ -45,7 +51,7 @@ export default function SettingsPage() {
             </Field>
             <Field label="Demo mode" hint="Use minutes instead of days">
               <label className="flex min-h-10 items-center gap-2">
-                <input type="checkbox" className="h-5 w-5 accent-teal-700" checked={s.demoMode} onChange={(e) => setS({ ...s, demoMode: e.target.checked })} />
+                <input type="checkbox" className="h-5 w-5 accent-foreground" checked={s.demoMode} onChange={(e) => setS({ ...s, demoMode: e.target.checked })} />
                 {s.demoMode ? "On" : "Off"}
               </label>
             </Field>
@@ -70,10 +76,20 @@ export default function SettingsPage() {
             </Field>
           </div>
         </Card>
-        <Card title="QR code">
-          <Field label="Public base URL" hint={`QR encodes ${s.publicBaseUrl.replace(/\/+$/, "")}/t/<lot code>`}>
+        <Card title="Public page">
+          <Field label="Public base URL" hint={`Public product page: ${s.publicBaseUrl.replace(/\/+$/, "")}/t/<lot code>. Stickers no longer carry a QR code; older QR stickers still open this page.`}>
             <Input value={s.publicBaseUrl} onChange={(e) => setS({ ...s, publicBaseUrl: e.target.value })} />
           </Field>
+        </Card>
+        <Card title="Suspect-clone alert (provisional)">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Consumer scans of one code" hint="Provisional default 5, awaiting Velza approval">
+              <Input type="number" min="2" max="1000" value={s.publicCloneScanThreshold ?? 5} onChange={(e) => setS({ ...s, publicCloneScanThreshold: num(e.target.value) })} />
+            </Field>
+            <Field label="Within (hours)" hint="Provisional default 24, awaiting Velza approval">
+              <Input type="number" min="1" max="720" value={s.publicCloneWindowHours ?? 24} onChange={(e) => setS({ ...s, publicCloneWindowHours: num(e.target.value) })} />
+            </Field>
+          </div>
         </Card>
         <Card title="Batch codes">
           <div className="grid gap-3 sm:grid-cols-3">
@@ -81,7 +97,7 @@ export default function SettingsPage() {
               <Input type="number" min="1" max="100" value={s.poolIssueSize} onChange={(e) => setS({ ...s, poolIssueSize: num(e.target.value) })} />
             </Field>
             <Field label="Refill below">
-              <Input type="number" min="0" value={s.poolRefillBelow} onChange={(e) => setS({ ...s, poolRefillBelow: num(e.target.value) })} />
+              <Input type="number" min="0" max={s.poolIssueSize} value={s.poolRefillBelow} onChange={(e) => setS({ ...s, poolRefillBelow: num(e.target.value) })} />
             </Field>
             <Field label="Country for new batches">
               <Select value={s.defaultCountry} onChange={(e) => setS({ ...s, defaultCountry: e.target.value })}>
@@ -95,7 +111,7 @@ export default function SettingsPage() {
           </div>
         </Card>
       </div>
-      <Button className="mt-4" onClick={save}>
+      <Button className="mt-4" onClick={runSave} loading={saving}>
         Save settings
       </Button>
     </>

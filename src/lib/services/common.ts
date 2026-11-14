@@ -56,6 +56,26 @@ export async function manufacturerDevice(tx: StoreTx, manufacturerId: string, de
   return device;
 }
 
+/**
+ * The plant PC a print operation (print order, continuation, reprint, void, sync, print confirmation) runs on.
+ * The screen sends the PC chosen as "This PC" in the device bar; the server checks it belongs to the operator's
+ * manufacturer. Without one, a plant with a single PC uses it; a plant with several is refused (409
+ * DEVICE_REQUIRED) instead of silently booking the work, its pool codes and its sync state on the first PC.
+ */
+export async function printDevice(tx: StoreTx, manufacturerId: string, deviceId?: string | null): Promise<Device> {
+  const devices = await tx.devices.list({ manufacturerId });
+  if (deviceId) {
+    const device = devices.find((d) => d.id === deviceId);
+    if (!device) throw badRequest("NO_DEVICE", "This PC is not registered for your plant — choose This PC again in the device bar");
+    return device;
+  }
+  if (!devices.length) throw badRequest("NO_DEVICE", "No device registered for this manufacturer");
+  if (devices.length > 1) {
+    throw new ServiceError(409, "DEVICE_REQUIRED", `Your plant has ${devices.length} PCs — choose This PC in the device bar first, so the work is recorded on the right PC`);
+  }
+  return devices[0];
+}
+
 export async function parseOptions(tx: StoreTx) {
   const [countries, flavours] = await Promise.all([tx.countries.list({ active: true }), tx.flavours.list()]);
   return { countries: countries.map((c) => c.code), flavours: flavours.map((f) => f.code) };
@@ -80,12 +100,18 @@ export type FindResult = { ok: true; item: FoundItem } | { ok: false; code: Reje
  * Resolve a scanned code to its lot/pack. Codes never generated, malformed, or
  * not yet synced (for anyone outside the owning manufacturer) are UNKNOWN_CODE.
  */
+/**
+ * What a code that does not exist looks like. Codes of another manufacturer get exactly the same answer, so a
+ * partner cannot learn that someone else's code exists (or its status) by trying it.
+ */
+export const unknownCodeMessage = (code: string) => `Unknown code ${code}: never generated`;
+
 export async function findItem(tx: StoreTx, code: string, viewerPartnerId: string | null): Promise<FindResult> {
   const parsed = parseCode(code, await parseOptions(tx));
   if (!parsed.ok) return { ok: false, code: "UNKNOWN_CODE", message: `Unknown code ${code || "(empty)"}: ${parsed.error.message}` };
   const p = parsed.value;
   const lot = await tx.lots.findOne({ lotCode: p.lotCode });
-  if (!lot) return { ok: false, code: "UNKNOWN_CODE", message: `Unknown code ${code}: never generated` };
+  if (!lot) return { ok: false, code: "UNKNOWN_CODE", message: unknownCodeMessage(code) };
   if (!isVisible(lot, viewerPartnerId)) {
     return { ok: false, code: "UNKNOWN_CODE", message: `Unknown code ${code}: not synced yet` };
   }
@@ -103,7 +129,7 @@ export async function findItem(tx: StoreTx, code: string, viewerPartnerId: strin
     };
   }
   const pack = await tx.packs.findOne({ packCode: code });
-  if (!pack) return { ok: false, code: "UNKNOWN_CODE", message: `Unknown code ${code}: never generated` };
+  if (!pack) return { ok: false, code: "UNKNOWN_CODE", message: unknownCodeMessage(code) };
   return {
     ok: true,
     item: {

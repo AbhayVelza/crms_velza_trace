@@ -1,10 +1,5 @@
-import { handler, userIdOf } from "@/lib/api";
-import { badRequest } from "@/lib/services/common";
-import { stickerForReprint } from "@/lib/services/printOrders";
+import { handler } from "@/lib/api";
+import { stickerByCodeRefused } from "@/lib/services/printOrders";
 
-/** Single sticker for a reprint: GET /api/stickers?code=... */
-export const GET = handler(async (req) => {
-  const code = new URL(req.url).searchParams.get("code");
-  if (!code) throw badRequest("CODE_REQUIRED", "code is required");
-  return stickerForReprint(userIdOf(req), code);
-});
+/** Retired: a single sticker is printed only through a logged reprint (POST /api/reprint/<id>/stickers). Always 410. */
+export const GET = handler(async () => stickerByCodeRefused());

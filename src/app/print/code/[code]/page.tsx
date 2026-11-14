@@ -1,16 +1,26 @@
+import Link from "next/link";
 import { Suspense } from "react";
-import { PrintView } from "@/components/PrintView";
+import { Code, Loading, Notice } from "@/components/ui";
 
-async function CodePrint({ params }: { params: PageProps<"/print/code/[code]">["params"] }) {
+async function CodeNotice({ params }: { params: PageProps<"/print/code/[code]">["params"] }) {
   const { code } = await params;
-  return <PrintView path={`/api/stickers?code=${encodeURIComponent(code)}`} backHref="/operator/reprint" backLabel="Reprint" />;
+  return (
+    <div className="space-y-3">
+      <Notice tone="info">
+        Single stickers are printed only through Reprint. Log the reprint of <Code>{code}</Code> with its reason; each logged reprint prints once.
+      </Notice>
+      <Link href="/operator/reprint" className="text-sm font-semibold underline">
+        Go to Reprint
+      </Link>
+    </div>
+  );
 }
 
-/** Single-sticker print view used by Reprint (same code). */
+/** Retired direct "print any code" view: points to Reprint, which logs the reason and prints once. */
 export default function Page({ params }: PageProps<"/print/code/[code]">) {
   return (
-    <Suspense fallback={<p className="text-sm text-slate-500">Loading…</p>}>
-      <CodePrint params={params} />
+    <Suspense fallback={<Loading />}>
+      <CodeNotice params={params} />
     </Suspense>
   );
 }

@@ -24,9 +24,12 @@ const PARTNERS: { type: PartnerType; name: string; place: string; city: string; 
   { type: "RETAILER", name: "Retailer-3 Aundh Cafe", place: "Aundh", city: "Pune", state: "Maharashtra", parent: "DB-2" },
   // One of the few retailers its Super Stockist supplies directly (no Distributor in between).
   { type: "RETAILER", name: "Retailer-4 Colaba Kirana", place: "Colaba", city: "Mumbai", state: "Maharashtra", parent: "SS-1" },
+  // The Velza Warehouse (last, so the other partners keep their sample phone numbers): the manufacturer ships
+  // only here; it supplies any SS, Distributor or Retailer.
+  { type: "WAREHOUSE", name: "VW-1 Velza Warehouse", place: "Bhiwandi", city: "Thane", state: "Maharashtra" },
 ];
 
-const PERSON: Partial<Record<Role, string>> = { OPERATOR: "Manoj", QC: "Sunita", SS: "Kiran", DB: "Deepak", RETAILER: "Imran" };
+const PERSON: Partial<Record<Role, string>> = { OPERATOR: "Manoj", QC: "Sunita", WAREHOUSE: "Vikram", SS: "Kiran", DB: "Deepak", RETAILER: "Imran" };
 
 /** "SS-1", "Retailer-2", or the city for the manufacturer. */
 const tag = (p: Pick<Partner, "name" | "city">) => p.name.match(/^([A-Za-z]+-\d+)/)?.[1] ?? p.city;
@@ -60,7 +63,11 @@ export function buildSampleSeed(): DbSnapshot {
   });
   for (const [i, p] of PARTNERS.entries()) if (p.parent) partners[i].parentId = partners.find((x) => x.name.startsWith(p.parent!))!.id;
 
-  const users: User[] = [...base.users];
+  // Velza field staff (VF0001): takes stock back from partners to the Velza Warehouse.
+  const users: User[] = [
+    ...base.users,
+    { id: "VF0001", name: "Farhan (Velza field)", role: "VELZA_FIELD", partnerId: null, active: true, passwordHash, passwordChangedAt: at, createdAt: at, lastLoginAt: null },
+  ];
   for (const p of partners) {
     for (const role of PARTNER_LOGIN_ROLES[p.type]) {
       users.push({
@@ -91,6 +98,6 @@ export function buildSampleSeed(): DbSnapshot {
     users,
     devices: [device],
     batchCodePool,
-    sequences: [...base.sequences, ...[...counters].map(([prefix, value]) => ({ id: prefix, value }))],
+    sequences: [...base.sequences, { id: "VF", value: 1 }, ...[...counters].map(([prefix, value]) => ({ id: prefix, value }))],
   };
 }

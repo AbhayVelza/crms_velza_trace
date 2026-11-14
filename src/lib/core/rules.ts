@@ -4,11 +4,14 @@ import { buildPackCodes, PACKS_PER_LOT } from "./codes";
 import { PARTNER_TYPES, type ItemKind, type ItemStatus, type LotType, type Partner, type PartnerType } from "./types";
 
 /**
- * Distribution line: Manufacturer → Super Stockist → Distributor → Retailer. A few retailers are supplied
- * by their Super Stockist directly (Manufacturer → Super Stockist → Retailer). Retailers are the last tier.
+ * Distribution line (since 6 Nov 2026): Manufacturer → Velza Warehouse → Super Stockist, Distributor or Retailer.
+ * The manufacturer ships only to the Velza Warehouse; the warehouse supplies any SS, DB or Retailer. Onward the
+ * old chain continues: Super Stockist → its Distributors and direct Retailers, Distributor → its Retailers.
+ * Retailers are the last tier.
  */
 export const DESTINATION_TYPES: Record<PartnerType, PartnerType[]> = {
-  MANUFACTURER: ["SS"],
+  MANUFACTURER: ["WAREHOUSE"],
+  WAREHOUSE: ["SS", "DB", "RETAILER"],
   SS: ["DB", "RETAILER"],
   DB: ["RETAILER"],
   RETAILER: [],
@@ -17,6 +20,7 @@ export const DESTINATION_TYPES: Record<PartnerType, PartnerType[]> = {
 /** Status of an item sitting at a partner of this tier. */
 export const AT_STATUS: Record<PartnerType, ItemStatus> = {
   MANUFACTURER: "PACKED",
+  WAREHOUSE: "AT_WAREHOUSE",
   SS: "AT_SS",
   DB: "AT_DB",
   RETAILER: "AT_RETAILER",
@@ -25,7 +29,7 @@ export const AT_STATUS: Record<PartnerType, ItemStatus> = {
 /** Scanning one of these raises a BLOCKED_CODE alert. */
 export const BLOCKED_STATUSES: ItemStatus[] = ["RECALLED", "QUARANTINED", "VOID"];
 /** Exception statuses: the item cannot move. */
-export const STOPPED_STATUSES: ItemStatus[] = ["RECALLED", "QUARANTINED", "VOID", "DAMAGED", "RETURNED"];
+export const STOPPED_STATUSES: ItemStatus[] = ["RECALLED", "QUARANTINED", "VOID", "DAMAGED", "RETURN_IN_TRANSIT", "RETURNED", "EXPIRED"];
 
 export const ALERT_RESULT_CODES = ["WRONG_RECEIVER", "UNKNOWN_CODE", "DUPLICATE_RECEIPT", "BLOCKED_CODE"] as const;
 
@@ -118,6 +122,8 @@ export function assignedPluralOf(type: PartnerType): string {
 
 /** A sender may supply only the partners assigned to it (when the receiver's tier is assigned at all). */
 export function isAssignedDestination(sender: Pick<Partner, "id" | "type">, receiver: Pick<Partner, "type" | "parentId">): boolean {
+  // The Velza Warehouse supplies any SS, Distributor or Retailer; assignments bind only the onward chain.
+  if (sender.type === "WAREHOUSE") return true;
   if (ASSIGNED_TO[receiver.type]?.includes(sender.type)) return receiver.parentId === sender.id;
   return true;
 }
@@ -169,6 +175,10 @@ export interface ReceiveCheckInput {
 }
 
 export function canReceive({ item, parentLotStatus, receiver }: ReceiveCheckInput): RuleResult {
+  // Taken back by Velza field staff: only the warehouse it is on its way to may receive it (as RETURNED).
+  if (item.status === "RETURN_IN_TRANSIT") {
+    return item.inTransitToId === receiver.id ? OK : reject("WRONG_RECEIVER", `${item.code} is not in transit to ${receiver.name}`);
+  }
   const blocked = blockedResult(item);
   if (blocked) return blocked;
   if (item.kind === "PACK" && parentLotStatus !== "OPENED") {
@@ -181,8 +191,10 @@ export function canReceive({ item, parentLotStatus, receiver }: ReceiveCheckInpu
   return reject("WRONG_RECEIVER", `${item.code} is not in transit to ${receiver.name}`);
 }
 
-export function receivePatch(receiver: Partner) {
-  return { status: AT_STATUS[receiver.type], locationId: receiver.id, inTransitToId: null, dispatchedAt: null };
+export function receivePatch(receiver: Partner, fromStatus: ItemStatus = "IN_TRANSIT") {
+  // A return arrives as RETURNED and waits for the warehouse's inspection before it is stock again.
+  const status: ItemStatus = fromStatus === "RETURN_IN_TRANSIT" ? "RETURNED" : AT_STATUS[receiver.type];
+  return { status, locationId: receiver.id, inTransitToId: null, dispatchedAt: null };
 }
 
 // ---------------------------------------------------------------- verify
@@ -195,7 +207,12 @@ export interface VerifiableLot {
 
 export function canStartVerification(lot: VerifiableLot): RuleResult {
   if (isBlocked(lot.status)) return reject("BLOCKED_CODE", `Lot ${lot.lotCode} is ${lot.status}`);
-  if (lot.status === "GENERATED") return reject("NOT_PRINTED", `Lot ${lot.lotCode} has not been printed yet`);
+  if (lot.status === "GENERATED") {
+    return reject(
+      "NOT_PRINTED",
+      `Lot ${lot.lotCode} has been generated but not marked as printed yet. The manufacturer operator must finish printing its stickers from Print orders, or use "Mark as printed" there once they are printed.`,
+    );
+  }
   if (lot.status !== "PRINTED") return reject("WRONG_STATUS", `Lot ${lot.lotCode} is ${lot.status}, already verified`);
   return OK;
 }
@@ -233,12 +250,13 @@ export function canOpenLot(lot: MovableItem, actor: Partner): RuleResult {
   if (actor.type !== "RETAILER") {
     return reject("NOT_ALLOWED", "Only a Retailer can open a lot");
   }
+  // Blocked first: a recalled/void code raises an alert wherever it is scanned (and recall is public anyway).
   const blocked = blockedResult(lot);
   if (blocked) return blocked;
+  // Location before status, so a retailer cannot learn the state of a lot held by someone else.
+  if (lot.locationId !== actor.id) return reject("NOT_AT_LOCATION", `Lot ${lot.code} is not in stock at ${actor.name}`);
   if (lot.status === "OPENED") return reject("WRONG_STATUS", `Lot ${lot.code} is already opened`);
-  if (lot.locationId !== actor.id || lot.status !== AT_STATUS[actor.type]) {
-    return reject("NOT_AT_LOCATION", `Lot ${lot.code} is not in stock at ${actor.name}`);
-  }
+  if (lot.status !== AT_STATUS[actor.type]) return reject("NOT_AT_LOCATION", `Lot ${lot.code} is not in stock at ${actor.name}`);
   return OK;
 }
 
@@ -316,7 +334,10 @@ export function lotStatusAfterReprint(lotStatus: ItemStatus): ItemStatus {
 
 /** Recall moves every lot/pack of the batch to RECALLED, except VOID ones which never left the factory. */
 export function recallPatch(status: ItemStatus): { status: ItemStatus; statusBeforeRecall: ItemStatus } | null {
-  if (status === "VOID" || status === "RECALLED") return null;
+  // RETURNED stock has already left the chain (withdrawn); a recall must not overwrite that classification.
+  if (status === "VOID" || status === "RECALLED" || status === "RETURNED") return null;
+  // Taken back (on its way to the warehouse) or written off as expired: also out of the chain already.
+  if (status === "RETURN_IN_TRANSIT" || status === "EXPIRED") return null;
   return { status: "RECALLED", statusBeforeRecall: status };
 }
 
@@ -325,11 +346,36 @@ export function packStatusForLot(lotStatus: ItemStatus, currentPackStatus: ItemS
   return lotStatus === "OPENED" ? currentPackStatus : lotStatus;
 }
 
+/**
+ * The only statuses the public page calls genuine: QC-passed stock (PACKED) and everything after it in the chain.
+ * An allowlist, so a new or unexpected status is never shown to a consumer as genuine.
+ */
+export const PUBLIC_GENUINE_STATUSES: readonly ItemStatus[] = ["PACKED", "IN_TRANSIT", "AT_WAREHOUSE", "AT_SS", "AT_DB", "AT_RETAILER", "OPENED"];
+
 /** Customer-facing status line for the public lookup page. */
 export function publicStatus(found: boolean, status: ItemStatus | null): { label: string; tone: "ok" | "danger" | "warn" } {
   if (!found || !status) return { label: "Unregistered code", tone: "warn" };
+  if (PUBLIC_GENUINE_STATUSES.includes(status)) return { label: "Genuine Velza product", tone: "ok" };
   if (status === "RECALLED") return { label: "Recalled — do not consume", tone: "danger" };
-  if (status === "VOID") return { label: "Unregistered code", tone: "warn" };
+  if (status === "RETURNED" || status === "RETURN_IN_TRANSIT") return { label: "Withdrawn — do not consume", tone: "danger" };
+  if (status === "EXPIRED") return { label: "Expired — do not consume", tone: "danger" };
   if (status === "QUARANTINED" || status === "DAMAGED") return { label: "Not for sale — do not consume", tone: "danger" };
-  return { label: "Genuine Velza product", tone: "ok" };
+  // Printed but not yet through QC: it has not left the plant, so it is not a released product.
+  if (status === "GENERATED" || status === "PRINTED") return { label: "Not yet released", tone: "warn" };
+  return { label: "Unregistered code", tone: "warn" }; // VOID, or anything unexpected
+}
+
+/**
+ * How a public (consumer) scan is written to the scan audit. Only genuine stock is ok. The other results are
+ * public-only codes that are NOT in ALERT_RESULT_CODES, so one consumer scan never raises its own HQ alert: HQ gets
+ * aggregated alerts from computePublicSummaryAlerts (alerts.ts) instead, which cannot be flooded with made-up codes.
+ */
+export const PUBLIC_SCAN_RESULTS = ["PUBLIC_UNKNOWN", "PUBLIC_BLOCKED", "PUBLIC_UNRELEASED"] as const;
+export type PublicScanResult = (typeof PUBLIC_SCAN_RESULTS)[number];
+
+export function publicScanOutcome(code: string, status: ItemStatus | null): { ok: boolean; result: "OK" | PublicScanResult; message: string } {
+  if (!status) return { ok: false, result: "PUBLIC_UNKNOWN", message: `Public scan of unknown code ${code}` };
+  if (PUBLIC_GENUINE_STATUSES.includes(status)) return { ok: true, result: "OK", message: publicStatus(true, status).label };
+  if (status === "GENERATED" || status === "PRINTED") return { ok: false, result: "PUBLIC_UNRELEASED", message: `Public scan of ${status} code ${code} (not yet released from the plant)` };
+  return { ok: false, result: "PUBLIC_BLOCKED", message: `Public scan of ${status} code ${code}` };
 }

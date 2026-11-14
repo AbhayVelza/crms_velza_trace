@@ -33,8 +33,9 @@ beforeAll(async () => {
   for (const [k, role] of [["operator", "OPERATOR"], ["qc", "QC"]] as [string, Role][]) {
     ids[k] = (await store().users.list({ role }))[0].id;
   }
-  ids.SS1 = (await store().partners.list()).find((p) => p.name.startsWith("SS-1"))!.id;
-  const created = await createPrintOrder(ids.operator, { batches: [{ flavour: "OR", mfgDate: "2026-10-26", expiryDate: "2027-07-26", cases: 2, trays: 0 }] });
+  // The manufacturer ships only to the Velza Warehouse.
+  ids.VW = (await store().partners.list()).find((p) => p.name.startsWith("VW-1"))!.id;
+  const created = await createPrintOrder(ids.operator, { idempotencyKey: crypto.randomUUID(), batches: [{ flavour: "OR", mfgDate: "2026-10-26", expiryDate: "2027-07-26", cases: 2, trays: 0 }] });
   if (created.preview) throw new Error("expected order");
   await markPrinted(ids.operator, created.printOrder.id);
   lots = created.printOrder.lotCodes;
@@ -54,7 +55,7 @@ describe("quarantined lot", () => {
   it("stays blocked while quarantined: no QC, no dispatch", async () => {
     expect(await statusOf(lots[0])).toBe("QUARANTINED");
     expect(await verify(ids.qc, { action: "scanLot", code: lots[0] })).toMatchObject({ ok: false, code: "BLOCKED_CODE" });
-    expect(await dispatch(ids.operator, { action: "check", toPartnerId: ids.SS1, invoice: "INV-1", code: lots[0] })).toMatchObject({ ok: false });
+    expect(await dispatch(ids.operator, { action: "check", toPartnerId: ids.VW, invoice: "INV-1", code: lots[0] })).toMatchObject({ ok: false });
   });
 
   it("reprint with a reason → back to PRINTED for QC; QC verifies → PACKED, dispatchable", async () => {
@@ -65,11 +66,11 @@ describe("quarantined lot", () => {
     expect(await statusOf(lots[0])).toBe("PRINTED");
     expect((await store().packs.list({ lotCode: lots[0] })).every((p) => p.status === "PRINTED")).toBe(true);
     // not sellable until QC passes it
-    expect(await dispatch(ids.operator, { action: "check", toPartnerId: ids.SS1, invoice: "INV-1", code: lots[0] })).toMatchObject({ ok: false });
+    expect(await dispatch(ids.operator, { action: "check", toPartnerId: ids.VW, invoice: "INV-1", code: lots[0] })).toMatchObject({ ok: false });
 
     expect(await verifyAll(lots[0])).toMatchObject({ ok: true });
     expect(await statusOf(lots[0])).toBe("PACKED");
-    expect(await dispatch(ids.operator, { action: "check", toPartnerId: ids.SS1, invoice: "INV-1", code: lots[0] })).toMatchObject({ ok: true });
+    expect(await dispatch(ids.operator, { action: "check", toPartnerId: ids.VW, invoice: "INV-1", code: lots[0] })).toMatchObject({ ok: true });
 
     const history = (await store().movements.list()).filter((m) => m.itemCode.startsWith(lots[0])).map((m) => [m.type, m.toStatus]);
     expect(history.slice(-3)).toEqual([["QUARANTINED", "QUARANTINED"], ["REPRINTED", "PRINTED"], ["VERIFIED", "PACKED"]]);

@@ -19,6 +19,10 @@ export const ACTIONS = [
   "recall",
   "territory",
   "damage",
+  "container",
+  "details",
+  "takeBack",
+  "returnInspect",
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -26,14 +30,14 @@ export const PERMISSIONS: Record<Action, Role[]> = {
   admin: ["ADMIN"],
   printOrder: ["OPERATOR"],
   verify: ["QC"],
-  dispatch: ["OPERATOR", "SS", "DB"],
-  receive: ["SS", "DB", "RETAILER"],
+  dispatch: ["OPERATOR", "WAREHOUSE", "SS", "DB"],
+  receive: ["WAREHOUSE", "SS", "DB", "RETAILER"],
   openLot: ["RETAILER"],
   reprint: ["OPERATOR"],
   void: ["OPERATOR"],
   device: ["OPERATOR", "ADMIN"],
   sync: ["OPERATOR"],
-  stock: ["OPERATOR", "QC", "SS", "DB", "RETAILER"],
+  stock: ["OPERATOR", "QC", "WAREHOUSE", "SS", "DB", "RETAILER"],
   // The HQ dashboard is for Velza HQ only; every role gets its own portal and nothing else.
   dashboard: ["TRACE_OWNER"],
   search: ["TRACE_OWNER"],
@@ -41,7 +45,15 @@ export const PERMISSIONS: Record<Action, Role[]> = {
   /** See the partners assigned to you: SS → its distributors and direct retailers, DB → its retailers. */
   territory: ["SS", "DB"],
   /** Report damaged cases, trays and packs held at your location. */
-  damage: ["OPERATOR", "SS", "DB", "RETAILER"],
+  damage: ["OPERATOR", "WAREHOUSE", "SS", "DB", "RETAILER"],
+  /** Shipping containers plant → Velza Warehouse: the operator loads and dispatches them; the warehouse and HQ follow them. */
+  container: ["OPERATOR", "WAREHOUSE", "TRACE_OWNER"],
+  /** Scan a code to see its product details (batch, dates) and the partners it came through to reach you. */
+  details: ["OPERATOR", "QC", "WAREHOUSE", "SS", "DB", "RETAILER", "TRACE_OWNER", "ADMIN", "VELZA_FIELD"],
+  /** Velza field staff take stock back from a partner (not selling, near expiry, damaged …) to the Velza Warehouse. */
+  takeBack: ["VELZA_FIELD"],
+  /** The Velza Warehouse inspects what came back: back to stock, or write-off. */
+  returnInspect: ["WAREHOUSE"],
 };
 
 export function can(role: Role, action: Action): boolean {

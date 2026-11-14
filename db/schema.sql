@@ -1,4 +1,4 @@
--- Velza Traceability — PostgreSQL schema v2.
+-- Velza Traceability — PostgreSQL schema v6.
 -- Generated from src/lib/store/sql/schema.ts by `npm run db:schema`; do not edit by hand.
 -- The app applies this itself on first use (and `npm run db:migrate` does it on demand); every
 -- statement is safe to run again.
@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS schema_info (
 -- or for a few Retailers their Super Stockist directly.
 CREATE TABLE IF NOT EXISTS partners (
   partner_id      text PRIMARY KEY,
-  partner_type    text NOT NULL CONSTRAINT partners_partner_type_check CHECK (partner_type IN ('MANUFACTURER', 'SS', 'DB', 'RETAILER')),
+  partner_type    text NOT NULL CONSTRAINT partners_partner_type_check CHECK (partner_type IN ('MANUFACTURER', 'WAREHOUSE', 'SS', 'DB', 'RETAILER')),
   name            text NOT NULL,
   place           text NOT NULL DEFAULT '',
   address         text NOT NULL DEFAULT '',
@@ -33,21 +33,21 @@ CREATE TABLE IF NOT EXISTS partners (
   created_by      text,
   row_no          bigint GENERATED ALWAYS AS IDENTITY,
   CONSTRAINT partner_id_matches_type CHECK (
-    partner_id ~ '^(MF|SS|DB|RT)[0-9]{4,}$' AND left(partner_id, 2) = CASE partner_type
-      WHEN 'MANUFACTURER' THEN 'MF' WHEN 'SS' THEN 'SS' WHEN 'DB' THEN 'DB' ELSE 'RT' END)
+    partner_id ~ '^(MF|VW|SS|DB|RT)[0-9]{4,}$' AND left(partner_id, 2) = CASE partner_type
+      WHEN 'MANUFACTURER' THEN 'MF' WHEN 'WAREHOUSE' THEN 'VW' WHEN 'SS' THEN 'SS' WHEN 'DB' THEN 'DB' ELSE 'RT' END)
 );
 -- One Super Stockist per state.
-CREATE UNIQUE INDEX IF NOT EXISTS partners_one_ss_per_state ON partners (state) WHERE partner_type = 'SS';
+-- One Super Stockist per state: the index is (re)built in the v6 section below, where the approval column exists.
 CREATE UNIQUE INDEX IF NOT EXISTS partners_email_unique ON partners (lower(email)) WHERE email <> '';
 CREATE INDEX IF NOT EXISTS partners_parent ON partners (parent_id);
 
 -- ============================================================ users (sign-ins)
 -- login_id = the partner ID (DB0001), MF0001-OP / MF0001-QC at the plant, AD0001 / HQ0001 for Velza staff.
 CREATE TABLE IF NOT EXISTS users (
-  login_id             text PRIMARY KEY CONSTRAINT users_login_id_check CHECK (login_id ~ '^(MF|SS|DB|RT|AD|HQ)[0-9]{4,}(-(OP|QC))?$'),
+  login_id             text PRIMARY KEY CONSTRAINT users_login_id_check CHECK (login_id ~ '^(MF|VW|SS|DB|RT|AD|HQ|VF)[0-9]{4,}(-(OP|QC))?$'),
   partner_id           text REFERENCES partners (partner_id) DEFERRABLE INITIALLY DEFERRED,
   name                 text NOT NULL,
-  role                 text NOT NULL CONSTRAINT users_role_check CHECK (role IN ('ADMIN', 'OPERATOR', 'QC', 'SS', 'DB', 'RETAILER', 'TRACE_OWNER')),
+  role                 text NOT NULL CONSTRAINT users_role_check CHECK (role IN ('ADMIN', 'OPERATOR', 'QC', 'WAREHOUSE', 'SS', 'DB', 'RETAILER', 'TRACE_OWNER', 'VELZA_FIELD')),
   password_hash        text,
   password_changed_at  timestamptz,
   active               boolean NOT NULL DEFAULT true,
@@ -150,6 +150,28 @@ CREATE TABLE IF NOT EXISTS print_orders (
   row_no           bigint GENERATED ALWAYS AS IDENTITY
 );
 
+-- ============================================================ containers
+-- One trip of a shipping container from the plant to the Velza Warehouse. container_code is the container's
+-- own number; containers are reused, so it is unique only among containers still loading or on the road.
+CREATE TABLE IF NOT EXISTS containers (
+  container_id     text PRIMARY KEY,
+  container_code   text NOT NULL CHECK (container_code ~ '^[A-Z0-9][A-Z0-9-]{2,19}$'),
+  manufacturer_id  text NOT NULL,
+  status           text NOT NULL CHECK (status IN ('LOADING', 'IN_TRANSIT', 'RECEIVED')),
+  lot_codes        text[] NOT NULL,
+  to_partner_id    text,
+  invoice          text,
+  created_at       timestamptz NOT NULL,
+  created_by       text NOT NULL,
+  dispatched_at    timestamptz,
+  dispatched_by    text,
+  received_at      timestamptz,
+  received_by      text,
+  row_no           bigint GENERATED ALWAYS AS IDENTITY
+);
+CREATE UNIQUE INDEX IF NOT EXISTS containers_one_active_per_code ON containers (container_code) WHERE status <> 'RECEIVED';
+CREATE INDEX IF NOT EXISTS containers_by_manufacturer ON containers (manufacturer_id);
+
 -- ============================================================ codes
 -- One row per sticker: a case or tray (LOT) and each of its packs (PACK). The code must equal its
 -- parts: country (2) + batch (6) + flavour (2) + hex lot number (5) [+ pack size + pack sequence].
@@ -169,8 +191,8 @@ CREATE TABLE IF NOT EXISTS codes (
   expiry_date           date,
   manufacturer_id       text NOT NULL REFERENCES partners (partner_id) DEFERRABLE INITIALLY DEFERRED,
   status                text NOT NULL CONSTRAINT codes_status_check CHECK (
-                          status IN ('GENERATED', 'PRINTED', 'PACKED', 'IN_TRANSIT', 'AT_SS', 'AT_DB', 'AT_RETAILER',
-                    'OPENED', 'QUARANTINED', 'VOID', 'DAMAGED', 'RETURNED', 'RECALLED')),
+                          status IN ('GENERATED', 'PRINTED', 'PACKED', 'IN_TRANSIT', 'AT_WAREHOUSE', 'AT_SS', 'AT_DB', 'AT_RETAILER',
+                    'OPENED', 'QUARANTINED', 'VOID', 'DAMAGED', 'RETURN_IN_TRANSIT', 'RETURNED', 'EXPIRED', 'RECALLED')),
   location_id           text NOT NULL REFERENCES partners (partner_id) DEFERRABLE INITIALLY DEFERRED,
   in_transit_to         text REFERENCES partners (partner_id) DEFERRABLE INITIALLY DEFERRED,
   dispatched_at         timestamptz,
@@ -239,9 +261,9 @@ DROP TRIGGER IF EXISTS code_history_no_change ON code_history;
 CREATE TRIGGER code_history_no_change BEFORE UPDATE OR DELETE ON code_history
   FOR EACH ROW EXECUTE FUNCTION code_history_append_only();
 
--- ============================================================ upgrade from v1
+-- ============================================================ upgrade from v1 / v2
 -- CREATE TABLE IF NOT EXISTS leaves an existing table's checks as they were, so the checks that changed
--- in v2 are put back here with the v2 values (on a new database this replaces them with the same).
+-- in v2 and v3 are put back here with the current values (on a new database this replaces them with the same).
 -- Rows from before the change must be converted first; if any are left this stops and says how.
 DO $$
 DECLARE
@@ -263,20 +285,86 @@ $$;
 ALTER TABLE partners
   DROP CONSTRAINT IF EXISTS partners_partner_type_check,
   DROP CONSTRAINT IF EXISTS partner_id_matches_type,
-  ADD CONSTRAINT partners_partner_type_check CHECK (partner_type IN ('MANUFACTURER', 'SS', 'DB', 'RETAILER')),
+  ADD CONSTRAINT partners_partner_type_check CHECK (partner_type IN ('MANUFACTURER', 'WAREHOUSE', 'SS', 'DB', 'RETAILER')),
   ADD CONSTRAINT partner_id_matches_type CHECK (
-    partner_id ~ '^(MF|SS|DB|RT)[0-9]{4,}$' AND left(partner_id, 2) = CASE partner_type
-      WHEN 'MANUFACTURER' THEN 'MF' WHEN 'SS' THEN 'SS' WHEN 'DB' THEN 'DB' ELSE 'RT' END);
+    partner_id ~ '^(MF|VW|SS|DB|RT)[0-9]{4,}$' AND left(partner_id, 2) = CASE partner_type
+      WHEN 'MANUFACTURER' THEN 'MF' WHEN 'WAREHOUSE' THEN 'VW' WHEN 'SS' THEN 'SS' WHEN 'DB' THEN 'DB' ELSE 'RT' END);
 ALTER TABLE users
   DROP CONSTRAINT IF EXISTS users_login_id_check,
   DROP CONSTRAINT IF EXISTS users_role_check,
-  ADD CONSTRAINT users_login_id_check CHECK (login_id ~ '^(MF|SS|DB|RT|AD|HQ)[0-9]{4,}(-(OP|QC))?$'),
-  ADD CONSTRAINT users_role_check CHECK (role IN ('ADMIN', 'OPERATOR', 'QC', 'SS', 'DB', 'RETAILER', 'TRACE_OWNER'));
+  ADD CONSTRAINT users_login_id_check CHECK (login_id ~ '^(MF|VW|SS|DB|RT|AD|HQ|VF)[0-9]{4,}(-(OP|QC))?$'),
+  ADD CONSTRAINT users_role_check CHECK (role IN ('ADMIN', 'OPERATOR', 'QC', 'WAREHOUSE', 'SS', 'DB', 'RETAILER', 'TRACE_OWNER', 'VELZA_FIELD'));
 ALTER TABLE codes
   DROP CONSTRAINT IF EXISTS codes_status_check,
   ADD CONSTRAINT codes_status_check CHECK (
-    status IN ('GENERATED', 'PRINTED', 'PACKED', 'IN_TRANSIT', 'AT_SS', 'AT_DB', 'AT_RETAILER',
-                    'OPENED', 'QUARANTINED', 'VOID', 'DAMAGED', 'RETURNED', 'RECALLED'));
+    status IN ('GENERATED', 'PRINTED', 'PACKED', 'IN_TRANSIT', 'AT_WAREHOUSE', 'AT_SS', 'AT_DB', 'AT_RETAILER',
+                    'OPENED', 'QUARANTINED', 'VOID', 'DAMAGED', 'RETURN_IN_TRANSIT', 'RETURNED', 'EXPIRED', 'RECALLED'));
 
-INSERT INTO schema_info (id, version) VALUES (1, 2)
+-- ============================================================ v3: code integrity
+-- Every print order records its kind and request fingerprint (idempotent replays must match exactly),
+-- reprints record the order that issued the code, a batch's lot counter can never move backwards, and
+-- a code issued by a print order can never be deleted or renamed (TRUNCATE by a reset still works).
+-- New columns are nullable: orders and reprints made before v3 keep NULL.
+ALTER TABLE print_orders
+  ADD COLUMN IF NOT EXISTS order_kind text,
+  ADD COLUMN IF NOT EXISTS request_fingerprint text;
+ALTER TABLE print_orders
+  DROP CONSTRAINT IF EXISTS print_orders_order_kind_check,
+  ADD CONSTRAINT print_orders_order_kind_check CHECK (order_kind IS NULL OR order_kind IN ('NEW_BATCH', 'CONTINUATION'));
+ALTER TABLE code_history ADD COLUMN IF NOT EXISTS print_order_id text;
+
+CREATE OR REPLACE FUNCTION batches_counter_forward_only() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.next_lot < OLD.next_lot THEN
+    RAISE EXCEPTION 'Batch %: the lot counter cannot move backwards (% → %)', OLD.batch_code, OLD.next_lot, NEW.next_lot
+      USING ERRCODE = 'VZ001';
+  END IF;
+  RETURN NEW;
+END
+$$;
+DROP TRIGGER IF EXISTS batches_counter_forward_only ON batches;
+CREATE TRIGGER batches_counter_forward_only BEFORE UPDATE OF next_lot ON batches
+  FOR EACH ROW EXECUTE FUNCTION batches_counter_forward_only();
+
+CREATE OR REPLACE FUNCTION codes_issued_protected() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF (TG_OP = 'DELETE' OR NEW.code IS DISTINCT FROM OLD.code)
+     AND EXISTS (SELECT 1 FROM print_orders WHERE print_order_id = OLD.print_order_id) THEN
+    RAISE EXCEPTION 'Code % was issued by print order % and cannot be deleted or renamed', OLD.code, OLD.print_order_id
+      USING ERRCODE = 'VZ002';
+  END IF;
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END
+$$;
+DROP TRIGGER IF EXISTS codes_issued_protected ON codes;
+CREATE TRIGGER codes_issued_protected BEFORE UPDATE OF code OR DELETE ON codes
+  FOR EACH ROW EXECUTE FUNCTION codes_issued_protected();
+
+-- ============================================================ v4: plant query indexes
+-- A plant's codes, orders and batches (print order list, reprint list); a PC's unsynced rows (device bar counts,
+-- Sync); a PC's reserved batch codes (every print order preview and create). Partial indexes stay small: once
+-- synced, a row leaves them.
+CREATE INDEX IF NOT EXISTS codes_manufacturer ON codes (manufacturer_id, code_type);
+CREATE INDEX IF NOT EXISTS codes_device_unsynced ON codes (device_id) WHERE NOT synced;
+CREATE INDEX IF NOT EXISTS print_orders_manufacturer ON print_orders (manufacturer_id);
+CREATE INDEX IF NOT EXISTS print_orders_device_unsynced ON print_orders (device_id) WHERE NOT synced;
+CREATE INDEX IF NOT EXISTS batches_manufacturer ON batches (manufacturer_id);
+CREATE INDEX IF NOT EXISTS batches_device_unsynced ON batches (device_id) WHERE NOT synced;
+CREATE INDEX IF NOT EXISTS batch_code_pool_device ON batch_code_pool (device_id, status);
+
+-- ============================================================ v6: self sign-up approval
+-- SS, DB and Retailer shops sign themselves up. approval: NULL = approved (every older row, every Retailer),
+-- PENDING = a self-signed-up SS or DB waiting for Velza Admin, REJECTED = turned down (kept; ID never reused).
+-- A rejected SS no longer holds its state, so the one-SS-per-state index leaves it out.
+ALTER TABLE partners ADD COLUMN IF NOT EXISTS approval text;
+ALTER TABLE partners
+  DROP CONSTRAINT IF EXISTS partners_approval_check,
+  ADD CONSTRAINT partners_approval_check CHECK (approval IS NULL OR approval IN ('PENDING', 'REJECTED'));
+DROP INDEX IF EXISTS partners_one_ss_per_state;
+CREATE UNIQUE INDEX partners_one_ss_per_state ON partners (state) WHERE partner_type = 'SS' AND approval IS DISTINCT FROM 'REJECTED';
+
+INSERT INTO schema_info (id, version) VALUES (1, 6)
   ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version, applied_at = now();

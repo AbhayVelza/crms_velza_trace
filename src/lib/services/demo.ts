@@ -1,9 +1,10 @@
 // Dev-only demo helper: click-to-scan codes relevant to each screen, so the demo runs without a scanner.
 
+import type { Action } from "@/lib/core/permissions";
 import { DESTINATION_TYPES } from "@/lib/core/rules";
 import type { Lot, Pack } from "@/lib/core/types";
 import { getStore } from "@/lib/store";
-import { isVisible, loadActor, partnerName } from "./common";
+import { isVisible, loadActor, partnerName, requireAction } from "./common";
 
 export const DEMO_SCREENS = ["verify", "dispatch", "receive", "open", "damage", "reprint", "void", "search"] as const;
 export type DemoScreen = (typeof DEMO_SCREENS)[number];
@@ -15,9 +16,22 @@ export interface DemoCode {
 
 const FAKE: DemoCode = { code: "91ZZZZZZOR00001", label: "made-up code" };
 
+/** Each screen's codes are only listed to a role that may use that screen (they show real codes and statuses). */
+export const DEMO_SCREEN_ACTION: Record<DemoScreen, Action> = {
+  verify: "verify",
+  dispatch: "dispatch",
+  receive: "receive",
+  open: "openLot",
+  damage: "damage",
+  reprint: "reprint",
+  void: "void",
+  search: "search",
+};
+
 export async function demoCodes(userId: string | null, screen: DemoScreen, lotCode?: string): Promise<DemoCode[]> {
   const store = getStore();
   const actor = await loadActor(store, userId);
+  requireAction(actor, DEMO_SCREEN_ACTION[screen]);
   const me = actor.partner?.id ?? null;
   const [allLots, allPacks, partners] = await Promise.all([store.lots.list(), store.packs.list(), store.partners.list()]);
   const lots = allLots.filter((l) => isVisible(l, me)).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.lotNumber - b.lotNumber);
@@ -39,7 +53,11 @@ export async function demoCodes(userId: string | null, screen: DemoScreen, lotCo
         const other = packs.find((p) => p.lotCode !== lotCode && lot && lotByCode.get(p.lotCode)?.manufacturerId === lot.manufacturerId);
         return [...own, ...(other ? [{ code: other.packCode, label: "pack of another lot" }] : [])];
       }
-      return lots.filter((l) => l.manufacturerId === me && (l.status === "PRINTED" || l.status === "GENERATED")).map((l) => ({ code: l.lotCode, label: lotLabel(l) }));
+      // Printed lots are the real examples. One unprinted lot is kept, last and labelled, to show the rejection.
+      const mine = lots.filter((l) => l.manufacturerId === me);
+      const printed = mine.filter((l) => l.status === "PRINTED").map((l) => ({ code: l.lotCode, label: lotLabel(l) }));
+      const unprinted = mine.find((l) => l.status === "GENERATED");
+      return [...printed, ...(unprinted ? [{ code: unprinted.lotCode, label: lotLabel(unprinted, " · not printed: expect rejection") }] : [])];
     }
     case "dispatch": {
       const sender = actor.partner;
@@ -58,7 +76,7 @@ export async function demoCodes(userId: string | null, screen: DemoScreen, lotCo
       return lots.filter((l) => l.locationId === me && l.status === "AT_RETAILER").map((l) => ({ code: l.lotCode, label: lotLabel(l) }));
     case "damage": {
       // Lots in stock here (sealed, or opened with packs left here), and loose packs in stock here.
-      const inStock = new Set(["PACKED", "AT_SS", "AT_DB", "AT_RETAILER"]);
+      const inStock = new Set(["PACKED", "AT_WAREHOUSE", "AT_SS", "AT_DB", "AT_RETAILER"]);
       const myPacks = packs.filter((p) => loose(p) && p.locationId === me && inStock.has(p.status));
       const openedHere = new Set(myPacks.map((p) => p.lotCode));
       const myLots = lots.filter((l) => l.locationId === me && l.synced && (inStock.has(l.status) || (l.status === "OPENED" && openedHere.has(l.lotCode))));

@@ -8,8 +8,12 @@ import { defineConfig } from "@playwright/test";
 const PORT = 3100;
 export const E2E_DB = "data/e2e-db.json";
 export const E2E_PG_DIR = "data/e2e-pg";
-export const E2E_STORE_ENV: Record<string, string> =
-  process.env.E2E_STORE === "pglite" ? { STORE: "pglite", PGLITE_DIR: E2E_PG_DIR } : { STORE: "json", VELZA_DB_PATH: E2E_DB };
+/** Damage photos of the e2e run, apart from data/uploads (the photos of data/db.json). */
+export const E2E_UPLOAD_DIR = "data/e2e-uploads";
+export const E2E_STORE_ENV: Record<string, string> = {
+  ...(process.env.E2E_STORE === "pglite" ? { STORE: "pglite", PGLITE_DIR: E2E_PG_DIR } : { STORE: "json", VELZA_DB_PATH: E2E_DB }),
+  VELZA_UPLOAD_DIR: E2E_UPLOAD_DIR,
+};
 // The demo script signs in with passwords, so sign-in is on whatever .env.local says.
 const E2E_SERVER_ENV = { ...E2E_STORE_ENV, SIGN_IN: "on" };
 

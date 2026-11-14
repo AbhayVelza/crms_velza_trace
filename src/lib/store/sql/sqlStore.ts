@@ -3,8 +3,8 @@
 // rows of `code_history`. Field names stay the app's; column names are the database's.
 
 import { LOT_NUMBER_MAX } from "@/lib/core/codes";
-import { DEFAULT_SETTINGS, type Settings } from "@/lib/core/types";
-import { NotFoundError, type AppendOnlyRepo, type DbSnapshot, type NewMovement, type NewScan, type Repo, type Row, type Store, type StoreTx, type Where } from "../Store";
+import { DEFAULT_SETTINGS, type Movement, type Settings } from "@/lib/core/types";
+import { IntegrityError, NotFoundError, type AppendOnlyRepo, type DbSnapshot, type NewMovement, type NewScan, type Repo, type Row, type Store, type StoreTx, type TransactionOptions, type Where } from "../Store";
 import type { Query, SqlDriver } from "./driver";
 import { ALL_TABLES, SCHEMA_SQL, SCHEMA_VERSION } from "./schema";
 
@@ -24,7 +24,9 @@ interface Spec {
 }
 
 const SETTINGS_ID = "default";
-const INSERT_CHUNK = 200;
+const INSERT_CHUNK = 1000;
+/** Bind parameters per statement, under PostgreSQL's limit of 65,535. */
+const MAX_PARAMS = 60_000;
 
 const castOf = (t: ColType | undefined) =>
   t === "ts" ? "::timestamptz" : t === "date" ? "::date" : t === "json" ? "::jsonb" : t === "textarr" ? "::text[]" : t === "int" ? "::integer" : t === "bool" ? "::boolean" : "";
@@ -127,6 +129,7 @@ const SPECS = {
       ["email", "email"],
       ["parentId", "parent_id"],
       ["active", "active", "bool"],
+      ["approval", "approval"],
       ["createdAt", "created_at", "ts"],
       ["createdBy", "created_by"],
     ),
@@ -204,6 +207,28 @@ const SPECS = {
       ["status", "status"],
       ["printedAt", "printed_at", "ts"],
       ["synced", "synced", "bool"],
+      ["kind", "order_kind"],
+      ["requestFingerprint", "request_fingerprint"],
+    ),
+  },
+  containers: {
+    table: "containers",
+    key: "container_id",
+    order: "row_no",
+    cols: T(
+      ["id", "container_id"],
+      ["code", "container_code"],
+      ["manufacturerId", "manufacturer_id"],
+      ["status", "status"],
+      ["lotCodes", "lot_codes", "textarr"],
+      ["toId", "to_partner_id"],
+      ["invoice", "invoice"],
+      ["createdAt", "created_at", "ts"],
+      ["createdBy", "created_by"],
+      ["dispatchedAt", "dispatched_at", "ts"],
+      ["dispatchedBy", "dispatched_by"],
+      ["receivedAt", "received_at", "ts"],
+      ["receivedBy", "received_by"],
     ),
   },
   lots: {
@@ -295,7 +320,7 @@ const SPECS = {
     key: "event_id",
     order: "history_id",
     fixed: { record_type: "REPRINT" },
-    cols: T(["id", "event_id"], ["at", "event_time", "ts"], ["code", "code"], ["itemKind", "item_kind"], ["reason", "reason"], ["userId", "login_id"], ["deviceId", "device_id"]),
+    cols: T(["id", "event_id"], ["at", "event_time", "ts"], ["code", "code"], ["itemKind", "item_kind"], ["reason", "reason"], ["userId", "login_id"], ["deviceId", "device_id"], ["printOrderId", "print_order_id"]),
     derive: async (rows) => rows.map(() => ({ event: "REPRINTED", ok: true, result: "OK" })),
   },
 } satisfies Record<string, Spec>;
@@ -316,7 +341,14 @@ function makeRepo<R extends Row>(q: Query, spec: Spec): Repo<R> {
       const col = colOf.get(field);
       if (!col) throw new Error(`${spec.table}: no column for field ${field}`);
       if (value === null) parts.push(`${col[1]} IS NULL`);
-      else {
+      else if (Array.isArray(value)) {
+        // "Any of": = ANY(array), so an index on the column is used; null in the list matches NULL, as in the JSON store.
+        if (col[2] === "json" || col[2] === "textarr") throw new Error(`${spec.table}: field ${field} takes equality only`);
+        const values = value.filter((v) => v !== null);
+        params.push(values.map((v) => toParam(v, col[2])));
+        const any = `${col[1]} = ANY($${params.length}${castOf(col[2]) || "::text"}[])`;
+        parts.push(values.length < value.length ? `(${any} OR ${col[1]} IS NULL)` : any);
+      } else {
         params.push(toParam(value, col[2]));
         parts.push(`${col[1]} = $${params.length}${castOf(col[2])}`);
       }
@@ -348,8 +380,10 @@ function makeRepo<R extends Row>(q: Query, spec: Spec): Repo<R> {
     for (const [column, value] of fixed) add(column, () => value);
     for (const column of Object.keys(derived[0] ?? {})) add(column, (_r, d) => d[column]);
 
-    for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
-      const chunk = rows.slice(i, i + INSERT_CHUNK);
+    // As many rows per statement as PostgreSQL's bind-parameter limit allows (65,535), at most INSERT_CHUNK.
+    const per = Math.max(1, Math.min(INSERT_CHUNK, Math.floor(MAX_PARAMS / columns.length)));
+    for (let i = 0; i < rows.length; i += per) {
+      const chunk = rows.slice(i, i + per);
       const params: unknown[] = [];
       const values = chunk.map((r, j) => {
         const d = derived[i + j];
@@ -359,7 +393,31 @@ function makeRepo<R extends Row>(q: Query, spec: Spec): Repo<R> {
     }
   }
 
+  /** `SET a = $1, b = $2 …` for a patch (id and undefined fields skipped); the values are pushed onto `params`. */
+  function setClause(patch: Record<string, unknown>, params: unknown[]): string[] {
+    const sets: string[] = [];
+    for (const [field, value] of Object.entries(patch)) {
+      if (value === undefined || field === "id") continue;
+      const col = colOf.get(field);
+      if (!col) throw new Error(`${spec.table}: no column for field ${field}`);
+      params.push(toParam(value, col[2]));
+      sets.push(`${col[1]} = $${params.length}${castOf(col[2])}`);
+    }
+    return sets;
+  }
+
   return {
+    async updateWhere(filter, patch) {
+      if (!Object.values(filter ?? {}).some((v) => v !== undefined)) throw new Error(`${spec.table}: updateWhere needs a filter`);
+      const params: unknown[] = [];
+      const sets = setClause(patch as Record<string, unknown>, params);
+      if (!sets.length) return (await list(filter)).map((r) => r.id);
+      const rows = await q<{ id: string; ord: string | number }>(
+        `UPDATE ${spec.table} SET ${sets.join(", ")}${where(filter as Record<string, unknown>, params)} RETURNING ${spec.key} AS id, ${spec.order} AS ord`,
+        params,
+      );
+      return rows.sort((a, b) => Number(a.ord) - Number(b.ord)).map((r) => r.id);
+    },
     async get(id) {
       const params: unknown[] = [id];
       const extra = fixed.map(([column, value]) => (params.push(value), ` AND ${column} = $${params.length}`)).join("");
@@ -416,6 +474,7 @@ function makeTx(q: Query): StoreTx {
     return { list: r.list, append: r.create };
   };
   const lots = repo<DbSnapshot["lots"][number]>("lots");
+  const movementRows = repo<Movement>("movements");
 
   const tx: StoreTx = {
     countries: repo("countries"),
@@ -426,6 +485,7 @@ function makeTx(q: Query): StoreTx {
     batchCodePool: repo("batchCodePool"),
     batches: repo("batches"),
     printOrders: repo("printOrders"),
+    containers: repo("containers"),
     lots: {
       ...lots,
       // Pack rows carry their lot's sync flag too (every code row shows whether it is synced).
@@ -433,6 +493,11 @@ function makeTx(q: Query): StoreTx {
         const updated = await lots.update(id, patch);
         if (patch.synced !== undefined) await q(`UPDATE codes SET synced = $1 WHERE lot_code = $2 AND code_type = 'PACK'`, [patch.synced, id]);
         return updated;
+      },
+      async updateWhere(where, patch) {
+        const ids = await lots.updateWhere(where, patch);
+        if (patch.synced !== undefined && ids.length) await q(`UPDATE codes SET synced = $1 WHERE lot_code = ANY($2::text[]) AND code_type = 'PACK'`, [patch.synced, ids]);
+        return ids;
       },
     },
     packs: repo("packs"),
@@ -443,6 +508,12 @@ function makeTx(q: Query): StoreTx {
 
     async appendMovement(m: NewMovement) {
       return tx.movements.append({ ...m, id: crypto.randomUUID(), at: m.at ?? new Date().toISOString() });
+    },
+    async appendMovements(ms: NewMovement[]) {
+      const now = new Date().toISOString();
+      const rows: Movement[] = ms.map((m) => ({ ...m, id: crypto.randomUUID(), at: m.at ?? now }));
+      await movementRows.createMany(rows);
+      return rows;
     },
     async appendScan(s: NewScan) {
       return tx.scans.append({ ...s, id: crypto.randomUUID(), at: s.at ?? new Date().toISOString() });
@@ -490,7 +561,7 @@ async function schemaVersion(d: SqlDriver): Promise<number> {
   }
 }
 
-const COLLECTION_REPOS = ["countries", "flavours", "partners", "users", "sessions", "devices", "batchCodePool", "batches", "printOrders", "lots", "packs"] as const;
+const COLLECTION_REPOS = ["countries", "flavours", "partners", "users", "sessions", "devices", "batchCodePool", "batches", "printOrders", "containers", "lots", "packs"] as const;
 const LEDGERS = ["movements", "scans", "reprints"] as const;
 
 export class SqlStore implements Store {
@@ -541,9 +612,17 @@ export class SqlStore implements Store {
     return d;
   }
 
-  async transaction<R>(fn: (tx: StoreTx) => Promise<R>): Promise<R> {
+  async transaction<R>(fn: (tx: StoreTx) => Promise<R>, opts?: TransactionOptions): Promise<R> {
     const d = await this.driver();
-    return d.transaction((q) => fn(makeTx(q)));
+    try {
+      return await d.transaction((q) => fn(makeTx(q)), opts);
+    } catch (e) {
+      // The integrity triggers (schema v3) raise these; callers see the same error as on the JSON store.
+      const code = (e as { code?: string }).code;
+      if (code === "VZ001") throw new IntegrityError("COUNTER_BACKWARDS", (e as Error).message);
+      if (code === "VZ002") throw new IntegrityError("ISSUED_CODE_PROTECTED", (e as Error).message);
+      throw e;
+    }
   }
 
   /** Replace all data. `version` = the database's schema version: an older one is upgraded in the same transaction. */
@@ -573,7 +652,8 @@ export class SqlStore implements Store {
     // which the v2 schema refuses to upgrade until its data is converted).
     const raw = await this.connection();
     const version = await schemaVersion(raw);
-    const d = version && version !== SCHEMA_VERSION ? raw : await this.driver();
+    // v2 → v3 only adds columns and triggers, so a v2 database is upgraded first and read normally.
+    const d = version && version < 2 ? raw : await this.driver();
     return d.transaction(async (q) => {
       const tx = makeTx(q);
       const out: Record<string, unknown> = {};
@@ -606,6 +686,7 @@ export class SqlStore implements Store {
       create: write((r, row: R) => r.create(row)),
       createMany: write((r, rows: R[]) => r.createMany(rows)),
       update: write((r, id: string, patch: Partial<Omit<R, "id">>) => r.update(id, patch)),
+      updateWhere: write((r, where: Where<R>, patch: Partial<Omit<R, "id">>) => r.updateWhere(where, patch)),
       delete: write((r, id: string) => r.delete(id)),
     };
   }
@@ -613,6 +694,10 @@ export class SqlStore implements Store {
   private ledger<R extends Row>(name: (typeof LEDGERS)[number]): AppendOnlyRepo<R> {
     const r = this.repo<R>(name);
     return { list: r.list, append: (row) => this.transaction((tx) => (tx[name] as unknown as AppendOnlyRepo<R>).append(row)) };
+  }
+
+  appendMovements(ms: NewMovement[]) {
+    return this.transaction((tx) => tx.appendMovements(ms));
   }
 
   countries = this.repo<DbSnapshot["countries"][number]>("countries");
@@ -623,6 +708,7 @@ export class SqlStore implements Store {
   batchCodePool = this.repo<DbSnapshot["batchCodePool"][number]>("batchCodePool");
   batches = this.repo<DbSnapshot["batches"][number]>("batches");
   printOrders = this.repo<DbSnapshot["printOrders"][number]>("printOrders");
+  containers = this.repo<DbSnapshot["containers"][number]>("containers");
   lots = this.repo<DbSnapshot["lots"][number]>("lots");
   packs = this.repo<DbSnapshot["packs"][number]>("packs");
   movements = this.ledger<DbSnapshot["movements"][number]>("movements");

@@ -29,7 +29,7 @@ npm run dev             # http://localhost:3000 → pick a role and a person (si
 | Command | What it does |
 |---|---|
 | `npm run dev` | Start the app (dev mode, with the demo helper) |
-| `npm run seed` | Reset the data to a clean start: country 91, the 4 flavours, default settings, and two sign-ins — Velza Admin `AD0001` and Velza HQ `HQ0001` — with the passwords from `VELZA_ADMIN_PASSWORD` / `VELZA_HQ_PASSWORD` or new random ones, printed once. No partners or devices |
+| `npm run seed` | Clean start for an **empty** store: country 91, the 4 flavours, default settings, and two sign-ins — Velza Admin `AD0001` and Velza HQ `HQ0001` — with the passwords from `VELZA_ADMIN_PASSWORD` / `VELZA_HQ_PASSWORD` or new random ones, printed once. No partners or devices. It prints the target and **refuses a store that already holds partners, batches, lots or history**; `npm run seed -- --force` replaces it after writing a timestamped backup (`db.backup-<time>-before-seed.json`, never overwritten), and never in production |
 | `npm run clear-activity` | Delete all activity (batches, lots, packs, movements, scans, reprints) but keep partners, sign-ins, devices, used batch codes, ID sequences and settings |
 | `npm test` | Unit + service tests (vitest), twice for the business logic: on the JSON file and on PostgreSQL (embedded) |
 | `npm run test:e2e` | The demo script below in a real browser (Playwright, builds and serves on port 3100 with its own data and the test sample network) |
@@ -68,8 +68,8 @@ printed once in the server log.
 | Setting | Sign-in |
 |---|---|
 | `npm run dev` (default) | **Off**: pick who to act as; switch any time in the header. Every active person can be picked, including people entered before sign-in existed |
-| `npm run build` + `npm start` (default) | **On**: sign-in ID and password |
-| `SIGN_IN=on` / `SIGN_IN=off` in `.env.local` | Forces it either way |
+| `npm run build` + `npm start` | **Always on**: sign-in ID and password. `SIGN_IN=off` is ignored here (a warning is logged) |
+| `SIGN_IN=on` / `SIGN_IN=off` in `.env.local` | Forces it either way under `npm run dev` only |
 
 Sign-in being off changes only *who you are*; every portal and permission rule still applies (a Retailer still
 can't open Admin pages). Turn it on (`SIGN_IN=on`) before anyone outside the development team uses the app.
@@ -135,7 +135,8 @@ Sign in as the person named in each step.
    keep the dates → cases: 2 and 0 → trays: 1 and 1. The **Summary** shows batch codes from the pool,
    lots `00001–00003` (cases `00001–00002`, tray `00003`) and `00001`, and `17 + 7 = 24` stickers.
    **Create & print** lists the 24 generated codes with all their fields; **Open print view**: lot sticker first,
-   then its packs. Choose *Label roll* or *A4 sheet* and **Print** — the lots become `PRINTED`.
+   then its packs. Choose *Label roll* or *A4 sheet* and **Print** (this only opens the browser print dialog).
+   Once the stickers have printed correctly, press **Mark as printed** — only then do the lots become `PRINTED`.
 2. **`MF0001-QC` → Verify.** Scan a lot, then its packs (ticks appear). Scan *pack of another lot*
    from the demo helper → red "does not belong". **Confirm → PACKED**. Repeat for all 4 lots.
 3. **`MF0001-OP` → Dispatch.** Destination *SS-1*, invoice `INV-001`, scan the two Original
@@ -208,7 +209,19 @@ The app runs on PostgreSQL as soon as it has a connection string:
 | `batches`, `print_orders`, `batch_code_pool`, `devices`, `countries`, `flavours`, `sessions`, `id_counters`, `settings` | supporting data the screens need | |
 
 Every write runs in a serializable transaction (retried automatically on a conflict), so two people scanning the
-same case at the same moment can't both succeed. To try the database code without a server, set `STORE=pglite`
+same case at the same moment can't both succeed. Print orders of one manufacturer also take an advisory lock, so
+concurrent orders, also from several app servers, wait their turn instead of failing.
+
+**Production uses PostgreSQL.** The JSON file is for single-process trials. One process owns it through
+`data/db.json.lock`, and a second server or script on the same file is refused (503 `STORE_LOCKED`). Stop the server
+before running `seed`, `db:import-json` or `clear-activity` on that file.
+
+**Serial integrity** (details in [WORKING_MODEL.md](WORKING_MODEL.md), "Serial integrity and duplicate-print
+protection"):
+- Creating a print order needs an `idempotencyKey` (UUID): a retry returns the same order.
+- A batch's lot counter never moves backwards, and an issued code can't be deleted (enforced in both stores).
+- A sticker sheet is served only until the order is confirmed printed.
+- A single sticker is printed only through a logged reprint, once. To try the database code without a server, set `STORE=pglite`
 (and `PGLITE_DIR=data/pg` to keep the data): an embedded PostgreSQL that runs inside the app — `npm test` and
 `npm run test:e2e:postgres` use it.
 
@@ -228,8 +241,16 @@ It converts the data the app uses (`data/db.json`, or the database when `DATABAS
 - every Supplier and its sign-ins are removed;
 - it refuses, changing nothing, if a Supplier holds stock or has history, because history is permanent.
 
-The PostgreSQL schema is now v2 (tiers `MANUFACTURER`, `SS`, `DB`, `RETAILER`; ID prefixes `MF`, `SS`, `DB`, `RT`;
-status `AT_RETAILER`). A v1 database is upgraded in place once its data has been converted.
+The PostgreSQL schema is now v3. v2 brought tiers `MANUFACTURER`, `SS`, `DB` and `RETAILER`, ID prefixes `MF`, `SS`,
+`DB` and `RT`, and status `AT_RETAILER`; a v1 database is upgraded in place once its data has been converted.
+
+v3 (4 Nov 2026) adds:
+- `print_orders.order_kind` and `request_fingerprint`;
+- `code_history.print_order_id`;
+- triggers that refuse a lot counter moving backwards or an issued code being deleted.
+
+A v2 database is upgraded in place, with no data change, on the app's first start or with `npm run db:migrate`.
+Columns are only added and existing rows keep NULL. Back up first, as for any migration.
 
 Decisions made where the spec was silent are listed in [ASSUMPTIONS.md](ASSUMPTIONS.md).
 

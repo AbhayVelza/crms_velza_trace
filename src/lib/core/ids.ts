@@ -1,19 +1,20 @@
 // Partner IDs and sign-in IDs. Every partner gets the next number of its role's sequence
 // (DB0001, DB0002 …); numbers are never reused. A partner's sign-in ID is its partner ID,
 // except the plant, which has one sign-in for the Operator (MF0001-OP) and one for QC (MF0001-QC).
-// Velza staff have their own sequences (AD0001 for Admin, HQ0001 for HQ).
+// Velza staff have their own sequences (AD0001 for Admin, HQ0001 for HQ, VF0001 for field staff).
 
 import type { PartnerType, Role } from "./types";
 
 export const PARTNER_ID_PREFIX: Record<PartnerType, string> = {
   MANUFACTURER: "MF",
+  WAREHOUSE: "VW",
   SS: "SS",
   DB: "DB",
   RETAILER: "RT",
 };
 
 /** Velza staff have no partner; their sign-in IDs come from these sequences. */
-export const STAFF_ID_PREFIX: Partial<Record<Role, string>> = { ADMIN: "AD", TRACE_OWNER: "HQ" };
+export const STAFF_ID_PREFIX: Partial<Record<Role, string>> = { ADMIN: "AD", TRACE_OWNER: "HQ", VELZA_FIELD: "VF" };
 
 /** The plant has two sign-ins, told apart by a suffix. */
 export const PLANT_LOGIN_SUFFIX: Partial<Record<Role, string>> = { OPERATOR: "OP", QC: "QC" };
@@ -21,6 +22,7 @@ export const PLANT_LOGIN_SUFFIX: Partial<Record<Role, string>> = { OPERATOR: "OP
 /** The sign-ins a new partner of this type gets. */
 export const PARTNER_LOGIN_ROLES: Record<PartnerType, Role[]> = {
   MANUFACTURER: ["OPERATOR", "QC"],
+  WAREHOUSE: ["WAREHOUSE"],
   SS: ["SS"],
   DB: ["DB"],
   RETAILER: ["RETAILER"],
@@ -38,7 +40,7 @@ export function partnerLoginId(role: Role, partnerId: string): string {
   return suffix ? `${partnerId}-${suffix}` : partnerId;
 }
 
-export const LOGIN_ID_RE = /^(MF|SS|DB|RT|AD|HQ)[0-9]{4,}(-(OP|QC))?$/;
+export const LOGIN_ID_RE = /^(MF|VW|SS|DB|RT|AD|HQ|VF)[0-9]{4,}(-(OP|QC))?$/;
 
 /** Sign-in IDs are typed in any case and stored in capitals. */
 export function normalizeLoginId(raw: string): string {

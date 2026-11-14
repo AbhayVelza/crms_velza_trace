@@ -1,7 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import { thisPcId } from "@/components/DeviceBar";
 import { ScanInput } from "@/components/ScanInput";
+import { useAction } from "@/components/useAction";
 import { Button, Card, Code, Field, Input, Notice, PageTitle } from "@/components/ui";
 import { api, errorText } from "@/lib/client";
 import { notifyDataChanged } from "@/lib/events";
@@ -10,11 +12,12 @@ export default function VoidPage() {
   const [lotCode, setLotCode] = useState("");
   const [reason, setReason] = useState("");
   const [msg, setMsg] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+  const [voiding, runSubmit] = useAction(submit);
 
   async function submit() {
     setMsg(null);
     try {
-      const r = await api<{ message: string }>("/api/void", { body: { lotCode, reason } });
+      const r = await api<{ message: string }>("/api/void", { body: { lotCode, reason, deviceId: thisPcId() } });
       setMsg({ tone: "ok", text: r.message });
       setLotCode("");
       setReason("");
@@ -34,10 +37,10 @@ export default function VoidPage() {
             <p className="text-sm">
               Lot: <Code>{lotCode}</Code> (its pack stickers are voided too)
             </p>
-            <Field label="Reason (optional)">
-              <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Misprint, smudged" />
+            <Field label="Reason (required)" hint="A void cannot be undone; the reason is kept in the lot's history.">
+              <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Misprint, smudged" required aria-required="true" />
             </Field>
-            <Button variant="danger" onClick={submit}>
+            <Button variant="danger" onClick={runSubmit} loading={voiding} disabled={!reason.trim()}>
               Void lot
             </Button>
           </div>

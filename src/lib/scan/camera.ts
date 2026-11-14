@@ -111,10 +111,22 @@ export class CameraSession {
     if (!this.env.isSecureContext) throw new CameraError("INSECURE", MESSAGES.INSECURE);
     if (!this.env.mediaDevices?.getUserMedia) throw new CameraError("UNSUPPORTED", MESSAGES.UNSUPPORTED);
     if (camera.active && camera.active !== this) camera.active.stop(); // only one camera session at a time
-    this.stopStream();
     camera.active = this;
     const gen = ++this.generation;
     this.state = "starting";
+    // Attempts share one <video>, so they run one after another: an older attempt still opening (React runs the
+    // opening effect twice in development) must finish and clean up before the next one attaches its stream —
+    // otherwise its clean-up clears the video under the newer camera and the preview stays black.
+    const run = this.pending.then(() => this.open(gen, deviceId));
+    this.pending = run.catch(() => undefined);
+    return run;
+  }
+
+  private pending: Promise<unknown> = Promise.resolve();
+
+  private async open(gen: number, deviceId?: string): Promise<void> {
+    if (gen !== this.generation) return; // superseded while waiting for the previous attempt
+    this.stopStream();
     const constraints: MediaStreamConstraints = {
       audio: false,
       video: deviceId ? { deviceId: { exact: deviceId }, ...CAMERA_SIZE } : { facingMode: { ideal: "environment" }, ...CAMERA_SIZE },
@@ -125,7 +137,11 @@ export class CameraSession {
         if (this.state === "running" && gen === this.generation) this.onText(text);
       });
     } catch (e) {
-      if (gen === this.generation) this.state = "idle";
+      // Superseded by a newer start() or by stop() while the camera was opening (e.g. React running the opening
+      // effect twice in development): the browser aborts this attempt's video.play() ("interrupted by a new load
+      // request"). That is not a camera failure, and the stream now belongs to the newer attempt — leave it alone.
+      if (gen !== this.generation) return;
+      this.state = "idle";
       this.stopStream();
       throw toCameraError(e);
     }
@@ -187,8 +203,20 @@ export class CameraSession {
 }
 
 /** The real decoder: @zxing/browser, Code 128 (pack and lot barcodes) and QR (lot stickers). Loaded on demand. */
+/**
+ * @zxing/browser 0.2.1 bug: HTMLCanvasElementLuminanceSource never initialises `tempCanvasElement`, but only creates the
+ * temporary canvas when it is exactly `null`. With TRY_HARDER the barcode reader also tries each frame rotated 90°, and
+ * that rotation then throws "Could not create a Canvas element." on every frame (console noise, and sideways barcodes
+ * are never read). Defaulting the field to null on the prototype lets the library create its canvas as intended.
+ */
+export function fixRotatedScans(proto: object) {
+  const p = proto as { tempCanvasElement?: unknown };
+  if (p.tempCanvasElement === undefined) p.tempCanvasElement = null;
+}
+
 export async function zxingDecoder(): Promise<Decoder> {
-  const [{ BrowserMultiFormatReader }, { BarcodeFormat, DecodeHintType }] = await Promise.all([import("@zxing/browser"), import("@zxing/library")]);
+  const [{ BrowserMultiFormatReader, HTMLCanvasElementLuminanceSource }, { BarcodeFormat, DecodeHintType }] = await Promise.all([import("@zxing/browser"), import("@zxing/library")]);
+  fixRotatedScans(HTMLCanvasElementLuminanceSource.prototype);
   const hints = new Map<import("@zxing/library").DecodeHintType, unknown>([
     [DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.CODE_128, BarcodeFormat.QR_CODE]],
     [DecodeHintType.TRY_HARDER, true],

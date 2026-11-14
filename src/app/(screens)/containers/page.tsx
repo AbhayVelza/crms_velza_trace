@@ -149,7 +149,8 @@ function ContainerDetail({ id, operator, onClose }: { id: string; operator: bool
     try {
       const r = await api<{ ok: boolean; code?: string; message: string }>(`/api/containers/${id}/load`, { body: { code } });
       addLog(code, r.ok, r.ok ? r.message : `${r.code}: ${r.message}`);
-      if (r.ok) detail.reload();
+      // Refresh both this panel and the "All containers" list (its count must follow every load).
+      if (r.ok) notifyDataChanged();
     } catch (e) {
       addLog(code, false, errorText(e));
     }
@@ -157,7 +158,7 @@ function ContainerDetail({ id, operator, onClose }: { id: string; operator: bool
   async function unload(code: string) {
     try {
       await api(`/api/containers/${id}/unload`, { body: { code } });
-      detail.reload();
+      notifyDataChanged();
     } catch (e) {
       setMsg({ tone: "error", text: errorText(e) });
     }

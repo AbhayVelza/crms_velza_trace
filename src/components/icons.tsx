@@ -100,6 +100,27 @@ export const IconWarehouse = icon(
     <rect x="6" y="10" width="12" height="12" />
   </>,
 );
+/** A shipping container (Containers: plant → Velza Warehouse). */
+export const IconContainer = icon(
+  <>
+    <path d="M22 7.7c0-.6-.4-1.2-.8-1.5l-6.3-3.9a1.72 1.72 0 0 0-1.7 0l-10.3 6c-.5.2-.9.8-.9 1.4v6.6c0 .5.4 1.2.8 1.5l6.3 3.9a1.72 1.72 0 0 0 1.7 0l10.3-6c.5-.3.9-1 .9-1.5Z" />
+    <path d="M10 21.9V14L2.1 9.1" />
+    <path d="m10 14 11.9-6.9" />
+    <path d="M14 19.8v-8.1" />
+    <path d="M18 17.5V9.4" />
+  </>,
+);
+/** Scan frame with a magnifier (Product details / field staff Scan: look a code up). */
+export const IconScanSearch = icon(
+  <>
+    <path d="M3 7V5a2 2 0 0 1 2-2h2" />
+    <path d="M17 3h2a2 2 0 0 1 2 2v2" />
+    <path d="M21 17v2a2 2 0 0 1-2 2h-2" />
+    <path d="M7 21H5a2 2 0 0 1-2-2v-2" />
+    <circle cx="12" cy="12" r="3" />
+    <path d="m16 16-1.9-1.9" />
+  </>,
+);
 export const IconOctagonAlert = icon(
   <>
     <path d="M12 16h.01" />

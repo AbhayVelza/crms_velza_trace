@@ -63,7 +63,11 @@ export function buildSampleSeed(): DbSnapshot {
   });
   for (const [i, p] of PARTNERS.entries()) if (p.parent) partners[i].parentId = partners.find((x) => x.name.startsWith(p.parent!))!.id;
 
-  const users: User[] = [...base.users];
+  // Velza field staff (VF0001): takes stock back from partners to the Velza Warehouse.
+  const users: User[] = [
+    ...base.users,
+    { id: "VF0001", name: "Farhan (Velza field)", role: "VELZA_FIELD", partnerId: null, active: true, passwordHash, passwordChangedAt: at, createdAt: at, lastLoginAt: null },
+  ];
   for (const p of partners) {
     for (const role of PARTNER_LOGIN_ROLES[p.type]) {
       users.push({
@@ -94,6 +98,6 @@ export function buildSampleSeed(): DbSnapshot {
     users,
     devices: [device],
     batchCodePool,
-    sequences: [...base.sequences, ...[...counters].map(([prefix, value]) => ({ id: prefix, value }))],
+    sequences: [...base.sequences, { id: "VF", value: 1 }, ...[...counters].map(([prefix, value]) => ({ id: prefix, value }))],
   };
 }

@@ -9,7 +9,8 @@ import { ScanChecklist, useChecklist } from "@/components/ScanChecklist";
 import { ScanInput, ScanLog, type ScanLogEntry } from "@/components/ScanInput";
 import type { StockItem } from "@/components/StockTable";
 import { useSession } from "@/components/session";
-import { Card, PageTitle } from "@/components/ui";
+import { Button, Card, Code, Empty, fmtTime, Notice, PageTitle, Table, Td } from "@/components/ui";
+import { useAction } from "@/components/useAction";
 import { useApi } from "@/components/useApi";
 import { api, errorText } from "@/lib/client";
 import { applyAccepted, applyRejected, rebaseChecklist, type ChecklistItem } from "@/lib/scan/checklist";
@@ -71,6 +72,80 @@ export default function ReceivePage() {
           />
         </Card>
       </div>
+      {warehouse && <ReturnsToInspect />}
     </>
+  );
+}
+
+interface PendingReturn {
+  code: string;
+  item: string;
+  flavour: string;
+  batch: string;
+  expiry: string | null;
+  from: string | null;
+  reason: string | null;
+  pickedUpAt: string | null;
+}
+
+/**
+ * Velza Warehouse: stock Velza field staff took back is received here by scanning it (→ RETURNED) and waits for its
+ * inspection: back to stock (AT WAREHOUSE, can be dispatched again) or write-off (DAMAGED / EXPIRED, never again).
+ */
+function ReturnsToInspect() {
+  const pending = useApi<{ items: PendingReturn[] }>("/api/returns", { refreshOnChange: true });
+  const [msg, setMsg] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+  const [busy, decide] = useAction(async (code: string, decision: "BACK_TO_STOCK" | "WRITE_OFF", writeOffAs?: "DAMAGED" | "EXPIRED") => {
+    try {
+      const r = await api<{ message: string }>("/api/returns/inspect", { body: { code, decision, writeOffAs } });
+      setMsg({ tone: "ok", text: r.message });
+      notifyDataChanged();
+    } catch (e) {
+      setMsg({ tone: "error", text: errorText(e) });
+    }
+  });
+  const items = pending.data?.items ?? [];
+  return (
+    <Card title={`Returns to inspect: ${items.length}`} className="mt-4 lg:mt-5">
+      <p className="mb-3 text-sm text-muted-foreground">Scan a returned item above to receive it; then choose what happens to it.</p>
+      {msg && (
+        <Notice tone={msg.tone} className="mb-3">
+          <span data-testid="inspect-result">{msg.text}</span>
+        </Notice>
+      )}
+      <Table head={["Code", "Item", "Batch · expiry", "Returned from", "Reason", "Decision"]} empty={items.length ? null : <Empty>No returns waiting for inspection</Empty>}>
+        {items.map((i) => (
+          <tr key={i.code} data-testid="return-row" data-code={i.code}>
+            <Td>
+              <Code>{i.code}</Code>
+            </Td>
+            <Td>
+              {i.item} · {i.flavour}
+            </Td>
+            <Td>
+              {i.batch} · {i.expiry ?? "—"}
+            </Td>
+            <Td>
+              {i.from ?? "—"}
+              {i.pickedUpAt && <div className="text-xs text-muted-foreground">{fmtTime(i.pickedUpAt)}</div>}
+            </Td>
+            <Td>{i.reason ?? "—"}</Td>
+            <Td>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="secondary" disabled={busy} onClick={() => void decide(i.code, "BACK_TO_STOCK")}>
+                  Back to stock
+                </Button>
+                <Button variant="danger" disabled={busy} onClick={() => void decide(i.code, "WRITE_OFF", "DAMAGED")}>
+                  Write off: Damaged
+                </Button>
+                <Button variant="danger" disabled={busy} onClick={() => void decide(i.code, "WRITE_OFF", "EXPIRED")}>
+                  Write off: Expired
+                </Button>
+              </div>
+            </Td>
+          </tr>
+        ))}
+      </Table>
+    </Card>
   );
 }

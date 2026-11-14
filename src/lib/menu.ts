@@ -13,6 +13,7 @@ const dispatch: MenuItem = { href: "/dispatch", label: "Dispatch", description: 
 const openLot: MenuItem = { href: "/open-lot", label: "Open lot", description: "Open a case or tray so its packs can move one by one" };
 const stock: MenuItem = { href: "/stock", label: "My stock", description: "Lots and packs at, leaving and arriving at your location" };
 const containers: MenuItem = { href: "/containers", label: "Containers", description: "Shipping containers from the plant to the Velza Warehouse" };
+const details: MenuItem = { href: "/details", label: "Product details", description: "Scan a code: batch, manufacture and expiry date, and where it came from" };
 const damaged: MenuItem = { href: "/damaged", label: "Damaged", description: "Report a damaged case, tray or pack; see everything reported damaged here" };
 
 export const MENU: Record<Role, MenuItem[]> = {
@@ -23,6 +24,7 @@ export const MENU: Record<Role, MenuItem[]> = {
     { href: "/admin/reference", label: "Countries & flavours", description: "Code lists used inside every code" },
     { href: "/admin/pools", label: "Batch code pools", description: "Issue random batch codes to devices" },
     { href: "/admin/settings", label: "Settings", description: "Alert threshold, sticker sizes, public URL" },
+    { ...details, description: "Scan a code: the full chain with dates and invoices, holder, status, dates" },
   ],
   OPERATOR: [
     { href: "/operator/new", label: "New print order", description: "Guided questions → batch codes → stickers" },
@@ -32,14 +34,15 @@ export const MENU: Record<Role, MenuItem[]> = {
     { href: "/operator/reprint", label: "Reprint", description: "Reprint a damaged sticker (same code, reason logged)" },
     { href: "/operator/void", label: "Void lot", description: "Void an unpasted or misprinted lot" },
     stock,
+    details,
     damaged,
   ],
-  QC: [{ href: "/qc/verify", label: "Verify", description: "Scan a lot and each of its packs, then confirm" }, stock],
+  QC: [{ href: "/qc/verify", label: "Verify", description: "Scan a lot and each of its packs, then confirm" }, stock, details],
   // The Velza Warehouse receives from the manufacturer and supplies any SS, Distributor or Retailer; it never opens lots.
-  WAREHOUSE: [receive, { ...containers, description: "Containers on their way from the plant; receive one by scanning its number on Receive" }, dispatch, stock, damaged],
-  SS: [receive, dispatch, stock, damaged, { href: "/my-partners", label: "My partners", description: "The distributors and retailers assigned to you and their stock" }],
-  DB: [receive, dispatch, stock, damaged, { href: "/my-partners", label: "My retailers", description: "The retailers assigned to you and their stock" }],
-  RETAILER: [receive, openLot, stock, damaged],
+  WAREHOUSE: [receive, { ...containers, description: "Containers on their way from the plant; receive one by scanning its number on Receive" }, dispatch, stock, details, damaged],
+  SS: [receive, dispatch, stock, details, damaged, { href: "/my-partners", label: "My partners", description: "The distributors and retailers assigned to you and their stock" }],
+  DB: [receive, dispatch, stock, details, damaged, { href: "/my-partners", label: "My retailers", description: "The retailers assigned to you and their stock" }],
+  RETAILER: [receive, openLot, stock, details, damaged],
   TRACE_OWNER: [
     { href: "/hq", label: "Dashboard", description: "Status counts, stock by location, in transit, alerts" },
     { href: "/hq/search", label: "Search code", description: "Status, location, parent/children and full timeline" },
@@ -47,7 +50,10 @@ export const MENU: Record<Role, MenuItem[]> = {
     { href: "/hq/batches", label: "Batches & recall", description: "Batch report and recall" },
     containers,
     { href: "/hq/scans", label: "Scan audit", description: "Every scan, success or failure" },
+    { ...details, description: "Scan a code: the full chain with dates and invoices, holder, status, dates" },
   ],
+  // Velza field staff visit partners: scanning only views (it never receives); Take back sends stock to the warehouse.
+  VELZA_FIELD: [{ href: "/details", label: "Scan", description: "Scan a code: full chain, holder, status, dates; take stock back" }],
 };
 
 /** Pages every signed-in user may open, whatever the role. */

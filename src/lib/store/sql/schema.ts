@@ -21,6 +21,9 @@
 // v6 (14 Nov 2026): self sign-up. partners.approval (NULL = approved, PENDING, REJECTED); the one-SS-per-state
 // index leaves rejected sign-ups out. Column added in place; existing rows stay NULL (approved).
 
+// v6 (13 Nov 2026): returns — role VELZA_FIELD (sign-ins VF0001…) and code statuses RETURN_IN_TRANSIT and EXPIRED.
+// Only allowed values change: the upgrade section re-applies the checks with the current values.
+
 export const SCHEMA_VERSION = 6;
 
 // Checks whose values changed in v2 or v3. Each is named explicitly — with the name PostgreSQL gave it in
@@ -28,10 +31,10 @@ export const SCHEMA_VERSION = 6;
 const PARTNER_TYPE_CHECK = `partner_type IN ('MANUFACTURER', 'WAREHOUSE', 'SS', 'DB', 'RETAILER')`;
 const PARTNER_ID_CHECK = `partner_id ~ '^(MF|VW|SS|DB|RT)[0-9]{4,}$' AND left(partner_id, 2) = CASE partner_type
       WHEN 'MANUFACTURER' THEN 'MF' WHEN 'WAREHOUSE' THEN 'VW' WHEN 'SS' THEN 'SS' WHEN 'DB' THEN 'DB' ELSE 'RT' END`;
-const LOGIN_ID_CHECK = `login_id ~ '^(MF|VW|SS|DB|RT|AD|HQ)[0-9]{4,}(-(OP|QC))?$'`;
-const ROLE_CHECK = `role IN ('ADMIN', 'OPERATOR', 'QC', 'WAREHOUSE', 'SS', 'DB', 'RETAILER', 'TRACE_OWNER')`;
+const LOGIN_ID_CHECK = `login_id ~ '^(MF|VW|SS|DB|RT|AD|HQ|VF)[0-9]{4,}(-(OP|QC))?$'`;
+const ROLE_CHECK = `role IN ('ADMIN', 'OPERATOR', 'QC', 'WAREHOUSE', 'SS', 'DB', 'RETAILER', 'TRACE_OWNER', 'VELZA_FIELD')`;
 const CODE_STATUS_CHECK = `status IN ('GENERATED', 'PRINTED', 'PACKED', 'IN_TRANSIT', 'AT_WAREHOUSE', 'AT_SS', 'AT_DB', 'AT_RETAILER',
-                    'OPENED', 'QUARANTINED', 'VOID', 'DAMAGED', 'RETURNED', 'RECALLED')`;
+                    'OPENED', 'QUARANTINED', 'VOID', 'DAMAGED', 'RETURN_IN_TRANSIT', 'RETURNED', 'EXPIRED', 'RECALLED')`;
 
 // Values only a v1 database can hold (the Supplier tier, Outlets and their SP / OT IDs).
 const V1_TYPES = `('SUPPLIER', 'OUTLET')`;

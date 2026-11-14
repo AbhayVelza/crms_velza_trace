@@ -223,6 +223,26 @@ describe("printing", () => {
     await expect(stickersForOrder(ids.operator, o.printOrder.id)).rejects.toMatchObject({ status: 409, code: "NOTHING_TO_PRINT" });
   });
 
+  it("cases printed first, then trays: the confirmed case run is not reported as voided or recalled, and the title counts the whole order", async () => {
+    // 3 cases (1 + 4 stickers each) and 1 tray (1 + 6) = 22 stickers.
+    const o = await created(createPrintOrder(ids.operator, { ...body(3, 1), idempotencyKey: key() }));
+    const full = await stickersForOrder(ids.operator, o.printOrder.id);
+    expect([full.stickers.length, full.withheldLots, full.title]).toEqual([22, 0, expect.stringContaining("· 22 stickers")]);
+    await markPrinted(ids.operator, o.printOrder.id, { lotType: "CASE" });
+    const trays = await stickersForOrder(ids.operator, o.printOrder.id);
+    expect(trays.stickers).toHaveLength(7); // only the tray run is still to print
+    expect(trays.withheldLots).toBe(0); // was 3: printed cases were counted as "voided or recalled"
+    expect(trays.title).toContain("· 22 stickers");
+    const notes = (await store().movements.list({ type: "PRINT_SHEET_SERVED" })).filter((m) => m.itemCode === o.printOrder.id).map((m) => m.note);
+    expect(notes.some((n) => n?.includes("voided/recalled"))).toBe(false);
+    // A really voided lot is still reported as withheld, and left out of the title count.
+    const o2 = await created(createPrintOrder(ids.operator, { ...body(2), idempotencyKey: key() }));
+    const [v] = await lotsOf(o2.printOrder.id);
+    await voidLot(ids.operator, { lotCode: v.lotCode, reason: "misprint" });
+    const sheet2 = await stickersForOrder(ids.operator, o2.printOrder.id);
+    expect([sheet2.withheldLots, sheet2.title]).toEqual([1, expect.stringContaining("· 5 stickers")]);
+  });
+
   it("8. a single sticker by code (the old direct endpoint) is refused", () => {
     expect(() => stickerByCodeRefused()).toThrow(expect.objectContaining({ status: 410, code: "REPRINT_REQUIRED" }));
   });

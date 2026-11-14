@@ -44,10 +44,10 @@ CREATE INDEX IF NOT EXISTS partners_parent ON partners (parent_id);
 -- ============================================================ users (sign-ins)
 -- login_id = the partner ID (DB0001), MF0001-OP / MF0001-QC at the plant, AD0001 / HQ0001 for Velza staff.
 CREATE TABLE IF NOT EXISTS users (
-  login_id             text PRIMARY KEY CONSTRAINT users_login_id_check CHECK (login_id ~ '^(MF|VW|SS|DB|RT|AD|HQ)[0-9]{4,}(-(OP|QC))?$'),
+  login_id             text PRIMARY KEY CONSTRAINT users_login_id_check CHECK (login_id ~ '^(MF|VW|SS|DB|RT|AD|HQ|VF)[0-9]{4,}(-(OP|QC))?$'),
   partner_id           text REFERENCES partners (partner_id) DEFERRABLE INITIALLY DEFERRED,
   name                 text NOT NULL,
-  role                 text NOT NULL CONSTRAINT users_role_check CHECK (role IN ('ADMIN', 'OPERATOR', 'QC', 'WAREHOUSE', 'SS', 'DB', 'RETAILER', 'TRACE_OWNER')),
+  role                 text NOT NULL CONSTRAINT users_role_check CHECK (role IN ('ADMIN', 'OPERATOR', 'QC', 'WAREHOUSE', 'SS', 'DB', 'RETAILER', 'TRACE_OWNER', 'VELZA_FIELD')),
   password_hash        text,
   password_changed_at  timestamptz,
   active               boolean NOT NULL DEFAULT true,
@@ -192,7 +192,7 @@ CREATE TABLE IF NOT EXISTS codes (
   manufacturer_id       text NOT NULL REFERENCES partners (partner_id) DEFERRABLE INITIALLY DEFERRED,
   status                text NOT NULL CONSTRAINT codes_status_check CHECK (
                           status IN ('GENERATED', 'PRINTED', 'PACKED', 'IN_TRANSIT', 'AT_WAREHOUSE', 'AT_SS', 'AT_DB', 'AT_RETAILER',
-                    'OPENED', 'QUARANTINED', 'VOID', 'DAMAGED', 'RETURNED', 'RECALLED')),
+                    'OPENED', 'QUARANTINED', 'VOID', 'DAMAGED', 'RETURN_IN_TRANSIT', 'RETURNED', 'EXPIRED', 'RECALLED')),
   location_id           text NOT NULL REFERENCES partners (partner_id) DEFERRABLE INITIALLY DEFERRED,
   in_transit_to         text REFERENCES partners (partner_id) DEFERRABLE INITIALLY DEFERRED,
   dispatched_at         timestamptz,
@@ -292,13 +292,13 @@ ALTER TABLE partners
 ALTER TABLE users
   DROP CONSTRAINT IF EXISTS users_login_id_check,
   DROP CONSTRAINT IF EXISTS users_role_check,
-  ADD CONSTRAINT users_login_id_check CHECK (login_id ~ '^(MF|VW|SS|DB|RT|AD|HQ)[0-9]{4,}(-(OP|QC))?$'),
-  ADD CONSTRAINT users_role_check CHECK (role IN ('ADMIN', 'OPERATOR', 'QC', 'WAREHOUSE', 'SS', 'DB', 'RETAILER', 'TRACE_OWNER'));
+  ADD CONSTRAINT users_login_id_check CHECK (login_id ~ '^(MF|VW|SS|DB|RT|AD|HQ|VF)[0-9]{4,}(-(OP|QC))?$'),
+  ADD CONSTRAINT users_role_check CHECK (role IN ('ADMIN', 'OPERATOR', 'QC', 'WAREHOUSE', 'SS', 'DB', 'RETAILER', 'TRACE_OWNER', 'VELZA_FIELD'));
 ALTER TABLE codes
   DROP CONSTRAINT IF EXISTS codes_status_check,
   ADD CONSTRAINT codes_status_check CHECK (
     status IN ('GENERATED', 'PRINTED', 'PACKED', 'IN_TRANSIT', 'AT_WAREHOUSE', 'AT_SS', 'AT_DB', 'AT_RETAILER',
-                    'OPENED', 'QUARANTINED', 'VOID', 'DAMAGED', 'RETURNED', 'RECALLED'));
+                    'OPENED', 'QUARANTINED', 'VOID', 'DAMAGED', 'RETURN_IN_TRANSIT', 'RETURNED', 'EXPIRED', 'RECALLED'));
 
 -- ============================================================ v3: code integrity
 -- Every print order records its kind and request fingerprint (idempotent replays must match exactly),

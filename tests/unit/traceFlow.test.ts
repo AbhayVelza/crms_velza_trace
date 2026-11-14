@@ -19,7 +19,6 @@ import { alertPage, alerts, batchReport, dashboard, lookup, myStock, publicLooku
 import { verify } from "@/lib/services/verify";
 import { photoOf } from "../fixtures/damagePhoto";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
-import { photoOf } from "../fixtures/damagePhoto";
 import { withBatchCode } from "../fixtures/batchCodes";
 
 // The operator picks a batch code from Velza Admin's list: each test order gets a fresh one.

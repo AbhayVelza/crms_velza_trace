@@ -9,10 +9,13 @@ import type { Role } from "@/lib/core/types";
 import { getStore } from "@/lib/store";
 import { cancelContainer, createContainer, dispatchContainer, getContainer, listContainers, loadContainer, unloadContainer } from "@/lib/services/containers";
 import { dispatch, receive } from "@/lib/services/movement";
-import { createPrintOrder, markPrinted } from "@/lib/services/printOrders";
+import { createPrintOrder as createPrintOrderRaw, markPrinted } from "@/lib/services/printOrders";
 import { lookup } from "@/lib/services/trace";
 import { verify } from "@/lib/services/verify";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
+import { withBatchCode } from "../fixtures/batchCodes";
+
+const createPrintOrder = withBatchCode(createPrintOrderRaw);
 
 let dir: string;
 const ids: Record<string, string> = {};

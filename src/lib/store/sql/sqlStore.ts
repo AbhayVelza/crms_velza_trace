@@ -129,6 +129,7 @@ const SPECS = {
       ["email", "email"],
       ["parentId", "parent_id"],
       ["active", "active", "bool"],
+      ["approval", "approval"],
       ["createdAt", "created_at", "ts"],
       ["createdBy", "created_by"],
     ),

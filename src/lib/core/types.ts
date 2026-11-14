@@ -95,9 +95,17 @@ export interface Partner {
   /** The partner it is assigned to: DB → its SS, Retailer → its DB or (for a few retailers) its SS directly. */
   parentId: string | null;
   active: boolean;
+  /**
+   * Self sign-up approval. Absent / null = approved (every partner the Admin registered, and every Retailer).
+   * PENDING = a Super Stockist or Distributor that signed itself up and waits for Velza Admin; REJECTED = turned
+   * down. A pending or rejected partner is also inactive, so it cannot sign in, receive stock or be dispatched to.
+   */
+  approval?: PartnerApproval | null;
   createdAt: string;
   createdBy: string | null;
 }
+
+export type PartnerApproval = "PENDING" | "REJECTED";
 
 /** A sign-in. `id` is the sign-in ID: the partner ID (DB0001), MF0001-OP / MF0001-QC, or AD0001 / HQ0001. */
 export interface User {

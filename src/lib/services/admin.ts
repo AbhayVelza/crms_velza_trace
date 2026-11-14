@@ -32,7 +32,7 @@ import { getStore, type StoreTx } from "@/lib/store";
 import { badRequest, loadActor, notFound, nowIso, publicUser, requireAction, type Actor } from "./common";
 import { autoRefill, issueCodes, reservedCodes } from "./pool";
 
-const partnerFields = {
+export const partnerFields = {
   type: z.enum(PARTNER_TYPES),
   name: z.string().trim().min(1, "Name is required").max(100),
   place: z.string().trim().min(1, "Place (locality) is required").max(80),
@@ -106,7 +106,7 @@ export const phoneKey = (phone: string | undefined) => {
  * `currentParentId` is the saved assignment when editing: an inactive parent is refused only when it is
  * newly picked, so older rows under a since-deactivated parent can still be edited.
  */
-async function validatePartner(tx: StoreTx, data: Partial<Partner> & { type: PartnerType }, selfId?: string, currentParentId?: string | null) {
+export async function validatePartner(tx: StoreTx, data: Partial<Partner> & { type: PartnerType }, selfId?: string, currentParentId?: string | null) {
   const type = data.type;
   const label = PARTNER_TYPE_LABELS[type];
   const state = data.state ?? "";
@@ -117,7 +117,8 @@ async function validatePartner(tx: StoreTx, data: Partial<Partner> & { type: Par
 
   const others = (await tx.partners.list()).filter((p) => p.id !== selfId);
   if (type === "SS") {
-    const taken = others.find((p) => p.type === "SS" && p.state === state);
+    // A rejected self sign-up no longer holds its state (same rule as the database index).
+    const taken = others.find((p) => p.type === "SS" && p.state === state && p.approval !== "REJECTED");
     if (taken) throw badRequest("STATE_TAKEN", `${state} already has a Super Stockist: ${taken.name} (${taken.id}). There is one Super Stockist per state.`);
   }
   if (data.phone) {
@@ -191,13 +192,13 @@ async function guardAdmins(tx: StoreTx, actor: Actor, target: User, next: Partia
   }
 }
 
-function requirePassword(pw: string | undefined, whose: string): string {
+export function requirePassword(pw: string | undefined, whose: string): string {
   const problem = pw === undefined || pw === "" ? "a password is required" : checkPassword(pw);
   if (problem) throw badRequest("WEAK_PASSWORD", `${whose}: ${problem}`);
   return pw!;
 }
 
-async function newUser(tx: StoreTx, id: string, name: string, role: Role, partnerId: string | null, passwordHash: string): Promise<User> {
+export async function newUser(tx: StoreTx, id: string, name: string, role: Role, partnerId: string | null, passwordHash: string): Promise<User> {
   if (await tx.users.get(id)) throw badRequest("DUPLICATE", `Sign-in ${id} already exists`);
   const at = nowIso();
   return tx.users.create({ id, name, role, partnerId, active: true, passwordHash, passwordChangedAt: at, createdAt: at, lastLoginAt: null });
@@ -306,11 +307,51 @@ export async function updateEntity(userId: string | null, entity: AdminEntity, i
     if (entity === "devices" && patch.manufacturerId !== undefined && patch.manufacturerId !== current.manufacturerId) {
       throw badRequest("PLANT_LOCKED", "A device stays with its plant (its batch codes are issued to that plant) — add a new device at the other plant instead");
     }
+    // A self-signed-up SS / DB is switched on only by Approve (decideApproval), never by the Active box.
+    if (entity === "partners" && patch.active === true && (current as Partner).approval) {
+      const what = (current as Partner).approval === "PENDING" ? "is waiting for approval — use Approve" : "was rejected and cannot be activated";
+      throw badRequest("NOT_APPROVED", `${current.name} (${id}) ${what}`);
+    }
     if (patch.active === false && current.active) await guardDeactivate(tx, entity, current);
     await validateEntity(tx, entity, { ...current, ...patch }, id, current);
     const updated = await repo.update(id, patch);
     if (entity === "devices" && current.offline && patch.offline === false) await autoRefill(tx, id);
     return updated;
+  });
+}
+
+export const approvalDecisionSchema = z.object({ decision: z.enum(["approve", "reject"]) });
+
+/**
+ * Velza Admin approves or rejects a self-signed-up Super Stockist or Distributor (status PENDING).
+ * Approve: the partner and its sign-in become active and the approval mark is cleared (a normal partner).
+ * Reject: the record stays (approval REJECTED, inactive), so the ID is never reused and the sign-in never works;
+ * a rejected Super Stockist no longer holds its state.
+ */
+export async function decideApproval(userId: string | null, partnerId: string, body: unknown) {
+  const { decision } = approvalDecisionSchema.parse(body);
+  return getStore().transaction(async (tx) => {
+    const actor = await loadActor(tx, userId);
+    requireAction(actor, "admin");
+    const partner = await tx.partners.get(partnerId);
+    if (!partner) throw notFound(`Partner ${partnerId} not found`);
+    if (partner.approval !== "PENDING") {
+      throw badRequest("NOT_PENDING", `${partner.name} (${partner.id}) is not waiting for approval`);
+    }
+    const label = PARTNER_TYPE_LABELS[partner.type];
+    if (decision === "approve") {
+      // The parent may have been deactivated since the sign-up: the usual partner checks run again.
+      await validatePartner(tx, { ...partner, approval: null }, partner.id, partner.parentId);
+      const updated = await tx.partners.update(partner.id, { active: true, approval: null });
+      for (const u of await tx.users.list({ partnerId: partner.id })) await tx.users.update(u.id, { active: true });
+      return { partner: updated, message: `${partner.name} (${partner.id}) approved — the ${label} can sign in now` };
+    }
+    const updated = await tx.partners.update(partner.id, { active: false, approval: "REJECTED" });
+    for (const u of await tx.users.list({ partnerId: partner.id })) {
+      await tx.users.update(u.id, { active: false });
+      for (const s of await tx.sessions.list({ userId: u.id })) await tx.sessions.delete(s.id);
+    }
+    return { partner: updated, message: `${partner.name} (${partner.id}) rejected — the sign-up stays on record; ${partner.id} is not reused` };
   });
 }
 

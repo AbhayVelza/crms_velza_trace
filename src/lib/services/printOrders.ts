@@ -899,7 +899,6 @@ export async function serveReprint(userId: string | null, reprintId: string): Pr
         printOrder: null,
         runs: [],
         reprint: { ...row, servedAt: at },
-        runs: [],
       };
     });
   } catch (e) {

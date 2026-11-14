@@ -1,6 +1,8 @@
 "use client";
 
-// Print view: preview at real size, choose label roll or A4 sheet, window.print(), then mark PRINTED.
+// Print view: preview at real size (or enlarged on screen so codes scan from the monitor), choose label roll or
+// A4 sheet, window.print(), then mark PRINTED. Cases and trays are separate print runs on separate label rolls:
+// the operator picks a run, prints only its stickers and confirms it on its own.
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
@@ -18,18 +20,6 @@ import { PRINT_CONFIRMATION_NOTE, PrintOrderStatus } from "./PrintOrderStatus";
 import { Button, cx, fmtTime, Loading, Notice } from "./ui";
 import { useApi } from "./useApi";
 
-interface Sheet {
-  title: string;
-  stickers: Sticker[];
-  lotSize: Box;
-  packSize: Box;
-  printOrder: PrintOrder | null;
-  withheldLots?: number;
-  /** Cases first, then trays; only the types the order has. Empty for a reprint. */
-  runs?: PrintRun[];
-}
-
-/** One print run: the cases or the trays of an order, printed on their own label roll and confirmed on their own. */
 interface PrintRun {
   lotType: LotType;
   lots: number;
@@ -84,8 +74,7 @@ export function PrintView({ path, oncePath, backHref, backLabel }: { path?: stri
   const once = useOnceSheet(oncePath ?? null);
   const loaded = oncePath ? once.data : fetched.data;
   const error = oncePath ? once.error : fetched.error;
-  // After the last run's "Mark as printed" the order is updated here; the sheet is not fetched again (the server no
-  // longer serves it). After an earlier run the sheet is fetched again: it then serves only the runs still waiting.
+  // After "Mark as printed" the order is updated here; the sheet is not fetched again (the server no longer serves it).
   const [confirmedOrder, setConfirmedOrder] = useState<PrintOrder | null>(null);
   const [mode, setMode] = useState<PrintMode>("roll");
   // On screen only: real-size bars are about 1 screen pixel wide, too fine to scan from a monitor.
@@ -96,7 +85,7 @@ export function PrintView({ path, oncePath, backHref, backLabel }: { path?: stri
   // The run being printed; null = the first run still waiting, else the first run.
   const [chosenRun, setChosenRun] = useState<LotType | null>(null);
   // The only way lots become PRINTED: the operator's explicit confirmation of a run. One request at a time.
-  const [confirming, confirmPrinted] = useAction(async (orderId: string, lotType?: LotType) => {
+  const [confirming, confirmPrinted] = useAction(async (orderId: string, lotType: LotType) => {
     try {
       const r = await api<{ lotsPrinted: number; printOrder: PrintOrder }>(`/api/print-orders/${orderId}/printed`, { body: { deviceId: thisPcId(), lotType } });
       const names = RUN[lotType];

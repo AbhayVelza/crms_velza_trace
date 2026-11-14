@@ -47,7 +47,7 @@ export default function BatchesPage() {
       <Card className="mb-4 lg:mb-5">
         <Table head={["Batch", "Flavour", "Mfg / Exp", "Lots", "Statuses", "Reprints", ""]} empty={list.data && !list.data.length ? <Empty>No synced batches yet</Empty> : null}>
           {list.data?.map((b) => (
-            <tr key={b.code} className={cx(selected === b.code && "bg-muted shadow-[inset_2px_0_0_var(--foreground)]")} aria-selected={selected === b.code}>
+            <tr key={`${b.code}-${b.flavourName}`} className={cx(selected === b.code && "bg-muted shadow-[inset_2px_0_0_var(--foreground)]")} aria-selected={selected === b.code}>
               <Td>
                 <Code>{b.code}</Code> {b.status === "RECALLED" && <StatusBadge status="RECALLED" />}
                 {b.displayStatus === "EXHAUSTED" && (

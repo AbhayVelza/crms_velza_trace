@@ -11,7 +11,8 @@ import type { Sticker } from "@/lib/core/stickers";
 import type { LotType, PrintOrder } from "@/lib/core/types";
 import { notifyDataChanged } from "@/lib/events";
 import type { Box } from "@/lib/stickerLayout";
-import { PrintStyles, StickerSheetView, stickerWarnings, type PrintMode } from "./Stickers";
+import type { PdfFormat } from "@/lib/stickerPdf";
+import { printerNote, PrintStyles, StickerSheetView, stickerWarnings, type PrintMode } from "./Stickers";
 import { thisPcId } from "./DeviceBar";
 import { useAction } from "./useAction";
 import { IconArrowLeft, IconPrinter } from "./icons";
@@ -79,6 +80,8 @@ export function PrintView({ path, oncePath, backHref, backLabel }: { path?: stri
   // On screen only: real-size bars are about 1 screen pixel wide, too fine to scan from a monitor.
   const [scannable, setScannable] = useState(true);
   const [msg, setMsg] = useState<{ tone: "ok" | "error" | "info"; text: string } | null>(null);
+  // The PDF being made (one at a time).
+  const [pdfBusy, setPdfBusy] = useState<PdfFormat | null>(null);
   // The run being printed; null = the first run still waiting, else the first run.
   const [chosenRun, setChosenRun] = useState<LotType | null>(null);
   // The only way lots become PRINTED: the operator's explicit confirmation of a run. One request at a time.
@@ -129,7 +132,35 @@ export function PrintView({ path, oncePath, backHref, backLabel }: { path?: stri
     }
   }
 
+  /**
+   * Downloads this run's stickers as a PDF. "roll": one sticker per page at real size. "grouped": one page per
+   * case/tray with its own pack stickers under it. Records nothing, like printing.
+   */
+  async function downloadPdf(format: PdfFormat) {
+    setPdfBusy(format);
+    try {
+      const { stickersPdf } = await import("@/lib/stickerPdf");
+      const base = order ? `print-order-${order.id.slice(0, 8)}${run ? `-${RUN[run.lotType].many}` : ""}` : `reprint-${stickers[0]?.code ?? "sticker"}`;
+      const name = format === "grouped" ? `${base}-with-packs` : base;
+      const bytes = await stickersPdf(stickers, sheet.lotSize, sheet.packSize, name, format);
+      const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: "application/pdf" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${name}.pdf`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      if (order && !printed && run && run.pending > 0) {
+        setMsg({ tone: "info", text: `PDF downloaded — nothing has been recorded yet. When every ${RUN[run.lotType].one} sticker has printed correctly, press Mark ${RUN[run.lotType].many} as printed.` });
+      }
+    } catch (e) {
+      setMsg({ tone: "error", text: `PDF not created: ${errorText(e)}` });
+    } finally {
+      setPdfBusy(null);
+    }
+  }
+
   const warnings = stickerWarnings(stickers, sheet.lotSize, sheet.packSize);
+  const dpiNote = printerNote(stickers, sheet.lotSize, sheet.packSize);
   const lots = stickers.filter((s) => s.kind === "LOT").length;
 
   return (
@@ -199,6 +230,16 @@ export function PrintView({ path, oncePath, backHref, backLabel }: { path?: stri
               <IconPrinter size={17} />
               Print {stickers.length} {what}{stickers.length === 1 ? "" : "s"}</Button>
           )}
+          {!printed && stickers.length > 0 && (
+            <Button variant="secondary" loading={pdfBusy === "roll"} disabled={!!pdfBusy} onClick={() => void downloadPdf("roll")} data-testid="download-pdf" title="One sticker per page, real size (label roll)">
+              Download PDF
+            </Button>
+          )}
+          {!printed && stickers.length > 0 && (
+            <Button variant="secondary" loading={pdfBusy === "grouped"} disabled={!!pdfBusy} onClick={() => void downloadPdf("grouped")} data-testid="download-pdf-grouped" title="One page per case/tray, with its own pack stickers under it">
+              Download PDF: {run ? RUN[run.lotType].one : "case"} + its packs
+            </Button>
+          )}
           {order && !printed && run && run.pending > 0 && (
             <Button variant="secondary" loading={confirming} onClick={() => void confirmPrinted(order.id, run.lotType)}>
               Mark {RUN[run.lotType].many} as printed
@@ -207,7 +248,7 @@ export function PrintView({ path, oncePath, backHref, backLabel }: { path?: stri
         </div>
         <p className="text-xs text-muted-foreground">
           {run && runs.length > 1 && `Cases and trays print separately: load the ${RUN[run.lotType].one} label roll for this run. `}
-          {lots} {run ? RUN[run.lotType].one : "lot"} sticker(s) {sheet.lotSize.widthMm}×{sheet.lotSize.heightMm} mm, {stickers.length - lots} pack sticker(s) {sheet.packSize.widthMm}×{sheet.packSize.heightMm} mm. Order: {run ? RUN[run.lotType].one : "lot"} sticker first, then its packs. Set the browser print scale to 100% (no &quot;fit to page&quot;).{scannable ? " The preview is enlarged on screen so its barcodes can be scanned from the monitor; printed stickers are real size." : ""}
+          {lots} {run ? RUN[run.lotType].one : "lot"} sticker(s) {sheet.lotSize.widthMm}×{sheet.lotSize.heightMm} mm, {stickers.length - lots} pack sticker(s) {sheet.packSize.widthMm}×{sheet.packSize.heightMm} mm. Order: {run ? RUN[run.lotType].one : "lot"} sticker first, then its packs. Download PDF gives the same stickers, one per page at real size; &quot;+ its packs&quot; gives one page per {run ? RUN[run.lotType].one : "case"} with its own pack stickers under it. Set the print scale to 100% (no &quot;fit to page&quot;).{scannable ? " The preview is enlarged on screen so its barcodes can be scanned from the monitor; printed stickers are real size." : ""}
         </p>
         {order && !printed && <Notice tone="info">{PRINT_CONFIRMATION_NOTE}</Notice>}
         {printed && (
@@ -221,6 +262,7 @@ export function PrintView({ path, oncePath, backHref, backLabel }: { path?: stri
         )}
         {!!sheet.withheldLots && <Notice tone="warn">{sheet.withheldLots} voided or recalled lot(s) of this order are not printed.</Notice>}
         {oncePath && <Notice tone="info">This logged reprint prints once: print it now. To print the sticker again later, log a new reprint.</Notice>}
+        {dpiNote && <Notice tone="info">{dpiNote}</Notice>}
         {warnings.map((w) => (
           <Notice key={w} tone="warn">
             {w} — change sticker sizes in Admin → Settings.

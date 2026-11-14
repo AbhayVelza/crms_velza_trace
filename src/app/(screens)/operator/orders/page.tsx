@@ -36,7 +36,7 @@ export default function PrintOrdersPage() {
               </Td>
               <Td>
                 {o.batches.map((b) => (
-                  <div key={b.code}>
+                  <div key={`${b.code}-${b.flavour}`}>
                     <Code>{b.code}</Code> {flavourName(b.flavour)} · {b.cases} case(s), {b.trays} tray(s)
                   </div>
                 ))}

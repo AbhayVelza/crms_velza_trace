@@ -6,7 +6,12 @@ import { PNG } from "pngjs";
 import { describe, expect, it } from "vitest";
 import { allocateLots } from "@/lib/core/codes";
 import { code128Svg, CODE128_OPTIONS, QR_OPTIONS } from "./barcode";
-import { lotStickerLayout, modulesFromSvg, packStickerLayout, SPEC } from "./stickerLayout";
+import { PDFDocument } from "pdf-lib";
+import { stickersForLots } from "@/lib/core/stickers";
+import { DEFAULT_SETTINGS } from "@/lib/core/types";
+import { barRuns, drawSticker } from "./stickerDraw";
+import { lotStickerLayout, modulesFromSvg, packStickerLayout, SPEC, type Rect, type StickerLayout } from "./stickerLayout";
+import { groupByLot, groupedPageLayout, stickersPdf } from "./stickerPdf";
 
 async function decodePng(buf: Buffer, format: BarcodeFormat): Promise<string> {
   const png = PNG.sync.read(buf);
@@ -44,38 +49,129 @@ describe("barcodes scan back", () => {
   });
 });
 
-describe("sticker layout meets the print spec at default sizes", () => {
-  const modules = (list: string[]) => Math.max(...list.map((c) => modulesFromSvg(code128Svg(c))));
-  const lotModules = modules(codes.filter((c) => c.length === 15));
-  const packModules = modules(codes.filter((c) => c.length === 17));
+describe("sticker layout at the default sizes (case/tray 70×25 mm, pack 45×15 mm)", () => {
+  const LOT = DEFAULT_SETTINGS.lotSticker;
+  const PACK = DEFAULT_SETTINGS.packSticker;
+  const stickers = stickersForLots(
+    lots.map((l, i) => ({ lotCode: l.lotCode, lotType: i % 2 ? ("TRAY" as const) : ("CASE" as const), flavourName: "Green Apple" })),
+  );
+  const drawn = stickers.map((s) => drawSticker(s, LOT, PACK));
+  const lot = drawn.find((d) => d.sticker.kind === "LOT")!;
+  const pack = drawn.find((d) => d.sticker.kind === "PACK")!;
 
-  it("lot sticker 100×50 mm", () => {
-    const l = lotStickerLayout({ widthMm: 100, heightMm: 50 }, lotModules);
-    expect(l.warnings).toEqual([]);
-    expect(l.barcode.moduleMm).toBeGreaterThanOrEqual(SPEC.minModuleMm);
-    expect(l.barcode.heightMm).toBeGreaterThanOrEqual(SPEC.minBarHeightMm);
-    expect(l.barcode.widthMm + 2 * SPEC.quietZoneMm + 2 * l.padMm).toBeLessThanOrEqual(100);
-    expect(l).not.toHaveProperty("qrMm");
+  const inside = (r: Rect, size: { widthMm: number; heightMm: number }) => r.x >= 0 && r.y >= 0 && r.x + r.w <= size.widthMm + 1e-9 && r.y + r.h <= size.heightMm + 1e-9;
+  const overlap = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+  /** The bars with their quiet zones. */
+  const barsArea = (l: StickerLayout): Rect => ({ x: l.barcode.x - l.barcode.quietMm, y: l.barcode.y, w: l.barcode.w + 2 * l.barcode.quietMm, h: l.barcode.h });
+
+  it("defaults are 70×25 and 45×15 mm", () => {
+    expect(LOT).toEqual({ widthMm: 70, heightMm: 25 });
+    expect(PACK).toEqual({ widthMm: 45, heightMm: 15 });
   });
 
-  it("lot barcode is a little bigger than the pack barcode", () => {
-    const lot = lotStickerLayout({ widthMm: 100, heightMm: 50 }, lotModules).barcode;
-    const pack = packStickerLayout({ widthMm: 75, heightMm: 25 }, packModules).barcode;
-    for (const k of ["moduleMm", "widthMm", "heightMm"] as const) {
-      expect(lot[k]).toBeGreaterThan(pack[k]);
-      expect(lot[k]).toBeLessThanOrEqual(pack[k] * 1.4);
-    }
+  it.each(drawn.map((d) => [d.sticker.code, d] as const))("%s fits: no warnings, everything inside, nothing overlapping", (_code, d) => {
+    const l = d.layout;
+    expect(l.warnings).toEqual([]);
+    const parts = [l.header, barsArea(l), l.text];
+    for (const p of parts) expect(inside(p, d.size)).toBe(true);
+    for (let i = 0; i < parts.length; i++) for (let j = i + 1; j < parts.length; j++) expect(overlap(parts[i], parts[j])).toBe(false);
+    expect(l.barcode.moduleMm).toBeGreaterThanOrEqual(SPEC.minModuleMm);
+    expect(l.barcode.h).toBeGreaterThanOrEqual(SPEC.minBarHeightMm);
+    expect(l.barcode.w).toBeCloseTo(d.bars.reduce((a, b) => a + b, 0) * l.barcode.moduleMm, 6);
   });
 
-  it("pack sticker 75×25 mm", () => {
-    const l = packStickerLayout({ widthMm: 75, heightMm: 25 }, packModules);
-    expect(l.warnings).toEqual([]);
-    expect(l.barcode.moduleMm).toBeGreaterThanOrEqual(SPEC.minModuleMm);
-    expect(l.barcode.heightMm).toBeGreaterThanOrEqual(SPEC.minBarHeightMm);
-    expect(l.barcode.widthMm + 2 * SPEC.quietZoneMm + 2 * l.padMm).toBeLessThanOrEqual(75);
+  it("no sticker carries a QR code", () => {
+    expect(Object.keys(lot.sticker).sort()).toEqual(["code", "header", "kind", "lotType"]);
+    expect(Object.keys(lot.layout).sort()).toEqual(["barcode", "header", "text", "warnings"]);
+  });
+
+  it("case/tray barcode is bigger than the pack barcode", () => {
+    expect(lot.layout.barcode.moduleMm).toBeGreaterThan(pack.layout.barcode.moduleMm);
+    expect(lot.layout.barcode.h).toBeGreaterThan(pack.layout.barcode.h);
+  });
+
+  it("bar runs cover exactly the symbol's dark modules", () => {
+    expect(barRuns(lot.bars).reduce((a, [, w]) => a + w, 0)).toBe(lot.bars.filter((_, i) => i % 2 === 0).reduce((a, b) => a + b, 0));
+    expect(lot.bars.reduce((a, b) => a + b, 0)).toBe(modulesFromSvg(code128Svg(lot.sticker.code)));
   });
 
   it("warns when a sticker is too small", () => {
-    expect(packStickerLayout({ widthMm: 40, heightMm: 15 }, packModules).warnings.length).toBeGreaterThan(0);
+    expect(packStickerLayout({ widthMm: 30, heightMm: 15 }, { header: pack.sticker.header, code: pack.sticker.code, modules: 200 }).warnings.length).toBeGreaterThan(0);
+    expect(lotStickerLayout({ widthMm: 30, heightMm: 25 }, { header: lot.sticker.header, code: lot.sticker.code, modules: 189 }).warnings.length).toBeGreaterThan(0);
+  });
+
+  it("PDF: one page per sticker, each the sticker's real size", async () => {
+    const one = stickers.slice(0, 5); // a case: its lot sticker and 4 packs
+    const doc = await PDFDocument.load(await stickersPdf(one, LOT, PACK, "test"));
+    const sizes = doc.getPages().map((p) => p.getSize()).map(({ width, height }) => [Math.round((width * 25.4) / 72), Math.round((height * 25.4) / 72)]);
+    expect(sizes).toEqual([[70, 25], [45, 15], [45, 15], [45, 15], [45, 15]]);
+  });
+});
+
+describe("PDF: case/tray + its packs, one page each", () => {
+  const LOT = DEFAULT_SETTINGS.lotSticker;
+  const PACK = DEFAULT_SETTINGS.packSticker;
+  const stickers = stickersForLots([
+    { lotCode: "91ABC123OR00001", lotType: "CASE", flavourName: "Original" },
+    { lotCode: "91ABC123OR00002", lotType: "CASE", flavourName: "Original" },
+    { lotCode: "91ABC123GA00003", lotType: "TRAY", flavourName: "Green Apple" },
+  ]);
+
+  it("groups each case/tray sticker with its own packs, in print order", () => {
+    const groups = groupByLot(stickers);
+    expect(groups.map((g) => g.map((s) => s.code.slice(-7)))).toEqual([
+      ["OR00001", "0000161", "0000162", "0000163", "0000164"],
+      ["OR00002", "0000261", "0000262", "0000263", "0000264"],
+      ["GA00003", "0000341", "0000342", "0000343", "0000344", "0000345", "0000346"],
+    ]);
+    // every pack belongs to the case/tray sticker it follows
+    for (const [lot, ...packs] of groups) for (const p of packs) expect(p.code.startsWith(lot.code)).toBe(true);
+  });
+
+  it("case: sticker on top, packs 2 × 2 under it; tray: 3 × 2; all inside the page, none overlapping", () => {
+    for (const [group, rows] of [[groupByLot(stickers)[0], 2], [groupByLot(stickers)[2], 3]] as const) {
+      const page = groupedPageLayout(group, LOT, PACK);
+      const rects = page.places.map((p) => ({ x: p.x, y: p.y, w: p.sticker.kind === "LOT" ? LOT.widthMm : PACK.widthMm, h: p.sticker.kind === "LOT" ? LOT.heightMm : PACK.heightMm }));
+      const [lot, ...packs] = rects;
+      for (const p of packs) expect(p.y).toBeGreaterThanOrEqual(lot.y + lot.h);
+      expect(new Set(packs.map((p) => p.x)).size).toBe(2);
+      expect(new Set(packs.map((p) => p.y)).size).toBe(rows);
+      for (const r of rects) expect(r.x >= 0 && r.y >= 0 && r.x + r.w <= page.widthMm && r.y + r.h <= page.heightMm).toBe(true);
+      for (let i = 0; i < rects.length; i++)
+        for (let j = i + 1; j < rects.length; j++) {
+          const [a, b] = [rects[i], rects[j]];
+          expect(a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h).toBe(false);
+        }
+    }
+  });
+
+  it("one page per case/tray", async () => {
+    const doc = await PDFDocument.load(await stickersPdf(stickers, LOT, PACK, "test", "grouped"));
+    expect(doc.getPageCount()).toBe(3);
+  });
+});
+
+describe("stickers scan back at real size on a 300 dpi printer", () => {
+  const DPI = 300;
+  const pxPerMm = DPI / 25.4;
+  /** Rasterize dark rectangles (mm) the way a printer does: each edge snaps to the nearest dot. */
+  function raster(widthMm: number, heightMm: number, rects: Rect[]): Buffer {
+    const w = Math.round(widthMm * pxPerMm);
+    const h = Math.round(heightMm * pxPerMm);
+    const png = new PNG({ width: w, height: h });
+    png.data.fill(255);
+    for (const r of rects) {
+      const [x0, x1, y0, y1] = [r.x, r.x + r.w, r.y, r.y + r.h].map((v) => Math.round(v * pxPerMm));
+      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) png.data.fill(0, (y * w + x) * 4, (y * w + x) * 4 + 3);
+    }
+    return PNG.sync.write(png);
+  }
+  const stickers = stickersForLots([{ lotCode: lots[0].lotCode, lotType: "TRAY", flavourName: "Green Apple" }]);
+  const drawn = stickers.slice(0, 2).map((s) => drawSticker(s, DEFAULT_SETTINGS.lotSticker, DEFAULT_SETTINGS.packSticker));
+
+  it.each(drawn.map((d) => [d.sticker.kind, d] as const))("%s barcode decodes", async (_kind, d) => {
+    const b = d.layout.barcode;
+    const rects = barRuns(d.bars).map(([x, w]) => ({ x: b.x + x * b.moduleMm, y: b.y, w: w * b.moduleMm, h: b.h }));
+    expect(await decodePng(raster(d.size.widthMm, d.size.heightMm, rects), BarcodeFormat.CODE_128)).toBe(d.sticker.code);
   });
 });

@@ -119,7 +119,7 @@ export function planPrintOrder({ batches, country, poolCodes, batchCode: chosenC
     else if (manual && batches.findIndex((o) => o.flavour === b.flavour) !== i) {
       errors.push({ batchIndex: i, field: "flavour", message: `${label}: ${b.flavour} is already in this order — one line per flavour` });
     } else if (manual && chosenCode && takenFlavours.includes(b.flavour)) {
-      errors.push({ batchIndex: i, field: "flavour", message: `${label}: batch ${chosenCode} already has ${b.flavour} — add its lots with "Continue an existing batch"` });
+      errors.push({ batchIndex: i, field: "flavour", message: `${label}: batch ${chosenCode} already has ${b.flavour} — choose that flavour again in New print order to continue its lots` });
     }
     const mfgOk = isValidDate(b.mfgDate);
     const expOk = isValidDate(b.expiryDate);
@@ -135,7 +135,7 @@ export function planPrintOrder({ batches, country, poolCodes, batchCode: chosenC
     }
     const countsOk = [b.cases, b.trays].every((n) => Number.isInteger(n) && n >= 0);
     // Cases and trays are each 0 or a whole number, with no minimum: a batch may even be 0 + 0 (its code is taken
-    // now and lots are added later with "Continue an existing batch"). Only a whole order with nothing to print is refused.
+    // now and lots are added later by choosing the flavour again, which continues it). Only a whole order with nothing to print is refused.
     if (!countsOk) errors.push({ batchIndex: i, field: "cases", message: `${label}: cases and trays must be 0 or a whole number` });
     else if (b.cases + b.trays > LOT_NUMBER_MAX) {
       errors.push({ batchIndex: i, field: "cases", message: `${label}: at most ${LOT_NUMBER_MAX} lots per batch` });

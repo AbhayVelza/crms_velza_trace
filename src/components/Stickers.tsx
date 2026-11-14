@@ -1,11 +1,12 @@
 "use client";
 
-// Lot and pack stickers drawn at real size (mm), plus the two print modes.
+// Case/tray and pack stickers drawn at real size (mm), plus the two print modes. The layout is shared with the
+// PDF (lib/stickerDraw), so the preview, the printed roll and the PDF match.
 
-import { useEffect, useMemo, useState } from "react";
-import { code128Svg } from "@/lib/barcode";
-import type { LotSticker, PackSticker, Sticker } from "@/lib/core/stickers";
-import { lotStickerLayout, modulesFromSvg, packStickerLayout, SPEC, type Box } from "@/lib/stickerLayout";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import type { Sticker } from "@/lib/core/stickers";
+import { barsSvg, drawSticker, narrowestBarMm } from "@/lib/stickerDraw";
+import { SPEC, type Box, type Rect, type TextBox } from "@/lib/stickerLayout";
 
 const mm = (n: number) => `${n}mm`;
 
@@ -14,6 +15,9 @@ const CSS_PX_PER_MM = 96 / 25.4;
 /** Screen pixels per narrow bar wanted on screen. At about 1 px per bar (real size on a monitor) bar widths get
  *  rounded unevenly and Code 128 cannot be read from the screen; from 2 px it decodes, 3 leaves room for a camera. */
 const SCREEN_PX_PER_MODULE = 3;
+
+const SANS = "Helvetica, Arial, sans-serif";
+const MONO = '"Courier New", Courier, monospace';
 
 /** The monitor's device pixels per CSS pixel; it changes with browser zoom and when the window moves screens. */
 function useDevicePixelRatio(): number {
@@ -43,56 +47,38 @@ function useScreenZoom(moduleMm: number, scannable: boolean): number {
   return Math.max(SCREEN_PX_PER_MODULE, Math.ceil(px)) / px;
 }
 
-const zoomStyle = (zoom: number) => (zoom === 1 ? {} : ({ "--screen-zoom": zoom } as React.CSSProperties));
+const zoomStyle = (zoom: number) => (zoom === 1 ? {} : ({ "--screen-zoom": zoom } as CSSProperties));
 
-function Svg({ svg, width, height, label }: { svg: string; width: number; height: number; label: string }) {
-  return <div role="img" aria-label={label} style={{ width: mm(width), height: mm(height) }} dangerouslySetInnerHTML={{ __html: svg }} />;
-}
+const place = (r: Rect): CSSProperties => ({ position: "absolute", left: mm(r.x), top: mm(r.y), width: mm(r.w), height: mm(r.h) });
 
-/** Lot (case/tray) sticker: barcode only, no QR code; its bars are a little bigger than a pack's. */
-function LotStickerView({ s, size, scannable }: { s: LotSticker; size: Box; scannable: boolean }) {
-  const bars = useMemo(() => code128Svg(s.code), [s.code]);
-  const layout = lotStickerLayout(size, modulesFromSvg(bars));
-  const zoom = useScreenZoom(layout.barcode.moduleMm, scannable);
+function Line({ box, text, font, weight }: { box: TextBox; text: string; font: string; weight: number }) {
   return (
-    <div className="sticker sticker-lot flex flex-col items-center" data-code={s.code} data-kind="LOT" style={{ width: mm(size.widthMm), height: mm(size.heightMm), padding: mm(layout.padMm), ...zoomStyle(zoom) }}>
-      <div className="w-full truncate text-center font-bold" style={{ height: mm(layout.headerMm), fontSize: mm(layout.headerFontMm), lineHeight: mm(layout.headerMm) }}>
-        {s.header}
-      </div>
-      <div className="flex flex-1 flex-col items-center justify-center">
-        <div style={{ padding: `0 ${mm(SPEC.quietZoneMm)}`, background: "#fff" }}>
-          <Svg svg={bars} width={layout.barcode.widthMm} height={layout.barcode.heightMm} label={`Barcode ${s.code}`} />
-        </div>
-        <div className="font-mono font-bold tracking-wider" style={{ fontSize: mm(layout.textFontMm), lineHeight: mm(layout.textMm) }}>
-          {s.code}
-        </div>
-      </div>
+    <div className="overflow-hidden whitespace-pre text-center text-black" style={{ ...place(box), fontFamily: font, fontWeight: weight, fontSize: mm(box.fontMm), lineHeight: mm(box.h) }}>
+      {text}
     </div>
   );
 }
 
-function PackStickerView({ s, size, scannable }: { s: PackSticker; size: Box; scannable: boolean }) {
-  const bars = useMemo(() => code128Svg(s.code), [s.code]);
-  const layout = packStickerLayout(size, modulesFromSvg(bars));
-  const zoom = useScreenZoom(layout.barcode.moduleMm, scannable);
-  return (
-    <div className="sticker sticker-pack flex flex-col items-center" data-code={s.code} data-kind="PACK" style={{ width: mm(size.widthMm), height: mm(size.heightMm), padding: mm(layout.padMm), ...zoomStyle(zoom) }}>
-      <div className="w-full truncate text-center font-bold" style={{ height: mm(layout.headerMm), fontSize: mm(layout.headerFontMm), lineHeight: mm(layout.headerMm) }}>
-        {s.header}
-      </div>
-      <div style={{ padding: `0 ${mm(SPEC.quietZoneMm)}`, background: "#fff" }}>
-        <Svg svg={bars} width={layout.barcode.widthMm} height={layout.barcode.heightMm} label={`Barcode ${s.code}`} />
-      </div>
-      <div className="font-mono font-semibold tracking-wider" style={{ fontSize: mm(layout.textFontMm), lineHeight: mm(layout.textMm) }}>
-        {s.code}
-      </div>
-    </div>
-  );
-}
-
-/** `scannable`: on screen, enlarge the sticker so its barcode can be scanned from the monitor (print size unchanged). */
+/** One sticker. `scannable`: on screen, enlarge it so its barcode can be scanned from the monitor (print size unchanged). */
 export function StickerView({ sticker, lotSize, packSize, scannable = false }: { sticker: Sticker; lotSize: Box; packSize: Box; scannable?: boolean }) {
-  return sticker.kind === "LOT" ? <LotStickerView s={sticker} size={lotSize} scannable={scannable} /> : <PackStickerView s={sticker} size={packSize} scannable={scannable} />;
+  const d = useMemo(() => drawSticker(sticker, lotSize, packSize), [sticker, lotSize, packSize]);
+  const bars = useMemo(() => barsSvg(d.bars), [d.bars]);
+  const { layout, size } = d;
+  const zoom = useScreenZoom(layout.barcode.moduleMm, scannable);
+  return (
+    <div
+      className={sticker.kind === "LOT" ? "sticker sticker-lot" : "sticker sticker-pack"}
+      data-code={sticker.code}
+      data-kind={sticker.kind}
+      style={{ position: "relative", flex: "none", background: "#fff", width: mm(size.widthMm), height: mm(size.heightMm), ...zoomStyle(zoom) }}
+    >
+      <Line box={layout.header} text={sticker.header} font={SANS} weight={700} />
+      {/* White behind the quiet zones so a scanner finds the edges of the bars. */}
+      <div style={{ ...place({ x: layout.barcode.x - layout.barcode.quietMm, y: layout.barcode.y, w: layout.barcode.w + 2 * layout.barcode.quietMm, h: layout.barcode.h }), background: "#fff" }} />
+      <div role="img" aria-label={`Barcode ${sticker.code}`} style={place(layout.barcode)} dangerouslySetInnerHTML={{ __html: bars }} />
+      <Line box={layout.text} text={sticker.code} font={MONO} weight={700} />
+    </div>
+  );
 }
 
 export type PrintMode = "roll" | "a4";
@@ -100,7 +86,8 @@ export type PrintMode = "roll" | "a4";
 /** Page CSS for the chosen mode. Label roll: one sticker per page sized to the sticker. */
 export function PrintStyles({ mode, lotSize, packSize }: { mode: PrintMode; lotSize: Box; packSize: Box }) {
   const css =
-    `@media screen { .sticker { zoom: var(--screen-zoom, 1); } }\n` +
+    // On screen each sticker shows its edge, like a die-cut label.
+    `@media screen { .sticker { zoom: var(--screen-zoom, 1); border: 0.25mm solid #9ca3af; border-radius: 1.2mm; box-sizing: content-box; } }\n` +
     (mode === "roll"
       ? `@page lot { size: ${lotSize.widthMm}mm ${lotSize.heightMm}mm; margin: 0; }
          @page pack { size: ${packSize.widthMm}mm ${packSize.heightMm}mm; margin: 0; }
@@ -118,6 +105,7 @@ export function PrintStyles({ mode, lotSize, packSize }: { mode: PrintMode; lotS
   return <style>{css}</style>;
 }
 
+/** Stickers in print order: each case/tray sticker, then its own pack stickers. */
 export function StickerSheetView({ stickers, lotSize, packSize, mode, scannable = false }: { stickers: Sticker[]; lotSize: Box; packSize: Box; mode: PrintMode; scannable?: boolean }) {
   return (
     <div className={mode === "roll" ? "sheet flex flex-col items-start gap-3" : "sheet flex flex-wrap items-start gap-2"}>
@@ -129,11 +117,18 @@ export function StickerSheetView({ stickers, lotSize, packSize, mode, scannable 
 }
 
 export function stickerWarnings(stickers: Sticker[], lotSize: Box, packSize: Box): string[] {
-  const first = (k: Sticker["kind"]) => stickers.find((s) => s.kind === k);
   const out = new Set<string>();
-  const lot = first("LOT");
-  const pack = first("PACK");
-  if (lot) lotStickerLayout(lotSize, modulesFromSvg(code128Svg(lot.code))).warnings.forEach((w) => out.add(`Lot sticker: ${w}`));
-  if (pack) packStickerLayout(packSize, modulesFromSvg(code128Svg(pack.code))).warnings.forEach((w) => out.add(`Pack sticker: ${w}`));
+  const lot = stickers.find((s) => s.kind === "LOT");
+  const pack = stickers.find((s) => s.kind === "PACK");
+  if (lot) drawSticker(lot, lotSize, packSize).layout.warnings.forEach((w) => out.add(`Case/tray sticker: ${w}`));
+  if (pack) drawSticker(pack, lotSize, packSize).layout.warnings.forEach((w) => out.add(`Pack sticker: ${w}`));
   return [...out];
+}
+
+/** A note when the bars are too fine for a 203 dpi label printer, or null. */
+export function printerNote(stickers: Sticker[], lotSize: Box, packSize: Box): string | null {
+  const firsts = (["LOT", "PACK"] as const).map((k) => stickers.find((s) => s.kind === k)).filter((s): s is Sticker => !!s);
+  const narrowest = narrowestBarMm(firsts.map((s) => drawSticker(s, lotSize, packSize)));
+  if (narrowest === null || narrowest >= SPEC.dpi203ModuleMm) return null;
+  return `The narrowest bars are ${narrowest.toFixed(2)} mm: print on a 300 dpi (or finer) label printer at 100% scale. A 203 dpi printer cannot draw them evenly.`;
 }

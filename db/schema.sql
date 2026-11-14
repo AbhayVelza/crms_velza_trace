@@ -1,4 +1,4 @@
--- Velza Traceability — PostgreSQL schema v6.
+-- Velza Traceability — PostgreSQL schema v7.
 -- Generated from src/lib/store/sql/schema.ts by `npm run db:schema`; do not edit by hand.
 -- The app applies this itself on first use (and `npm run db:migrate` does it on demand); every
 -- statement is safe to run again.
@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS partners (
       WHEN 'MANUFACTURER' THEN 'MF' WHEN 'WAREHOUSE' THEN 'VW' WHEN 'SS' THEN 'SS' WHEN 'DB' THEN 'DB' ELSE 'RT' END)
 );
 -- One Super Stockist per state.
--- One Super Stockist per state: the index is (re)built in the v6 section below, where the approval column exists.
+-- One Super Stockist per state: the index is (re)built in the v7 section below, where the approval column exists.
 CREATE UNIQUE INDEX IF NOT EXISTS partners_email_unique ON partners (lower(email)) WHERE email <> '';
 CREATE INDEX IF NOT EXISTS partners_parent ON partners (parent_id);
 
@@ -355,7 +355,7 @@ CREATE INDEX IF NOT EXISTS batches_manufacturer ON batches (manufacturer_id);
 CREATE INDEX IF NOT EXISTS batches_device_unsynced ON batches (device_id) WHERE NOT synced;
 CREATE INDEX IF NOT EXISTS batch_code_pool_device ON batch_code_pool (device_id, status);
 
--- ============================================================ v6: self sign-up approval
+-- ============================================================ v7: self sign-up approval
 -- SS, DB and Retailer shops sign themselves up. approval: NULL = approved (every older row, every Retailer),
 -- PENDING = a self-signed-up SS or DB waiting for Velza Admin, REJECTED = turned down (kept; ID never reused).
 -- A rejected SS no longer holds its state, so the one-SS-per-state index leaves it out.
@@ -366,5 +366,5 @@ ALTER TABLE partners
 DROP INDEX IF EXISTS partners_one_ss_per_state;
 CREATE UNIQUE INDEX partners_one_ss_per_state ON partners (state) WHERE partner_type = 'SS' AND approval IS DISTINCT FROM 'REJECTED';
 
-INSERT INTO schema_info (id, version) VALUES (1, 6)
+INSERT INTO schema_info (id, version) VALUES (1, 7)
   ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version, applied_at = now();

@@ -417,8 +417,7 @@ describe("PostgreSQL only: the schema guards the data", () => {
     expect(names).toEqual(
       expect.arrayContaining(["codes_manufacturer", "codes_device_unsynced", "print_orders_manufacturer", "print_orders_device_unsynced", "batches_manufacturer", "batches_device_unsynced", "batch_code_pool_device"]),
     );
-    expect(await sql(`SELECT version FROM schema_info`)).toEqual([{ version: 6 }]); // v6: self sign-up approval
-    expect(await sql(`SELECT version FROM schema_info`)).toEqual([{ version: 6 }]); // v5: the Velza Warehouse tier; v6: returns
+    expect(await sql(`SELECT version FROM schema_info`)).toEqual([{ version: 7 }]); // v5: Velza Warehouse; v6: returns; v7: self sign-up approval
   });
 
   it("refuses a code that doesn't match its parts", async () => {
@@ -429,7 +428,7 @@ describe("PostgreSQL only: the schema guards the data", () => {
   it("refuses a partner ID that doesn't match its tier, and a second SS in a state", async () => {
     await expect(store.partners.create({ ...ss, id: "DB0009", phone: "9" })).rejects.toThrow(/partner_id_matches_type/);
     await expect(store.partners.create({ ...ss, id: "SS0002", phone: "8" })).rejects.toThrow(/partners_one_ss_per_state/);
-    // v6: a rejected SS sign-up does not hold its state; a pending one does; an unknown approval is refused.
+    // v7: a rejected SS sign-up does not hold its state; a pending one does; an unknown approval is refused.
     await store.partners.create({ ...ss, id: "SS0003", phone: "7", state: "Goa", approval: "REJECTED", active: false });
     await store.partners.create({ ...ss, id: "SS0004", phone: "6", state: "Goa", approval: "PENDING", active: false });
     await expect(store.partners.create({ ...ss, id: "SS0005", phone: "5", state: "Goa" })).rejects.toThrow(/partners_one_ss_per_state/);

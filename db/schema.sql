@@ -1,4 +1,4 @@
--- Velza Traceability — PostgreSQL schema v7.
+-- Velza Traceability — PostgreSQL schema v8.
 -- Generated from src/lib/store/sql/schema.ts by `npm run db:schema`; do not edit by hand.
 -- The app applies this itself on first use (and `npm run db:migrate` does it on demand); every
 -- statement is safe to run again.
@@ -157,7 +157,7 @@ CREATE TABLE IF NOT EXISTS containers (
   container_id     text PRIMARY KEY,
   container_code   text NOT NULL CHECK (container_code ~ '^[A-Z0-9][A-Z0-9-]{2,19}$'),
   manufacturer_id  text NOT NULL,
-  status           text NOT NULL CHECK (status IN ('LOADING', 'IN_TRANSIT', 'RECEIVED')),
+  status           text NOT NULL CONSTRAINT containers_status_check CHECK (status IN ('LOADING', 'IN_TRANSIT', 'RECEIVED', 'CLEARED')),
   lot_codes        text[] NOT NULL,
   to_partner_id    text,
   invoice          text,
@@ -167,9 +167,13 @@ CREATE TABLE IF NOT EXISTS containers (
   dispatched_by    text,
   received_at      timestamptz,
   received_by      text,
+  cleared_at       timestamptz,
+  cleared_by       text,
+  bill_of_entry    text,
   row_no           bigint GENERATED ALWAYS AS IDENTITY
 );
-CREATE UNIQUE INDEX IF NOT EXISTS containers_one_active_per_code ON containers (container_code) WHERE status <> 'RECEIVED';
+CREATE UNIQUE INDEX IF NOT EXISTS containers_one_active_per_code ON containers (container_code) WHERE status IN ('LOADING', 'IN_TRANSIT');
+CREATE INDEX IF NOT EXISTS containers_by_receiver ON containers (to_partner_id);
 CREATE INDEX IF NOT EXISTS containers_by_manufacturer ON containers (manufacturer_id);
 
 -- ============================================================ codes
@@ -191,7 +195,7 @@ CREATE TABLE IF NOT EXISTS codes (
   expiry_date           date,
   manufacturer_id       text NOT NULL REFERENCES partners (partner_id) DEFERRABLE INITIALLY DEFERRED,
   status                text NOT NULL CONSTRAINT codes_status_check CHECK (
-                          status IN ('GENERATED', 'PRINTED', 'PACKED', 'IN_TRANSIT', 'AT_WAREHOUSE', 'AT_SS', 'AT_DB', 'AT_RETAILER',
+                          status IN ('GENERATED', 'PRINTED', 'PACKED', 'IN_TRANSIT', 'AT_CUSTOMS', 'AT_WAREHOUSE', 'AT_SS', 'AT_DB', 'AT_RETAILER',
                     'OPENED', 'QUARANTINED', 'VOID', 'DAMAGED', 'RETURN_IN_TRANSIT', 'RETURNED', 'EXPIRED', 'RECALLED')),
   location_id           text NOT NULL REFERENCES partners (partner_id) DEFERRABLE INITIALLY DEFERRED,
   in_transit_to         text REFERENCES partners (partner_id) DEFERRABLE INITIALLY DEFERRED,
@@ -297,7 +301,7 @@ ALTER TABLE users
 ALTER TABLE codes
   DROP CONSTRAINT IF EXISTS codes_status_check,
   ADD CONSTRAINT codes_status_check CHECK (
-    status IN ('GENERATED', 'PRINTED', 'PACKED', 'IN_TRANSIT', 'AT_WAREHOUSE', 'AT_SS', 'AT_DB', 'AT_RETAILER',
+    status IN ('GENERATED', 'PRINTED', 'PACKED', 'IN_TRANSIT', 'AT_CUSTOMS', 'AT_WAREHOUSE', 'AT_SS', 'AT_DB', 'AT_RETAILER',
                     'OPENED', 'QUARANTINED', 'VOID', 'DAMAGED', 'RETURN_IN_TRANSIT', 'RETURNED', 'EXPIRED', 'RECALLED'));
 
 -- ============================================================ v3: code integrity
@@ -366,5 +370,19 @@ ALTER TABLE partners
 DROP INDEX IF EXISTS partners_one_ss_per_state;
 CREATE UNIQUE INDEX partners_one_ss_per_state ON partners (state) WHERE partner_type = 'SS' AND approval IS DISTINCT FROM 'REJECTED';
 
-INSERT INTO schema_info (id, version) VALUES (1, 7)
+-- ============================================================ v8: customs clearance
+-- Stock received at Customs is held (AT_CUSTOMS, in the codes check above) until its container is cleared;
+-- a container gains CLEARED with who/when and the Bill of Entry. Only containers still loading or on the road
+-- hold their number, so a cleared container's number can be used again.
+ALTER TABLE containers ADD COLUMN IF NOT EXISTS cleared_at timestamptz;
+ALTER TABLE containers ADD COLUMN IF NOT EXISTS cleared_by text;
+ALTER TABLE containers ADD COLUMN IF NOT EXISTS bill_of_entry text;
+ALTER TABLE containers
+  DROP CONSTRAINT IF EXISTS containers_status_check,
+  ADD CONSTRAINT containers_status_check CHECK (status IN ('LOADING', 'IN_TRANSIT', 'RECEIVED', 'CLEARED'));
+DROP INDEX IF EXISTS containers_one_active_per_code;
+CREATE UNIQUE INDEX containers_one_active_per_code ON containers (container_code) WHERE status IN ('LOADING', 'IN_TRANSIT');
+CREATE INDEX IF NOT EXISTS containers_by_receiver ON containers (to_partner_id);
+
+INSERT INTO schema_info (id, version) VALUES (1, 8)
   ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version, applied_at = now();

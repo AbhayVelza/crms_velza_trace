@@ -1,4 +1,4 @@
-// Shipping containers plant → Velza Warehouse: open by the container's own number, scan cases and trays in,
+// Shipping containers plant → Customs (the Velza Warehouse partner): open by the container's own number, scan cases and trays in,
 // dispatch the whole container (all lots or none), and the warehouse receives it with one scan of its number.
 
 import { promises as fs } from "node:fs";
@@ -8,7 +8,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Role } from "@/lib/core/types";
 import { getStore } from "@/lib/store";
 import { cancelContainer, createContainer, dispatchContainer, getContainer, listContainers, loadContainer, unloadContainer } from "@/lib/services/containers";
+import { reportDamaged } from "@/lib/services/damage";
 import { dispatch, receive } from "@/lib/services/movement";
+import { photoOf } from "../fixtures/damagePhoto";
 import { createPrintOrder, markPrinted } from "@/lib/services/printOrders";
 import { lookup } from "@/lib/services/trace";
 import { verify } from "@/lib/services/verify";
@@ -109,12 +111,19 @@ describe("shipping containers", () => {
     await expect(cancelContainer(ids.operator, containerId)).rejects.toMatchObject({ code: "CONTAINER_NOT_LOADING" });
   });
 
+  it("the plant can't send loose cases or trays to Customs — only in a container", async () => {
+    const [a] = await packedLots(1, 0);
+    expect(await dispatch(ids.operator, { action: "check", toPartnerId: ids.VW, invoice: "INV-L", code: a })).toMatchObject({ ok: false, code: "CONTAINER_REQUIRED", message: expect.stringMatching(/in a container/) });
+    await expect(dispatch(ids.operator, { action: "confirm", toPartnerId: ids.VW, invoice: "INV-L", codes: [a] })).rejects.toMatchObject({ code: "CONTAINER_REQUIRED" });
+    expect(await store().lots.findOne({ lotCode: a })).toMatchObject({ status: "PACKED" });
+  });
+
   it("a container with a lot that can't go is not dispatched at all", async () => {
     const [a, b] = await packedLots(2, 0);
     const c = (await createContainer(ids.operator, { code: "CAIU1111111" })).container;
     for (const code of [a, b]) await loadContainer(ids.operator, c.id, { code });
-    // b leaves the plant on its own in the meantime
-    await dispatch(ids.operator, { action: "confirm", toPartnerId: ids.VW, invoice: "INV-LOOSE", codes: [b] });
+    // b is found damaged at the plant in the meantime
+    expect(await reportDamaged(ids.operator, { code: b, reason: "Crushed", ...photoOf(b) })).toMatchObject({ ok: true });
     await expect(dispatchContainer(ids.operator, c.id, { toPartnerId: ids.VW, invoice: "INV-C2" })).rejects.toMatchObject({ code: "DISPATCH_REJECTED", details: [expect.objectContaining({ code: b })] });
     expect(await store().lots.findOne({ lotCode: a })).toMatchObject({ status: "PACKED" });
     expect((await store().containers.get(c.id))!.status).toBe("LOADING");
@@ -125,11 +134,11 @@ describe("shipping containers", () => {
     // someone else scanning the container number
     expect(await receive(ids.ss1, { code: "MSCU1234567" })).toMatchObject({ ok: false, code: "WRONG_RECEIVER" });
     // one case was received on its own first: the container scan receives the rest
-    expect(await receive(ids.vw, { code: lots[1] })).toMatchObject({ ok: true, status: "AT_WAREHOUSE" });
+    expect(await receive(ids.vw, { code: lots[1] })).toMatchObject({ ok: true, status: "AT_CUSTOMS" });
     const r = await receive(ids.vw, { code: "mscu1234567" });
-    expect(r).toMatchObject({ ok: true, status: "AT_WAREHOUSE", container: { code: "MSCU1234567", received: 2, skipped: 1 } });
-    for (const code of lots) expect(await store().lots.findOne({ lotCode: code })).toMatchObject({ status: "AT_WAREHOUSE", locationId: ids.VW, inTransitToId: null });
-    for (const code of lots) expect((await store().packs.list({ lotCode: code })).every((p) => p.status === "AT_WAREHOUSE")).toBe(true);
+    expect(r).toMatchObject({ ok: true, status: "AT_CUSTOMS", container: { code: "MSCU1234567", received: 2, skipped: 1 } });
+    for (const code of lots) expect(await store().lots.findOne({ lotCode: code })).toMatchObject({ status: "AT_CUSTOMS", locationId: ids.VW, inTransitToId: null });
+    for (const code of lots) expect((await store().packs.list({ lotCode: code })).every((p) => p.status === "AT_CUSTOMS")).toBe(true);
     expect(await store().containers.get(containerId)).toMatchObject({ status: "RECEIVED", receivedAt: expect.any(String) });
     expect(await receive(ids.vw, { code: "MSCU1234567" })).toMatchObject({ ok: false, code: "DUPLICATE_RECEIPT" });
 

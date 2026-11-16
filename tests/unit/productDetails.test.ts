@@ -14,6 +14,7 @@ import { dispatch, openLot, receive } from "@/lib/services/movement";
 import { createPrintOrder, markPrinted } from "@/lib/services/printOrders";
 import { verify } from "@/lib/services/verify";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
+import { shipToCustoms } from "../fixtures/shipToCustoms";
 
 let dir: string;
 const ids: Record<string, string> = {};
@@ -61,9 +62,8 @@ beforeAll(async () => {
     for (const [i, code] of packs.entries()) await verify(ids.qc, { action: "scanPack", lotCode, code, scanned: packs.slice(0, i) });
     await verify(ids.qc, { action: "confirm", lotCode, packCodes: packs });
   }
-  // Plant → Velza Warehouse → SS-1; then case 0: SS-1 → DB-1 → Retailer-1 (opened); case 1: SS-1 → Retailer-4 directly.
-  await send(ids.op, ids.VW, "INV-P1", [lots[0], lots[1]]);
-  await take(ids.vw, [lots[0], lots[1]]);
+  // Plant → Customs (container, cleared) → SS-1; then case 0: SS-1 → DB-1 → Retailer-1 (opened); case 1: SS-1 → Retailer-4 directly.
+  await shipToCustoms({ operatorId: ids.op, customsUserId: ids.vw, customsId: ids.VW, lotCodes: [lots[0], lots[1]], invoice: "INV-P1" });
   await send(ids.vw, ids.SS1, "INV-W1", [lots[0], lots[1]]);
   await take(ids.ss1, [lots[0], lots[1]]);
   await send(ids.ss1, ids.DB1, "INV-S1", [lots[0]]);

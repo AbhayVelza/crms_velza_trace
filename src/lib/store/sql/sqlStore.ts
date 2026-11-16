@@ -229,6 +229,9 @@ const SPECS = {
       ["dispatchedBy", "dispatched_by"],
       ["receivedAt", "received_at", "ts"],
       ["receivedBy", "received_by"],
+      ["clearedAt", "cleared_at", "ts"],
+      ["clearedBy", "cleared_by"],
+      ["billOfEntry", "bill_of_entry"],
     ),
   },
   lots: {

@@ -4,7 +4,7 @@
 // itself (see damagePhotos.ts).
 
 import { z } from "zod";
-import { AT_STATUS, canReportDamaged, type RuleResult } from "@/lib/core/rules";
+import { canReportDamaged, inStockStatuses, type RuleResult } from "@/lib/core/rules";
 import type { Lot, Movement, Pack, Partner } from "@/lib/core/types";
 import { scannedCodeSchema } from "@/lib/scan/scannedCode";
 import { getStore } from "@/lib/store";
@@ -24,7 +24,7 @@ export const damageSchema = z.object({
   damagePhotos: z.array(z.string()).nullish(),
 });
 
-const inStockAt = (p: Pack, partner: Partner) => p.locationId === partner.id && p.status === AT_STATUS[partner.type];
+const inStockAt = (p: Pack, partner: Partner) => p.locationId === partner.id && inStockStatuses(partner.type).includes(p.status);
 
 export async function reportDamaged(userId: string | null, body: unknown) {
   const { code, reason, photo: photoInput, photoCode, damagePhotos } = damageSchema.parse(body);

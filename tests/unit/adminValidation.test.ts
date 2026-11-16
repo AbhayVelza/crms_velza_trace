@@ -12,6 +12,7 @@ import { dispatch, receive } from "@/lib/services/movement";
 import { createPrintOrder, markPrinted } from "@/lib/services/printOrders";
 import { verify } from "@/lib/services/verify";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
+import { shipToCustoms } from "../fixtures/shipToCustoms";
 
 let dir: string;
 const store = () => getStore();
@@ -44,9 +45,8 @@ afterAll(async () => {
 describe("deactivating a partner (REF-9)", () => {
   it("is refused while a consignment is on the way to it, and allowed once it is received", async () => {
     const lot = await qcPassedLot();
-    // The plant ships only to the Velza Warehouse (VW0001); the warehouse sends it on to SS-2.
-    await dispatch(OP, { action: "confirm", toPartnerId: "VW0001", invoice: "INV-ADM-0", codes: [lot] });
-    expect(await receive("VW0001", { code: lot })).toMatchObject({ ok: true });
+    // The plant ships to Customs (VW0001) in a container; Customs clears it and sends it on to SS-2.
+    await shipToCustoms({ operatorId: OP, customsUserId: "VW0001", customsId: "VW0001", lotCodes: [lot], invoice: "INV-ADM-0" });
     await dispatch("VW0001", { action: "confirm", toPartnerId: "SS0002", invoice: "INV-ADM-1", codes: [lot] });
     await expect(updateEntity(ADMIN, "partners", "SS0002", { active: false })).rejects.toMatchObject({
       status: 400,

@@ -23,6 +23,7 @@ export const ACTIONS = [
   "details",
   "takeBack",
   "returnInspect",
+  "customsClear",
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -54,6 +55,8 @@ export const PERMISSIONS: Record<Action, Role[]> = {
   takeBack: ["VELZA_FIELD"],
   /** The Velza Warehouse inspects what came back: back to stock, or write-off. */
   returnInspect: ["WAREHOUSE"],
+  /** The Velza person at Customs clears a received container: its held stock becomes dispatchable. */
+  customsClear: ["WAREHOUSE"],
 };
 
 export function can(role: Role, action: Action): boolean {

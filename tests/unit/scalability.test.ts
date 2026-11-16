@@ -19,6 +19,7 @@ import { alerts, batchReport, dashboard, listBatches, lookup, myStock, recall, r
 import { verify } from "@/lib/services/verify";
 import { photoOf } from "../fixtures/damagePhoto";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
+import { shipToCustoms } from "../fixtures/shipToCustoms";
 
 let dir: string;
 const ids: Record<string, string> = {};
@@ -167,8 +168,8 @@ describe("a network with stock at every tier", () => {
     const order = await printAndVerify(6);
     lots = order.lotCodes;
     orderId = order.id;
-    // Manufacturer → Velza Warehouse → SS-1
-    await send("operator", "VW", [lots[0], lots[1], lots[2], lots[3]], "vw");
+    // Manufacturer → Customs (container, cleared) → SS-1
+    await shipToCustoms({ operatorId: ids.operator, customsUserId: ids.vw, customsId: ids.VW, lotCodes: [lots[0], lots[1], lots[2], lots[3]], invoice: "INV-VW-1" });
     await send("vw", "SS1", [lots[0], lots[1], lots[2], lots[3]]);
     for (const code of [lots[0], lots[1], lots[2]]) await receive(ids.ss1, { code }); // lots[3] stays in transit
     await send("ss1", "DB1", [lots[1]], "db1");
@@ -225,7 +226,7 @@ describe("a network with stock at every tier", () => {
 
     it("the answer does not change when unrelated history is added", async () => {
       const before = await lookup(ids.hq, lots[1]);
-      await send("operator", "VW", [lots[4]], "vw");
+      await shipToCustoms({ operatorId: ids.operator, customsUserId: ids.vw, customsId: ids.VW, lotCodes: [lots[4]], invoice: "INV-VW-2" });
       await send("vw", "SS1", [lots[4]], "ss1");
       await store().appendMovement({ type: "REPRINTED", itemKind: "LOT", itemCode: lots[5], fromId: null, toId: null, fromStatus: null, toStatus: null, userId: ids.operator, deviceId: null, invoice: null, note: "unrelated" });
       expect(await lookup(ids.hq, lots[1])).toEqual(before);

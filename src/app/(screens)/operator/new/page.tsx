@@ -535,9 +535,9 @@ function ContinueBatchWizard() {
                 head={["", "Batch", "Flavour", "Mfg / Exp", "Last lot", "Next lot", "Used", "Remaining", "Status"]}
                 empty={!list.data.batches.length ? <span className="text-muted-foreground">No batches yet. Create one with New batches.</span> : null}
               >
-                {list.data.batches.map((b) => (
+                {list.data.batches.map((b, i) => (
                   <tr
-                    key={b.batchCode}
+                    key={`${b.batchCode}-${b.flavour}-${i}`}
                     data-testid={`continue-batch-${b.batchCode}`}
                     // The whole row selects the batch, not only the small radio (keyboard users still use the radio).
                     onClick={() => b.continuable && batchCode !== b.batchCode && choose(b.batchCode)}

@@ -35,8 +35,8 @@ export default function PrintOrdersPage() {
                 <div className="text-xs text-muted-foreground">{o.createdByName}</div>
               </Td>
               <Td>
-                {o.batches.map((b) => (
-                  <div key={b.code}>
+                {o.batches.map((b, i) => (
+                  <div key={`${b.code}-${b.flavour}-${i}`}>
                     <Code>{b.code}</Code> {flavourName(b.flavour)} · {b.cases} case(s), {b.trays} tray(s)
                   </div>
                 ))}

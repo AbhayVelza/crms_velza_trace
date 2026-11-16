@@ -11,6 +11,7 @@ import { api, errorText } from "@/lib/client";
 import { notifyDataChanged } from "@/lib/events";
 
 interface BatchRow {
+  id?: string;
   code: string;
   flavourName: string;
   mfgDate: string;
@@ -46,8 +47,8 @@ export default function BatchesPage() {
       {list.error && <Notice tone="error">{list.error}</Notice>}
       <Card className="mb-4 lg:mb-5">
         <Table head={["Batch", "Flavour", "Mfg / Exp", "Lots", "Statuses", "Reprints", ""]} empty={list.data && !list.data.length ? <Empty>No synced batches yet</Empty> : null}>
-          {list.data?.map((b) => (
-            <tr key={b.code} className={cx(selected === b.code && "bg-muted shadow-[inset_2px_0_0_var(--foreground)]")} aria-selected={selected === b.code}>
+          {list.data?.map((b, i) => (
+            <tr key={b.id ? b.id : `${b.code}-${b.flavourName}-${i}`} className={cx(selected === b.code && "bg-muted shadow-[inset_2px_0_0_var(--foreground)]")} aria-selected={selected === b.code}>
               <Td>
                 <Code>{b.code}</Code> {b.status === "RECALLED" && <StatusBadge status="RECALLED" />}
                 {b.displayStatus === "EXHAUSTED" && (

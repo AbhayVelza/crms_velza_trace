@@ -2,10 +2,11 @@
 
 import { z } from "zod";
 import { PACKS_PER_LOT } from "@/lib/core/codes";
-import { assignedTypesOf, canDispatch, canOpenLot, canReceive, checkDispatchHeader, DESTINATION_TYPES, dispatchPatch, isAssignedDestination, receivePatch, type RuleResult } from "@/lib/core/rules";
-import type { Partner } from "@/lib/core/types";
+import { assignedTypesOf, canDispatch, canDispatchLoose, canOpenLot, canReceive, checkDispatchHeader, DESTINATION_TYPES, dispatchPatch, isAssignedDestination, receivePatch, type RuleResult } from "@/lib/core/rules";
+import type { Container, Partner } from "@/lib/core/types";
 import { getStore, type StoreTx } from "@/lib/store";
 import { receiveContainer } from "./containers";
+import { containerOfLot, RECEIVE_MODE_OFF_MESSAGE, receiveModeAllowed } from "./customs";
 import { normalizeScannedCode } from "@/lib/scan/normalize";
 import { stockCounts } from "./trace";
 import { badRequest, findItem, loadActor, logScan, manufacturerDevice, nowIso, requireAction, requirePartner, setLotState, type Actor, type FoundItem } from "./common";
@@ -122,11 +123,26 @@ export async function dispatchItems(
   }
 }
 
-/** Receives one item that passed canReceive: at the receiver, one RECEIVED movement (shared with containers). */
-export async function receiveItem(tx: StoreTx, args: { actor: Actor; receiver: Partner; item: FoundItem; at: string; note: string | null }) {
+/**
+ * Receives one item that passed canReceive: at the receiver, one RECEIVED movement (shared with containers).
+ * At Customs, `container` is the container the lot came in when the caller already knows it (a container scan, or
+ * receive() which looked it up once); left undefined it is looked up here. null = it came without one.
+ */
+export async function receiveItem(tx: StoreTx, args: { actor: Actor; receiver: Partner; item: FoundItem; at: string; note: string | null; container?: Container | null }) {
   const { actor, receiver, item, at, note } = args;
   const fromStatus = item.movable.status;
-  const patch = receivePatch(receiver, fromStatus);
+  // At Customs stock is held until its container is cleared. A lot of an already cleared container, or one that
+  // came without a container (loose, sent before containers were required), arrives cleared.
+  let cleared = true;
+  if (receiver.type === "WAREHOUSE" && fromStatus !== "RETURN_IN_TRANSIT") {
+    const container = args.container !== undefined ? args.container : await containerOfLot(tx, receiver.id, item.lot.lotCode);
+    cleared = !container || container.status === "CLEARED";
+    if (container?.status === "IN_TRANSIT") {
+      await tx.containers.update(container.id, { status: "RECEIVED", receivedAt: at, receivedBy: actor.user.id });
+      container.status = "RECEIVED"; // the caller's copy too: a container scan updates it once, not per lot
+    }
+  }
+  const patch = receivePatch(receiver, fromStatus, { cleared });
   const fromId = item.movable.locationId;
   if (item.kind === "LOT") await setLotState(tx, item.lot, patch, at);
   else await tx.packs.update(item.pack!.id, { ...patch, updatedAt: at });
@@ -159,7 +175,9 @@ export async function dispatch(userId: string | null, body: unknown) {
     if (req.action === "check") {
       let result: RuleResult;
       let item: FoundItem | null = null;
-      if (req.listed?.includes(req.code)) result = { ok: false, code: "DUPLICATE_SCAN", message: `${req.code} is already in the list` };
+      const loose = receiver ? canDispatchLoose(receiver) : null;
+      if (loose && !loose.ok) result = loose;
+      else if (req.listed?.includes(req.code)) result = { ok: false, code: "DUPLICATE_SCAN", message: `${req.code} is already in the list` };
       else ({ result, item } = await checkOne(tx, actor, sender, receiver, req.invoice, req.code));
       const message = result.ok ? `${req.code} added (${describe(item!)})` : result.message;
       await logScan(tx, { context: "DISPATCH", code: req.code, actor, ok: result.ok, result: result.ok ? "OK" : result.code, message, deviceId });
@@ -168,6 +186,9 @@ export async function dispatch(userId: string | null, body: unknown) {
 
     const header = checkDispatchHeader(sender, receiver, req.invoice);
     if (!header.ok) throw badRequest(header.code, header.message);
+    // Cases and trays reach Customs only inside a shipping container (Containers), never one by one.
+    const loose = canDispatchLoose(receiver!);
+    if (!loose.ok) throw badRequest(loose.code, loose.message);
     const unique = [...new Set(req.codes)];
     const checks = await Promise.all(unique.map(async (code) => ({ code, ...(await checkOne(tx, actor, sender, receiver, req.invoice, code)) })));
     const failed = checks.filter((c) => !c.result.ok);
@@ -202,12 +223,19 @@ export async function receive(userId: string | null, body: unknown) {
       // Not addressed to me and not here: say only that, never its status (VOID, QUARANTINED, DAMAGED ...). Recall is public.
       result = { ok: false, code: "WRONG_RECEIVER", message: `${code} is not in transit to ${receiver.name}` };
     } else result = canReceive({ item: found.item.movable, parentLotStatus: found.item.parentLotStatus, receiver });
+    // At Customs: the lot's container, looked up once. Customs may be set to receive whole containers only; a lot
+    // with no container (loose, sent before 16 Nov 2026) and returns are always received case by case.
+    let container: Container | null | undefined;
+    if (result.ok && receiver.type === "WAREHOUSE" && found.ok && found.item.movable.status !== "RETURN_IN_TRANSIT") {
+      container = await containerOfLot(tx, receiver.id, found.item.lot.lotCode);
+      if (container && !receiveModeAllowed(await tx.getSettings(), "LOT")) result = { ok: false, code: "RECEIVE_MODE_OFF", message: RECEIVE_MODE_OFF_MESSAGE.LOT };
+    }
     if (!result.ok) {
       await logScan(tx, { context: "RECEIVE", code, actor, ok: false, result: result.code, message: result.message });
       return { ok: false, code: result.code, message: result.message };
     }
     const item = (found as { item: FoundItem }).item;
-    const status = await receiveItem(tx, { actor, receiver, item, at: nowIso(), note: null });
+    const status = await receiveItem(tx, { actor, receiver, item, at: nowIso(), note: null, container });
     const message = `${code} received → ${status} (${describe(item)})`;
     await logScan(tx, { context: "RECEIVE", code, actor, ok: true, result: "OK", message });
     return { ok: true, message, status };

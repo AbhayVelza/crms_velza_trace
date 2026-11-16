@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Role } from "@/lib/core/types";
 import { getStore } from "@/lib/store";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
+import { clearContainer, createContainer, dispatchContainer, loadContainer } from "@/lib/services/containers";
 import { dispatch, openLot, receive } from "@/lib/services/movement";
 import { reprint, setDeviceOffline, sync, voidLot } from "@/lib/services/operator";
 import { createPrintOrder, markPrinted, serveReprint, stickersForOrder } from "@/lib/services/printOrders";
@@ -109,25 +110,27 @@ describe("demo script 9.1", () => {
     expect((await store().packs.list()).every((p) => p.status === "PACKED")).toBe(true);
   });
 
-  it("3. operator dispatches the 2 Original cases to the Velza Warehouse with INV-001; the warehouse receives them", async () => {
-    const noInvoice = await dispatch(ids.operator, { action: "check", toPartnerId: ids.VW, invoice: "", code: lots[0] });
-    expect(noInvoice).toMatchObject({ ok: false, code: "INVOICE_REQUIRED" });
-    // The manufacturer ships only to the Velza Warehouse, never straight to an SS, DB or Retailer.
+  it("3. operator ships the 2 Original cases to Customs in a container with INV-001; Customs receives and clears them", async () => {
+    // The plant never sends a case on its own to Customs, and never to an SS, DB or Retailer.
+    expect(await dispatch(ids.operator, { action: "check", toPartnerId: ids.VW, invoice: "INV-001", code: lots[0] })).toMatchObject({ ok: false, code: "CONTAINER_REQUIRED" });
     for (const to of [ids.SS1, ids.DB1, ids.RT1]) {
       expect(await dispatch(ids.operator, { action: "check", toPartnerId: to, invoice: "INV-001", code: lots[0] })).toMatchObject({ ok: false, code: "WRONG_DESTINATION" });
     }
-    for (const code of [lots[0], lots[1]]) {
-      expect(await dispatch(ids.operator, { action: "check", toPartnerId: ids.VW, invoice: "INV-001", code })).toMatchObject({ ok: true });
-    }
-    const r = await dispatch(ids.operator, { action: "confirm", toPartnerId: ids.VW, invoice: "INV-001", codes: [lots[0], lots[1]] });
-    expect(r).toMatchObject({ ok: true, count: 2 });
+    const { container } = await createContainer(ids.operator, { code: "MSCU0000001" });
+    for (const code of [lots[0], lots[1]]) expect(await loadContainer(ids.operator, container.id, { code })).toMatchObject({ ok: true });
+    await expect(dispatchContainer(ids.operator, container.id, { toPartnerId: ids.VW, invoice: "" })).rejects.toMatchObject({ code: "INVOICE_REQUIRED" });
+    await expect(dispatchContainer(ids.operator, container.id, { toPartnerId: ids.SS1, invoice: "INV-001" })).rejects.toMatchObject({ code: "WRONG_DESTINATION" });
+    expect((await dispatchContainer(ids.operator, container.id, { toPartnerId: ids.VW, invoice: "INV-001" })).container).toMatchObject({ status: "IN_TRANSIT" });
     expect(await store().lots.findOne({ lotCode: lots[0] })).toMatchObject({ status: "IN_TRANSIT", inTransitToId: ids.VW });
     expect(await receive(ids.ss1, { code: lots[0] })).toMatchObject({ ok: false, code: "WRONG_RECEIVER" });
-    for (const code of [lots[0], lots[1]]) expect(await receive(ids.vw, { code })).toMatchObject({ ok: true, status: "AT_WAREHOUSE" });
+    // Customs receives the whole container with one scan of its number: held until cleared.
+    expect(await receive(ids.vw, { code: "MSCU0000001" })).toMatchObject({ ok: true, status: "AT_CUSTOMS", container: { received: 2 } });
     expect((await myStock(ids.vw)).inStock.map((s) => s.code).sort()).toEqual([lots[0], lots[1]]);
-    // The warehouse never opens a case
+    expect(await dispatch(ids.vw, { action: "check", toPartnerId: ids.SS1, invoice: "VW-001", code: lots[0] })).toMatchObject({ ok: false, code: "NOT_CLEARED" });
+    expect(await clearContainer(ids.vw, container.id, { billOfEntry: "BE-0000001" })).toMatchObject({ ok: true, cleared: 2 });
+    // Customs never opens a case
     await expect(openLot(ids.vw, { lotCode: lots[0] })).rejects.toMatchObject({ status: 403 });
-    // The warehouse dispatches both cases on to SS-1
+    // Customs dispatches both cases on to SS-1
     expect(await dispatch(ids.vw, { action: "confirm", toPartnerId: ids.SS1, invoice: "VW-001", codes: [lots[0], lots[1]] })).toMatchObject({ ok: true, count: 2 });
     expect(await store().lots.findOne({ lotCode: lots[0] })).toMatchObject({ status: "IN_TRANSIT", inTransitToId: ids.SS1 });
   });
@@ -169,8 +172,9 @@ describe("demo script 9.1", () => {
     expect(c.status).toBe("OPENED");
     expect(c.timeline.map((t) => t.event)).toEqual([
       "GENERATED", "PRINTED", "VERIFIED",
-      "DISPATCHED", "RECEIVED", // MF → Velza Warehouse
-      "DISPATCHED", "RECEIVED", // Velza Warehouse → SS-1
+      "DISPATCHED", "RECEIVED", // MF → Customs (container MSCU0000001)
+      "CUSTOMS_CLEARED", // the container is cleared at Customs
+      "DISPATCHED", "RECEIVED", // Customs → SS-1
       "DISPATCHED", "RECEIVED", // SS-1 → DB-1
       "DISPATCHED", "RECEIVED", // DB-1 → Retailer-1
       "OPENED",
@@ -206,7 +210,7 @@ describe("demo script 9.1", () => {
     expect((await publicLookup(lots[1])).status.label).toBe("Genuine Velza product");
     expect((await publicLookup("91ZZZZZZOR00001")).status.label).toBe("Unregistered code");
     // Scanning a recalled code raises BLOCKED_CODE
-    expect(await dispatch(ids.operator, { action: "check", toPartnerId: ids.VW, invoice: "X", code: lots[3] })).toMatchObject({ code: "BLOCKED_CODE" });
+    expect(await receive(ids.ss1, { code: lots[3] })).toMatchObject({ code: "BLOCKED_CODE" });
     expect((await alerts(ids.hq)).some((a) => a.type === "BLOCKED_CODE")).toBe(true);
   });
 
@@ -225,27 +229,30 @@ describe("demo script 9.1", () => {
     // invisible to others
     expect(await lookup(ids.hq, lot)).toMatchObject({ found: false, result: "UNKNOWN_CODE" });
     expect((await publicLookup(lot)).status.label).toBe("Unregistered code");
-    // cannot dispatch
-    expect(await dispatch(ids.operator, { action: "check", toPartnerId: ids.VW, invoice: "INV-009", code: lot })).toMatchObject({ ok: false, code: "UNSYNCED" });
-    await expect(dispatch(ids.operator, { action: "confirm", toPartnerId: ids.VW, invoice: "INV-009", codes: [lot] })).rejects.toThrow(/Nothing dispatched/);
+    // cannot leave the plant: it can't even be loaded into a container while it is unsynced
+    const { container } = await createContainer(ids.operator, { code: "MSCU0000009" });
+    expect(await loadContainer(ids.operator, container.id, { code: lot })).toMatchObject({ ok: false, code: "UNSYNCED" });
     // sync requires online
     await expect(sync(ids.operator, {})).rejects.toThrow(/offline/);
     await setDeviceOffline(ids.operator, device.id, { offline: false });
     const s = await sync(ids.operator, {});
     expect(s.synced.lots).toBe(1);
     expect((await store().movements.list({ type: "SYNC" }))).toHaveLength(1);
-    expect(await dispatch(ids.operator, { action: "confirm", toPartnerId: ids.VW, invoice: "INV-009", codes: [lot] })).toMatchObject({ ok: true });
+    expect(await loadContainer(ids.operator, container.id, { code: lot })).toMatchObject({ ok: true });
+    expect(await dispatchContainer(ids.operator, container.id, { toPartnerId: ids.VW, invoice: "INV-009" })).toMatchObject({ ok: true });
   });
 
-  it("8b. the Velza Warehouse supplies a Distributor or a Retailer directly, whoever they are assigned to", async () => {
-    // the offline-made case from step 8, now synced and on its way to the warehouse
+  it("8b. Customs supplies only Super Stockists, and only once the container is cleared", async () => {
+    // the offline-made case from step 8, now synced and on its way to Customs in container MSCU0000009
     const lot = (await store().lots.list({ status: "IN_TRANSIT" })).find((l) => l.inTransitToId === ids.VW)!.lotCode;
-    expect(await receive(ids.vw, { code: lot })).toMatchObject({ ok: true, status: "AT_WAREHOUSE" });
-    // DB-1 is assigned to SS-1, Retailer-1 to DB-1: the warehouse may still supply either of them directly
-    expect(await dispatch(ids.vw, { action: "check", toPartnerId: ids.DB1, invoice: "VW-002", code: lot })).toMatchObject({ ok: true });
-    expect(await dispatch(ids.vw, { action: "check", toPartnerId: ids.RT1, invoice: "VW-002", code: lot })).toMatchObject({ ok: true });
-    expect(await dispatch(ids.vw, { action: "confirm", toPartnerId: ids.RT1, invoice: "VW-002", codes: [lot] })).toMatchObject({ ok: true });
-    expect(await store().lots.findOne({ lotCode: lot })).toMatchObject({ status: "IN_TRANSIT", inTransitToId: ids.RT1 });
+    expect(await receive(ids.vw, { code: "MSCU0000009" })).toMatchObject({ ok: true, status: "AT_CUSTOMS" });
+    const container = (await store().containers.list({ code: "MSCU0000009" }))[0];
+    await clearContainer(ids.vw, container.id, {});
+    // DB-1 and Retailer-1 can no longer be supplied by Customs directly
+    expect(await dispatch(ids.vw, { action: "check", toPartnerId: ids.DB1, invoice: "VW-002", code: lot })).toMatchObject({ ok: false, code: "WRONG_DESTINATION" });
+    expect(await dispatch(ids.vw, { action: "check", toPartnerId: ids.RT1, invoice: "VW-002", code: lot })).toMatchObject({ ok: false, code: "WRONG_DESTINATION" });
+    expect(await dispatch(ids.vw, { action: "confirm", toPartnerId: ids.SS1, invoice: "VW-002", codes: [lot] })).toMatchObject({ ok: true });
+    expect(await store().lots.findOne({ lotCode: lot })).toMatchObject({ status: "IN_TRANSIT", inTransitToId: ids.SS1 });
   });
 
   it("9. reprint a sticker → same code, logged with reason", async () => {

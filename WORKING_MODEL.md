@@ -29,9 +29,10 @@ Oct 27, 2026 · Abhay Velza · living document, updated 30 Oct 2026 (see [Change
 
 Velza Traceability gives every case, tray and pack of Velza beverages a unique code and records each hand-over from
 the factory to the retailer. Stickers with a barcode are printed at the plant, checked by QC, and scanned
-OUT and IN at every step of the chain. Since 6 Nov 2026 the plant ships only to the **Velza Warehouse**, in shipping
-containers: **Manufacturer → Velza Warehouse → Super Stockist, Distributor or Retailer**, and from there the chain goes
-on as before: **Super Stockist → Distributor → Retailer** (a few retailers are supplied by their Super Stockist directly).
+OUT and IN at every step of the chain. Since 16 Nov 2026 the plant ships only to **Customs**, in shipping containers;
+a Velza person at Customs receives them, waits for customs clearance and then sends cases and trays on to **Super
+Stockists**: **Manufacturer → Customs (Velza) → Super Stockist → Distributor → Retailer** (a few retailers are supplied
+by their Super Stockist directly). Customs is the place that was called the Velza Warehouse (6–16 Nov 2026).
 
 Velza Global India runs the system through two central roles: **Velza Admin** sets up the network, and **Velza HQ**
 watches it (status, location, history, alerts, recalls). Each of the 8 roles works in its own portal and sees only its
@@ -58,17 +59,49 @@ and Outlet renamed Retailer on 27 Oct 2026; the Velza Warehouse tier was added o
 
 | Tier | Receives from | Dispatches to | Assigned to | Example |
 |---|---|---|---|---|
-| Manufacturer (plant) | — | Only the Velza Warehouse (in shipping containers, or case by case) | — | vietnam_plant |
-| Velza Warehouse (VW) | Manufacturer | Any Super Stockist, Distributor or Retailer | — (not assigned) | VW0001 Bhiwandi |
-| Super Stockist (SS) | Velza Warehouse | Its assigned distributors and its direct retailers | — | pune_stocks |
-| Distributor (DB) | Velza Warehouse, or its Super Stockist | Its assigned retailers | One Super Stockist | fc_road_db, baner_db → pune_stocks |
-| Retailer (RT) | Velza Warehouse, its Distributor, or its Super Stockist | — (sells to consumers) | One Distributor, or one Super Stockist directly | JW Marriot → fc_road_db; Colaba Kirana → pune_stocks |
+| Manufacturer (plant) | — | Only Customs, in shipping containers (no case-by-case dispatch since 16 Nov 2026) | — | vietnam_plant |
+| Customs (Velza) (VW) | Manufacturer | Any Super Stockist, after customs clearance | — (not assigned) | VW0001 Bhiwandi |
+| Super Stockist (SS) | Customs | Its assigned distributors and its direct retailers | — | pune_stocks |
+| Distributor (DB) | Its Super Stockist | Its assigned retailers | One Super Stockist | fc_road_db, baner_db → pune_stocks |
+| Retailer (RT) | Its Distributor, or its Super Stockist | — (sells to consumers) | One Distributor, or one Super Stockist directly | JW Marriot → fc_road_db; Colaba Kirana → pune_stocks |
 
 Example: assign 50 distributors to the Pune SS, and the Pune SS sees exactly those 50 plus the retailers assigned to it
 directly. Assign 50 retailers to fc_road_db, and fc_road_db sees exactly those 50. An SS never sees the retailers of its
 distributors.
 
-### Velza Warehouse and shipping containers (since 6 Nov 2026)
+### Customs and customs clearance (since 16 Nov 2026)
+
+On 16 Nov 2026 the pipeline changed: the plant ships its containers to **Customs**, where a Velza person works; after
+customs clearance that person sends cases and trays to Super Stockists as each needs. Customs and the Velza Warehouse
+are the same place, so the warehouse partner (VW0001, sign-in VW0001, internal type `WAREHOUSE`) is now labelled
+**Customs (Velza)**; IDs and data are unchanged. Design: `docs/superpowers/specs/2026-11-16-customs-clearance-design.md`.
+
+- **Held until cleared.** Whatever is scanned in at Customs becomes **At customs — awaiting clearance** (`AT_CUSTOMS`)
+  and cannot be dispatched (`NOT_CLEARED`). The public check page still says *Genuine Velza product*; the item can be
+  reported damaged and is caught by a recall like any stock.
+- **Mark cleared.** On *Containers* the Customs user opens a received container, optionally types the **Bill of Entry**
+  number (≤ 40 characters) and presses **Mark cleared**. Every case and tray of that container held there — and its
+  packs — becomes **Cleared at customs** (status `AT_WAREHOUSE`), one `CUSTOMS_CLEARED` movement each (note: the Bill of
+  Entry). The container becomes *Cleared at customs* with who and when. Clearing is allowed once its first case has
+  arrived (the screen shows "n of N received"); cases of a cleared container that arrive later are cleared on arrival.
+  Damaged or recalled cases are left as they are. A container is cleared once; there is no un-clear. Only the Customs
+  user clears; Velza HQ sees it on *Containers*.
+- **To Super Stockists only.** Customs dispatches cleared stock to any Super Stockist, never straight to a Distributor
+  or Retailer (`WRONG_DESTINATION`).
+- **Containers only from the plant.** The plant can no longer send loose cases or trays to Customs (`CONTAINER_REQUIRED`);
+  its *Dispatch* menu entry is gone, *Containers* is the way out.
+- **How Customs receives is a setting** (*Admin → Settings → Customs receives by*), because Velza has not decided yet:
+  container number, case/tray one by one, or both (default both). A switched-off method is refused with
+  `RECEIVE_MODE_OFF`. Returned goods are always received case by case. **Pallets** are prepared for (one more method
+  in `src/lib/services/customs.ts`) but not built: they need a pallet label and a decision on who builds pallets.
+- **Go-live:** stock already at the warehouse counts as cleared; containers on the way are held when they arrive;
+  loose cases sent before 16 Nov arrive cleared (they have no container to clear).
+- **Later (decided 16 Nov, not built):** Super Stockists, Distributors and Retailers raising requirement requests in the
+  system. For now the Velza person at Customs decides what each SS gets.
+- PostgreSQL **schema v8**: status `AT_CUSTOMS`, container status `CLEARED`, `cleared_at` / `cleared_by` /
+  `bill_of_entry`; a cleared container's number can be used again.
+
+### Velza Warehouse and shipping containers (since 6 Nov 2026; Customs since 16 Nov — see above)
 
 - There is one Velza Warehouse for now (VW0001, sign-in VW0001, role *Velza Warehouse*). Admin registers more on
   Partners like any other tier if the company opens more; nothing else changes. A warehouse is not assigned to anyone.
@@ -87,7 +120,7 @@ distributors.
   received, the next trip can use it again. Each trip is its own record (status Loading → On the way → Received, with
   invoice, times and who did it). The operator sees its plant's containers, the warehouse those sent to it, Velza HQ all
   of them (*Containers*). In a code's timeline the dispatch and receipt say "Container MSCU1234567".
-- The plant can still dispatch single cases and trays to the warehouse on Dispatch (no container).
+- ~~The plant can still dispatch single cases and trays to the warehouse on Dispatch (no container).~~ No longer since 16 Nov 2026: containers only.
 
 ### Units and codes
 
@@ -295,7 +328,8 @@ its packs is still there.
 | Printed | Stickers printed | Operator confirms each print run (cases, trays) with **Mark cases as printed** / **Mark trays as printed** in the print view; only that run's lots become Printed, so QC can start on the cases while the trays are still printing. **Print** only opens the browser print dialog; cancelling or closing it, Ctrl+P, downloading the codes CSV or leaving the page record nothing. The print order shows *Printing pending* until every run is confirmed, and QC refuses lots of an unconfirmed run. An order whose lots are all voided cannot be marked printed |
 | Packed | QC checked the lot and all its pack stickers | Supervisor/QC confirms |
 | In transit | On its way to the next partner | Sender confirms dispatch (or the operator dispatches its container) |
-| At warehouse / At SS / At DB / At Retailer | Received at that partner | Receiver scans it IN (the warehouse can scan a whole container's number) |
+| At customs — awaiting clearance | Received at Customs; held, cannot be dispatched until its container is cleared | Customs scans the container number or the case/tray IN (since 16 Nov 2026) |
+| Cleared at customs (`AT_WAREHOUSE`) / At SS / At DB / At Retailer | At Customs and cleared (ready for an SS), or received at that partner | Customs presses **Mark cleared** on the container; the SS, DB or Retailer scans it IN |
 | Opened | Case or tray opened; packs now move individually | Retailer opens the lot (only Retailers open cases and trays) |
 | Quarantined | Failed QC check; cannot move. Two ways out: Void (ends as Void for good), or reprint the bad sticker with a reason, which sends the lot back to Printed so QC verifies it again before it becomes Packed | QC confirms with missing or wrong packs |
 | Void | Misprinted or unused stickers cancelled | Operator voids the lot |
@@ -315,9 +349,9 @@ assigned to it directly; each distributor sees only its own retailers.
 ```
 Velza Admin (builds)            Velza HQ (sees everything)
         │
-Manufacturer (vietnam_plant) ──► only the Velza Warehouse (containers)
+Manufacturer (vietnam_plant) ──► only Customs (containers)
         │
-Velza Warehouse (VW0001) ──► any Super Stockist, Distributor or Retailer
+Customs (Velza) (VW0001) ──► customs clearance ──► any Super Stockist
         │
 Super Stockist (pune_stocks)
  ├── Distributor (fc_road_db)
@@ -355,8 +389,8 @@ Operator: New print order ─► Generated ─► Print ─► Printed
 QC: scan lot + every pack ─► all match ─► Packed
                          └─► missing/wrong ─► Quarantined ─► Void
                                                         └─► Reprint (reason) ─► Printed ─► QC again
-Plant: Container (scan cases/trays in) ─► Dispatch container (invoice) ─► In transit ─► VW: scan container number ─► At warehouse
-VW: Dispatch ─► In transit ─► SS, DB or Retailer: Receive ─► At SS / At DB / At Retailer
+Plant: Container (scan cases/trays in) ─► Dispatch container (invoice) ─► In transit ─► Customs: scan container number (or each case) ─► At customs
+Customs: Mark cleared (Bill of Entry) ─► Cleared at customs ─► Dispatch ─► In transit ─► SS: Receive ─► At SS
 SS: Dispatch ─► In transit ─► DB: Receive ─► At DB ─► Dispatch ─► Retailer: Receive ─► At Retailer ─► Open lot ─► Opened
 SS: Dispatch ─► its direct Retailer ─► At Retailer
 Any stock-holding tier: Damaged (reason + photo with barcode + 1–4 damage photos) ─► Damaged, HQ alerted
@@ -473,12 +507,12 @@ its own portal, the server refuses anything outside it, and everyone can change 
 | Velza Admin | Velza Global India | Setting up and maintaining the network: registering partners (with their IDs and sign-ins), assignments, passwords, plant devices, country and flavour codes, batch code pools, settings. Deactivates or deletes records that have no history. | Partners (registration form), Sign-ins & passwords, Devices, Countries & flavours, Batch code pools, Settings |
 | Velza HQ | Velza Global India | Watching the whole chain: stock and status everywhere, investigating alerts (not received, wrong receiver, unknown or blocked codes), tracing any code, following containers, recalling a batch. Only role with the HQ dashboard. | Dashboard, Search code, Alerts, Batches & recall, Containers, Scan audit |
 | Velza Field Staff (VF0001…, since 13 Nov 2026) | Velza Global India | Visiting partners: scanning any code to see its full chain, holder, status and dates (view only — scanning never receives anything), and taking stock back to the Velza Warehouse (Take back). | Scan |
-| Manufacturer Operator | A plant | Creating print orders and printing stickers, seeing every generated code per order, loading packed cases and trays into shipping containers and dispatching them to the Velza Warehouse with an invoice, reprinting damaged stickers (same code, reason logged), voiding misprints, keeping the plant PC synced. | New print order, Print orders (with Codes view), Containers, Dispatch, Reprint, Void lot, My stock, Damaged |
+| Manufacturer Operator | A plant | Creating print orders and printing stickers, seeing every generated code per order, loading packed cases and trays into shipping containers and dispatching them to Customs with an invoice (the only way out of the plant since 16 Nov 2026), reprinting damaged stickers (same code, reason logged), voiding misprints, keeping the plant PC synced. | New print order, Print orders (with Codes view), Containers, Reprint, Void lot, My stock, Damaged |
 | Supervisor / QC | A plant | Checking that every pasted pack sticker belongs to its lot before anything leaves the plant: confirms to Packed, or the lot is quarantined. | Verify, My stock, Product details |
-| Velza Warehouse | Velza Global India (one warehouse for now) | Receiving containers from the plant (one scan of the container number) and dispatching cases and trays to any Super Stockist, Distributor or Retailer. Never opens cases. | Receive, Containers, Dispatch, My stock, Product details, Damaged |
-| Super Stockist | Its own company (one per state) | Receiving cases from the Velza Warehouse and dispatching them to its assigned distributors and to the retailers assigned to it directly. | Receive, Dispatch, My stock, Product details, Damaged, My partners |
-| Distributor | Its own company | Receiving from the Velza Warehouse or its Super Stockist and dispatching to its assigned retailers. | Receive, Dispatch, My stock, Product details, Damaged, My retailers |
-| Retailer | Its own shop | Receiving from the Velza Warehouse, its distributor or its Super Stockist and opening cases and trays for sale; the only role that opens them. Cannot dispatch. | Receive, Open lot, My stock, Product details, Damaged |
+| Customs (Velza) — was Velza Warehouse | Velza Global India (one Customs point for now) | Receiving containers from the plant (container number or case by case, as set by Admin), marking each container cleared after customs clearance (optional Bill of Entry), and dispatching cleared cases and trays to any Super Stockist. Inspects returns. Never opens cases. | Receive, Containers (Mark cleared), Dispatch, My stock, Product details, Damaged |
+| Super Stockist | Its own company (one per state) | Receiving cases from Customs and dispatching them to its assigned distributors and to the retailers assigned to it directly. | Receive, Dispatch, My stock, Product details, Damaged, My partners |
+| Distributor | Its own company | Receiving from its Super Stockist and dispatching to its assigned retailers. | Receive, Dispatch, My stock, Product details, Damaged, My retailers |
+| Retailer | Its own shop | Receiving from its distributor or its Super Stockist and opening cases and trays for sale; the only role that opens them. Cannot dispatch. | Receive, Open lot, My stock, Product details, Damaged |
 | Consumer (no login) | — | Scanning the QR code on older stickers to check a product is genuine and not recalled (new stickers have no QR). Sees no business data. | Public check page |
 
 **Returns — Velza field staff (since 13 Nov 2026, branch `features/barcode-history`).** A new Velza staff role,
@@ -1419,6 +1453,7 @@ section above in the same change.
 
 | Date | Who | Change | Verified |
 |---|---|---|---|
+| 16 Nov 2026 | Claude Code on `feature/all-latest-integration` (uncommitted, as asked) | **Customs pipeline: MF → Customs → SS, with customs clearance** (Part 1 Overview, partner tiers, new "Customs and customs clearance" section, Statuses, Partner tree, Workflow, Roles). The plant ships to Customs (the Velza Warehouse partner, relabelled *Customs (Velza)*) only in containers (`CONTAINER_REQUIRED`; plant Dispatch menu removed). Goods scanned in at Customs are held `AT_CUSTOMS` until the Customs user presses **Mark cleared** on the container (optional Bill of Entry; `CUSTOMS_CLEARED` movements; container `CLEARED`); cleared stock (`AT_WAREHOUSE`) goes to Super Stockists only (`NOT_CLEARED`, `WRONG_DESTINATION`). Receiving method is an Admin setting (`customsReceiveModes`: container / case-tray; pallet prepared, not built). Early clearance allowed (later arrivals cleared on arrival); a container scan after single-case receipts receives the rest; loose lots in transit at go-live arrive cleared. Schema **v8**. Design `docs/superpowers/specs/2026-11-16-customs-clearance-design.md`, plan `docs/superpowers/plans/2026-11-16-customs-clearance.md`. Files: `src/lib/core/{types,rules,permissions}.ts`, `src/lib/services/{customs,containers,movement,damage,admin,returns,trace}.ts`, `src/lib/store/sql/{schema,sqlStore}.ts`, `db/schema.sql`, `src/app/api/containers/[id]/clear/route.ts`, screens Containers, Stock, Receive, Settings, Partners, Product details, Dispatch, `src/lib/menu.ts`, `src/components/ui.tsx`; tests `tests/unit/customs.test.ts` (new), `tests/fixtures/shipToCustoms.ts` (new), 13 unit test files and `tests/e2e/demo.spec.ts` moved to the container flow. | Typecheck, lint clean; unit JSON 621 passed / 1 skipped, PGlite 317 passed / 8 skipped (serial, after the final-review fixes: a container scan no longer looks its container up per case; container-only setting no longer strands loose go-live cases; n-of-N count fixed); e2e 20/20; v7→v8 upgrade on PGlite (twice); live walkthrough on a production build at :3500 with a COPY of `data/db.json` (20 API checks + Containers / My stock screens: held → Mark cleared with Bill of Entry → SS only; late case of a cleared container arrives cleared) |
 | 14 Nov 2026 | Claude Code on `feature/all-latest-integration` (from `main` @ `ff9d44a`) | **Schema version clash fixed: self sign-up is v7.** On 14 Nov `main` received every branch (PRs #7–#19), including `features/barcode-history` (Returns, schema v6) and `develop/aditya` (self sign-up, also schema v6). The merge kept both at `SCHEMA_VERSION = 6`, but the app re-applies the schema only when the stored version differs, so a PostgreSQL database already at v6 from either branch would never receive the other change (e.g. a v6 Returns database would lack `partners.approval` and sign-up would fail). Returns (pushed first, 13 Nov) keeps **v6**; self sign-up is now **v7** (`SCHEMA_VERSION = 7`, `db/schema.sql` regenerated by `npm run db:schema`, the duplicated contract-test line made one check for 7). Every schema statement is idempotent, so a database at either v6 upgrades to v7 with both changes. Where the self sign-up row below says v6, read v7. Files: `src/lib/store/sql/schema.ts`, `db/schema.sql`, `src/lib/store/store.contract.test.ts`, this file. | Typecheck, lint, unit tests JSON 594 passed / 1 skipped, PGlite 296 passed / 8 skipped (serial); a v6 database from either branch upgrades to v7 with the approval column, VELZA_FIELD and RETURN_IN_TRANSIT (in-memory PGlite) |
 | 14 Nov 2026 | Claude Code on `develop/aditya` (uncommitted, as asked) | **Self sign-up for SS / DB / Retailers; Admin registers only the plant and the Warehouse** (design `docs/superpowers/specs/2026-11-14-self-signup-design.md`, approach A chosen by the user). `/signup` page (link on sign-in); Retailer active at once; SS / DB pending until Admin → Partners → Pending approvals (Approve / Reject); pending or rejected partners cannot sign in (own messages), be dispatched to, be picked as supplier, or be switched on with the Active box. Schema **v6**: `partners.approval` (NULL / PENDING / REJECTED), one-SS-per-state index leaves rejected out. Sign-up limited to 5 per IP per hour. Files: `src/lib/services/signup.ts` (new), `admin.ts` (decideApproval, NOT_APPROVED guard, rejected SS frees its state), `auth.ts` (PENDING_APPROVAL / REJECTED), `src/app/api/signup`, `src/app/api/admin/approvals/[id]`, `src/proxy.ts`, `src/app/signup/page.tsx`, `src/components/AuthShell.tsx` (moved from the sign-in page), `src/app/login/page.tsx`, `src/app/(screens)/admin/partners/page.tsx`, `src/lib/store/sql/{schema,sqlStore}.ts`, `db/schema.sql`, `types.ts`. Note: `features/barcode-history` also uses v6 (Returns) — renumber one when merging. | New `tests/unit/signup.test.ts` (10 tests, json + postgres) written first and failing, then passing; contract test for the v6 index/check; e2e test 11 rewritten (Distributor signs up → waits → Admin approves → signs in; Retailer under SS-1 works at once). Full unit suite 833 passed / 9 skipped; `tsc`, ESLint clean; Playwright 19/19. Browser on a prod build at :3500 with a copy of `data/db.json`: Retailer RT0003 signed up and opened its portal; Distributor DB0002 pending → refused at sign-in → Active box refused → approved → signed in, offered in SS0001's dispatch list and to new Retailers; SS0002 (Goa) rejected → refused at sign-in, Goa free again; Admin tier list = Manufacturer, Velza Warehouse. |
 | 14 Nov 2026 | Claude Code on `features/barcode-history` (commit `cd843ef`) | **Five fixes from the 13 Nov manual test of all roles** (full test and re-test record: `docs/qa/MANUAL_TEST_REPORT_2026-11-13_ALL_ROLES.md`). (1) **Dispatch invoice:** the scan box appears after the first letter of the invoice and took the cursor, so the rest of the invoice went into the scan box. The scan box now takes focus when it appears only if no other field is being typed in (`src/components/ScanInput.tsx`). (2) **Print view, cases before trays:** after the case run was confirmed, the sheet warned "3 voided or recalled lot(s)" and logged "voided/recalled lot(s) withheld" — printed lots were counted as withheld. Withheld now counts only VOID / RECALLED lots; the title counts the whole order (22, not the 7 left) (`src/lib/services/printOrders.ts`). (3) **Containers:** "All containers" showed 0 loaded while loading; load and take-out now refresh the list too (`src/app/(screens)/containers/page.tsx`). (4) **Register partner:** required fields marked `*` (State too, except for the plant); missing ones are reported under each field and above the Register button, and the first is scrolled to and focused (`src/app/(screens)/admin/partners/page.tsx`). (5) **Plant stock wording:** unprinted lots were counted as "awaiting QC"; now "N lot(s) not printed yet" (GENERATED) apart from "awaiting QC" (PRINTED) — new `awaitingPrint` in `pendingCounts` (`src/lib/services/trace.ts`, stock and HQ pages). | New unit test for (2) fails on the old code ("expected 3 to be 0") and passes now; `traceFlow` test updated for (5). Full unit suite 880 passed / 9 skipped; `tsc` and ESLint clean; Playwright e2e 20/20. Live browser re-test on a prod build at :3500 with a copy of `data/db.json`: each of the five checked as it was found (typed invoice stays whole on Operator and Warehouse Dispatch; no false warning, title 22, audit notes clean; list count 1 → 3 → 2 after take-out; Address/State errors shown and field brought into view, then RT0003 registered; "106 lot(s) not printed yet"). |

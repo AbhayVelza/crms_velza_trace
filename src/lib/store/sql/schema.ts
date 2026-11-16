@@ -23,8 +23,12 @@
 //
 // v7 (14 Nov 2026): self sign-up. partners.approval (NULL = approved, PENDING, REJECTED); the one-SS-per-state
 // index leaves rejected sign-ups out. Column added in place; existing rows stay NULL (approved).
+//
+// v8 (16 Nov 2026): customs clearance — code status AT_CUSTOMS (held at Customs until its container is cleared),
+// container status CLEARED with cleared_at / cleared_by / bill_of_entry, and a cleared container's number can be
+// reused. Allowed values and nullable columns only; existing rows are unchanged.
 
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 // Checks whose values changed in v2 or v3. Each is named explicitly — with the name PostgreSQL gave it in
 // v1 — so the upgrade can replace it, and is written once here for both CREATE TABLE and the upgrade.
@@ -33,8 +37,10 @@ const PARTNER_ID_CHECK = `partner_id ~ '^(MF|VW|SS|DB|RT)[0-9]{4,}$' AND left(pa
       WHEN 'MANUFACTURER' THEN 'MF' WHEN 'WAREHOUSE' THEN 'VW' WHEN 'SS' THEN 'SS' WHEN 'DB' THEN 'DB' ELSE 'RT' END`;
 const LOGIN_ID_CHECK = `login_id ~ '^(MF|VW|SS|DB|RT|AD|HQ|VF)[0-9]{4,}(-(OP|QC))?$'`;
 const ROLE_CHECK = `role IN ('ADMIN', 'OPERATOR', 'QC', 'WAREHOUSE', 'SS', 'DB', 'RETAILER', 'TRACE_OWNER', 'VELZA_FIELD')`;
-const CODE_STATUS_CHECK = `status IN ('GENERATED', 'PRINTED', 'PACKED', 'IN_TRANSIT', 'AT_WAREHOUSE', 'AT_SS', 'AT_DB', 'AT_RETAILER',
+const CODE_STATUS_CHECK = `status IN ('GENERATED', 'PRINTED', 'PACKED', 'IN_TRANSIT', 'AT_CUSTOMS', 'AT_WAREHOUSE', 'AT_SS', 'AT_DB', 'AT_RETAILER',
                     'OPENED', 'QUARANTINED', 'VOID', 'DAMAGED', 'RETURN_IN_TRANSIT', 'RETURNED', 'EXPIRED', 'RECALLED')`;
+
+const CONTAINER_STATUS_CHECK = `status IN ('LOADING', 'IN_TRANSIT', 'RECEIVED', 'CLEARED')`;
 
 // Values only a v1 database can hold (the Supplier tier, Outlets and their SP / OT IDs).
 const V1_TYPES = `('SUPPLIER', 'OUTLET')`;
@@ -196,7 +202,7 @@ CREATE TABLE IF NOT EXISTS containers (
   container_id     text PRIMARY KEY,
   container_code   text NOT NULL CHECK (container_code ~ '^[A-Z0-9][A-Z0-9-]{2,19}$'),
   manufacturer_id  text NOT NULL,
-  status           text NOT NULL CHECK (status IN ('LOADING', 'IN_TRANSIT', 'RECEIVED')),
+  status           text NOT NULL CONSTRAINT containers_status_check CHECK (${CONTAINER_STATUS_CHECK}),
   lot_codes        text[] NOT NULL,
   to_partner_id    text,
   invoice          text,
@@ -206,9 +212,13 @@ CREATE TABLE IF NOT EXISTS containers (
   dispatched_by    text,
   received_at      timestamptz,
   received_by      text,
+  cleared_at       timestamptz,
+  cleared_by       text,
+  bill_of_entry    text,
   row_no           bigint GENERATED ALWAYS AS IDENTITY
 );
-CREATE UNIQUE INDEX IF NOT EXISTS containers_one_active_per_code ON containers (container_code) WHERE status <> 'RECEIVED';
+CREATE UNIQUE INDEX IF NOT EXISTS containers_one_active_per_code ON containers (container_code) WHERE status IN ('LOADING', 'IN_TRANSIT');
+CREATE INDEX IF NOT EXISTS containers_by_receiver ON containers (to_partner_id);
 CREATE INDEX IF NOT EXISTS containers_by_manufacturer ON containers (manufacturer_id);
 
 -- ============================================================ codes
@@ -402,6 +412,20 @@ ALTER TABLE partners
   ADD CONSTRAINT partners_approval_check CHECK (approval IS NULL OR approval IN ('PENDING', 'REJECTED'));
 DROP INDEX IF EXISTS partners_one_ss_per_state;
 CREATE UNIQUE INDEX partners_one_ss_per_state ON partners (state) WHERE partner_type = 'SS' AND approval IS DISTINCT FROM 'REJECTED';
+
+-- ============================================================ v8: customs clearance
+-- Stock received at Customs is held (AT_CUSTOMS, in the codes check above) until its container is cleared;
+-- a container gains CLEARED with who/when and the Bill of Entry. Only containers still loading or on the road
+-- hold their number, so a cleared container's number can be used again.
+ALTER TABLE containers ADD COLUMN IF NOT EXISTS cleared_at timestamptz;
+ALTER TABLE containers ADD COLUMN IF NOT EXISTS cleared_by text;
+ALTER TABLE containers ADD COLUMN IF NOT EXISTS bill_of_entry text;
+ALTER TABLE containers
+  DROP CONSTRAINT IF EXISTS containers_status_check,
+  ADD CONSTRAINT containers_status_check CHECK (${CONTAINER_STATUS_CHECK});
+DROP INDEX IF EXISTS containers_one_active_per_code;
+CREATE UNIQUE INDEX containers_one_active_per_code ON containers (container_code) WHERE status IN ('LOADING', 'IN_TRANSIT');
+CREATE INDEX IF NOT EXISTS containers_by_receiver ON containers (to_partner_id);
 
 INSERT INTO schema_info (id, version) VALUES (1, ${SCHEMA_VERSION})
   ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version, applied_at = now();

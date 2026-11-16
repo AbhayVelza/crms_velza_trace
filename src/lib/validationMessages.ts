@@ -38,6 +38,7 @@ const LABELS: Record<string, string> = {
   publicBaseUrl: "Public URL",
   defaultCountry: "Default country",
   publicCloneScanThreshold: "Suspect-clone scans",
+  customsReceiveModes: "Customs receives by",
   publicCloneWindowHours: "Suspect-clone window (hours)",
 };
 

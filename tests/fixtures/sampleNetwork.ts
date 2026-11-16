@@ -24,8 +24,8 @@ const PARTNERS: { type: PartnerType; name: string; place: string; city: string; 
   { type: "RETAILER", name: "Retailer-3 Aundh Cafe", place: "Aundh", city: "Pune", state: "Maharashtra", parent: "DB-2" },
   // One of the few retailers its Super Stockist supplies directly (no Distributor in between).
   { type: "RETAILER", name: "Retailer-4 Colaba Kirana", place: "Colaba", city: "Mumbai", state: "Maharashtra", parent: "SS-1" },
-  // The Velza Warehouse (last, so the other partners keep their sample phone numbers): the manufacturer ships
-  // only here; it supplies any SS, Distributor or Retailer.
+  // Customs — the Velza Warehouse partner (last, so the other partners keep their sample phone numbers): the
+  // manufacturer ships only here, in containers; after clearance it supplies Super Stockists.
   { type: "WAREHOUSE", name: "VW-1 Velza Warehouse", place: "Bhiwandi", city: "Thane", state: "Maharashtra" },
 ];
 

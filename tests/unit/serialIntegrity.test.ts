@@ -26,6 +26,8 @@ import {
 import { recall } from "@/lib/services/trace";
 import { verify } from "@/lib/services/verify";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
+import { shipToCustoms } from "../fixtures/shipToCustoms";
+import { clearContainer } from "@/lib/services/containers";
 
 const isJson = storeKind() === "json";
 const store = () => getStore();
@@ -312,10 +314,12 @@ describe("existing workflows", () => {
     await markPrinted(ids.operator, o.printOrder.id);
     const [lot] = await lotsOf(o.printOrder.id);
     expect(await qcVerify(lot.lotCode)).toMatchObject({ ok: true });
-    // The plant ships only to the Velza Warehouse; the warehouse sends it on to SS-1.
-    expect(await dispatch(ids.operator, { action: "confirm", toPartnerId: ids.VW, invoice: "SER-0", codes: [lot.lotCode] })).toMatchObject({ ok: true });
+    // The plant ships to Customs in a container; Customs clears it and sends it on to SS-1.
+    await shipToCustoms({ operatorId: ids.operator, customsUserId: ids.vw, customsId: ids.VW, lotCodes: [lot.lotCode], invoice: "SER-0", receive: false });
     await expect(reprint(ids.operator, { code: lot.lotCode, reason: "torn" })).rejects.toMatchObject({ code: "WRONG_STATUS" });
+    const containerId = (await store().containers.list({ toId: ids.VW })).find((c) => c.lotCodes.includes(lot.lotCode))!.id;
     expect(await receive(ids.vw, { code: lot.lotCode })).toMatchObject({ ok: true });
+    await clearContainer(ids.vw, containerId, {});
     expect(await dispatch(ids.vw, { action: "confirm", toPartnerId: ids.SS1, invoice: "SER-1", codes: [lot.lotCode] })).toMatchObject({ ok: true });
     expect(await receive(ids.ss2, { code: lot.lotCode })).toMatchObject({ ok: false, code: "WRONG_RECEIVER" });
     expect(await receive(ids.ss1, { code: lot.lotCode })).toMatchObject({ ok: true });

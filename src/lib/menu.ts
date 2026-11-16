@@ -12,7 +12,7 @@ const receive: MenuItem = { href: "/receive", label: "Receive", description: "Sc
 const dispatch: MenuItem = { href: "/dispatch", label: "Dispatch", description: "Scan OUT down the chain with an invoice/challan" };
 const openLot: MenuItem = { href: "/open-lot", label: "Open lot", description: "Open a case or tray so its packs can move one by one" };
 const stock: MenuItem = { href: "/stock", label: "My stock", description: "Lots and packs at, leaving and arriving at your location" };
-const containers: MenuItem = { href: "/containers", label: "Containers", description: "Shipping containers from the plant to the Velza Warehouse" };
+const containers: MenuItem = { href: "/containers", label: "Containers", description: "Shipping containers from the plant to Customs" };
 const details: MenuItem = { href: "/details", label: "Product details", description: "Scan a code: batch, manufacture and expiry date, and where it came from" };
 const damaged: MenuItem = { href: "/damaged", label: "Damaged", description: "Report a damaged case, tray or pack; see everything reported damaged here" };
 
@@ -29,8 +29,8 @@ export const MENU: Record<Role, MenuItem[]> = {
   OPERATOR: [
     { href: "/operator/new", label: "New print order", description: "Guided questions → batch codes → stickers" },
     { href: "/operator/orders", label: "Print orders", description: "History; open the print view again" },
-    { ...containers, description: "Load cases and trays into a shipping container and dispatch it to the Velza Warehouse" },
-    dispatch,
+    // Cases and trays leave the plant only in a container to Customs (no loose Dispatch since 16 Nov 2026).
+    { ...containers, description: "Load cases and trays into a shipping container and dispatch it to Customs" },
     { href: "/operator/reprint", label: "Reprint", description: "Reprint a damaged sticker (same code, reason logged)" },
     { href: "/operator/void", label: "Void lot", description: "Void an unpasted or misprinted lot" },
     stock,
@@ -38,8 +38,8 @@ export const MENU: Record<Role, MenuItem[]> = {
     damaged,
   ],
   QC: [{ href: "/qc/verify", label: "Verify", description: "Scan a lot and each of its packs, then confirm" }, stock, details],
-  // The Velza Warehouse receives from the manufacturer and supplies any SS, Distributor or Retailer; it never opens lots.
-  WAREHOUSE: [receive, { ...containers, description: "Containers on their way from the plant; receive one by scanning its number on Receive" }, dispatch, stock, details, damaged],
+  // Customs (partner type WAREHOUSE) receives the plant's containers, clears them and supplies Super Stockists; it never opens lots.
+  WAREHOUSE: [receive, { ...containers, description: "Containers from the plant: receive by scanning the number on Receive, then Mark cleared" }, dispatch, stock, details, damaged],
   SS: [receive, dispatch, stock, details, damaged, { href: "/my-partners", label: "My partners", description: "The distributors and retailers assigned to you and their stock" }],
   DB: [receive, dispatch, stock, details, damaged, { href: "/my-partners", label: "My retailers", description: "The retailers assigned to you and their stock" }],
   RETAILER: [receive, openLot, stock, details, damaged],

@@ -117,7 +117,7 @@ CREATE TABLE IF NOT EXISTS batch_code_pool (
 
 CREATE TABLE IF NOT EXISTS batches (
   id               text PRIMARY KEY,
-  batch_code       text NOT NULL UNIQUE CHECK (batch_code ~ '^[A-Z0-9]{6}$'),
+  batch_code       text NOT NULL CHECK (batch_code ~ '^[A-Z0-9]{6}$'),
   country_code     text NOT NULL,
   flavour          text NOT NULL,
   mfg_date         date NOT NULL,
@@ -134,6 +134,7 @@ CREATE TABLE IF NOT EXISTS batches (
   recall_reason    text,
   row_no           bigint GENERATED ALWAYS AS IDENTITY
 );
+CREATE UNIQUE INDEX IF NOT EXISTS batches_code_flavour_key ON batches (batch_code, flavour);
 
 CREATE TABLE IF NOT EXISTS print_orders (
   print_order_id   text PRIMARY KEY,
@@ -183,7 +184,7 @@ CREATE TABLE IF NOT EXISTS codes (
   code                  text PRIMARY KEY,
   code_type             text NOT NULL CHECK (code_type IN ('LOT', 'PACK')),
   country_code          text NOT NULL CHECK (country_code ~ '^[0-9]{2}$'),
-  batch_code            text NOT NULL REFERENCES batches (batch_code) DEFERRABLE INITIALLY DEFERRED,
+  batch_code            text NOT NULL,
   flavour               text NOT NULL CHECK (flavour ~ '^[A-Z]{2}$'),
   hex_code              text NOT NULL CHECK (hex_code ~ '^[0-9A-F]{5}$'),
   lot_type              text NOT NULL CHECK (lot_type IN ('CASE', 'TRAY')),
@@ -216,7 +217,8 @@ CREATE TABLE IF NOT EXISTS codes (
     (code_type = 'LOT' AND pack_sequence IS NULL AND lot_code = code) OR
     (code_type = 'PACK' AND lot_code = left(code, 15)
       AND pack_sequence BETWEEN 1 AND CASE pack_size WHEN 6 THEN 4 ELSE 6 END)),
-  CONSTRAINT lot_type_matches_pack_size CHECK ((lot_type = 'CASE') = (pack_size = 6))
+  CONSTRAINT lot_type_matches_pack_size CHECK ((lot_type = 'CASE') = (pack_size = 6)),
+  CONSTRAINT codes_batch_flavour_fkey FOREIGN KEY (batch_code, flavour) REFERENCES batches (batch_code, flavour) DEFERRABLE INITIALLY DEFERRED
 );
 CREATE INDEX IF NOT EXISTS codes_lot ON codes (lot_code);
 CREATE INDEX IF NOT EXISTS codes_batch ON codes (batch_code);

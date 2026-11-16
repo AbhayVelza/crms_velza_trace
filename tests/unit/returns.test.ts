@@ -19,6 +19,7 @@ import { myStock, publicLookup } from "@/lib/services/trace";
 import { verify } from "@/lib/services/verify";
 import { photoOf } from "../fixtures/damagePhoto";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
+import { shipToCustoms } from "../fixtures/shipToCustoms";
 
 let dir: string;
 const ids: Record<string, string> = {};
@@ -64,8 +65,7 @@ beforeAll(async () => {
     for (const [i, code] of packs.entries()) await verify(ids.qc, { action: "scanPack", lotCode, code, scanned: packs.slice(0, i) });
     await verify(ids.qc, { action: "confirm", lotCode, packCodes: packs });
   }
-  await send(ids.op, ids.VW, "INV-P1", lots);
-  await take(ids.vw, lots);
+  await shipToCustoms({ operatorId: ids.op, customsUserId: ids.vw, customsId: ids.VW, lotCodes: lots, invoice: "INV-P1" });
   await send(ids.vw, ids.SS1, "INV-W1", lots);
   await take(ids.ss1, lots);
   await send(ids.ss1, ids.DB1, "INV-S1", lots);

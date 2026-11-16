@@ -1,8 +1,8 @@
 "use client";
 
-// Shipping containers plant → Velza Warehouse. Operator: open a container by its own number, scan cases and trays
-// into it, dispatch it whole to the warehouse. Warehouse and Velza HQ: follow every container (the warehouse
-// receives one by scanning its number on Receive).
+// Shipping containers plant → Customs. Operator: open a container by its own number, scan cases and trays into it,
+// dispatch it whole to Customs. Customs: receives it (Receive page), then marks it cleared here — only then can its
+// cases and trays go to Super Stockists. Velza HQ follows every container.
 
 import { useState } from "react";
 import { ScanInput, ScanLog, type ScanLogEntry } from "@/components/ScanInput";
@@ -15,6 +15,9 @@ import { notifyDataChanged } from "@/lib/events";
 
 interface Row extends Container {
   lots: number;
+  /** Detail only: how many of its cases/trays have reached Customs. */
+  receivedCount?: number;
+  total?: number;
   manufacturer: string | null;
   to: string | null;
 }
@@ -26,8 +29,8 @@ interface Detail {
   lots: { code: string; lotType: string | null; status: string | null }[];
 }
 
-const STATUS_LABEL: Record<Container["status"], string> = { LOADING: "Loading", IN_TRANSIT: "On the way", RECEIVED: "Received" };
-const STATUS_TONE = { LOADING: "warn", IN_TRANSIT: "neutral", RECEIVED: "ok" } as const;
+const STATUS_LABEL: Record<Container["status"], string> = { LOADING: "Loading", IN_TRANSIT: "On the way", RECEIVED: "At customs — awaiting clearance", CLEARED: "Cleared at customs" };
+const STATUS_TONE = { LOADING: "warn", IN_TRANSIT: "neutral", RECEIVED: "warn", CLEARED: "ok" } as const;
 
 let seq = 0;
 
@@ -36,6 +39,7 @@ export default function ContainersPage() {
   const list = useApi<{ capacity: number; containers: Row[] }>("/api/containers", { refreshOnChange: true });
   const [openId, setOpenId] = useState<string | null>(null);
   const operator = role === "OPERATOR";
+  const customs = role === "WAREHOUSE";
 
   return (
     <>
@@ -43,19 +47,21 @@ export default function ContainersPage() {
         title="Containers"
         subtitle={
           operator
-            ? "Open a container by its own number, scan cases and trays into it, then dispatch it whole to the Velza Warehouse"
-            : "Shipping containers from the plant to the Velza Warehouse. The warehouse receives a container by scanning its number on Receive."
+            ? "Open a container by its own number, scan cases and trays into it, then dispatch it whole to Customs"
+            : customs
+              ? "Containers from the plant. Receive one on Receive (scan its number), then open it here and Mark cleared once customs has cleared it — only cleared cases and trays can go to Super Stockists."
+              : "Shipping containers from the plant to Customs: received, then cleared by the Velza person at Customs."
         }
       />
       <div className="space-y-4">
         {operator && <NewContainer onCreated={(id) => setOpenId(id)} />}
-        {openId && <ContainerDetail id={openId} operator={operator} onClose={() => setOpenId(null)} />}
+        {openId && <ContainerDetail id={openId} operator={operator} customs={customs} onClose={() => setOpenId(null)} />}
         <Card title="All containers">
           {list.error && <Notice tone="error">{list.error}</Notice>}
           {!list.data && !list.error && <Loading />}
           {list.data && (
             <Table
-              head={["Container", "Status", "Cases & trays", "From", "To", "Invoice", "Dispatched", "Received", ""]}
+              head={["Container", "Status", "Cases & trays", "From", "To", "Invoice", "Dispatched", "Received", "Cleared", ""]}
               empty={!list.data.containers.length ? <span className="text-muted-foreground">No containers yet.</span> : null}
             >
               {list.data.containers.map((c) => (
@@ -76,9 +82,10 @@ export default function ContainersPage() {
                   <Td>{c.invoice ?? "—"}</Td>
                   <Td className="whitespace-nowrap text-xs">{c.dispatchedAt ? fmtTime(c.dispatchedAt) : "—"}</Td>
                   <Td className="whitespace-nowrap text-xs">{c.receivedAt ? fmtTime(c.receivedAt) : "—"}</Td>
+                  <Td className="whitespace-nowrap text-xs">{c.clearedAt ? fmtTime(c.clearedAt) : "—"}</Td>
                   <Td>
                     <Button variant="secondary" onClick={() => setOpenId(c.id)}>
-                      {operator && c.status === "LOADING" ? "Load" : "Open"}
+                      {operator && c.status === "LOADING" ? "Load" : customs && c.status === "RECEIVED" ? "Clear" : "Open"}
                     </Button>
                   </Td>
                 </tr>
@@ -128,12 +135,13 @@ function NewContainer({ onCreated }: { onCreated: (id: string) => void }) {
   );
 }
 
-function ContainerDetail({ id, operator, onClose }: { id: string; operator: boolean; onClose: () => void }) {
+function ContainerDetail({ id, operator, customs, onClose }: { id: string; operator: boolean; customs: boolean; onClose: () => void }) {
   const detail = useApi<Detail>(`/api/containers/${id}`, { refreshOnChange: true });
   const dest = useApi<{ destinations: Partner[] }>(operator ? "/api/dispatch" : null);
   const [log, setLog] = useState<ScanLogEntry[]>([]);
   const [to, setTo] = useState("");
   const [invoice, setInvoice] = useState("");
+  const [billOfEntry, setBillOfEntry] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
   const addLog = (code: string, ok: boolean, message: string) => setLog((l) => [{ id: ++seq, code, ok, message, at: new Date().toISOString() }, ...l].slice(0, 50));
@@ -177,6 +185,19 @@ function ContainerDetail({ id, operator, onClose }: { id: string; operator: bool
       setBusy(false);
     }
   }
+  async function clear() {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await api<{ message: string }>(`/api/containers/${id}/clear`, { body: { billOfEntry: billOfEntry.trim() || undefined } });
+      setMsg({ tone: "ok", text: r.message });
+      notifyDataChanged();
+    } catch (e) {
+      setMsg({ tone: "error", text: errorText(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
   async function cancel() {
     setBusy(true);
     try {
@@ -207,7 +228,25 @@ function ContainerDetail({ id, operator, onClose }: { id: string; operator: bool
         {lots.length.toLocaleString("en-IN")} / {capacity.toLocaleString("en-IN")} cases & trays ({cases} cases, {trays} trays)
         {c.to ? ` · to ${c.to}` : ""}
         {c.invoice ? ` · ${c.invoice}` : ""}
+        {c.status === "CLEARED" && c.clearedAt ? ` · cleared ${fmtTime(c.clearedAt)}${c.billOfEntry ? ` · Bill of Entry ${c.billOfEntry}` : ""}` : ""}
       </p>
+      {customs && c.status === "RECEIVED" && (
+        <div className="mb-4 space-y-3 rounded-md border border-line bg-surface-2 p-3" data-testid="customs-clear">
+          <div className="text-sm font-bold">Customs clearance</div>
+          <p className="text-sm text-muted-foreground">
+            {(c.receivedCount ?? 0).toLocaleString("en-IN")} of {(c.total ?? lots.length).toLocaleString("en-IN")} cases & trays received here.
+            {(c.receivedCount ?? 0) < (c.total ?? lots.length) ? " The rest are cleared as they arrive." : ""}
+          </p>
+          <div className="flex flex-wrap items-end gap-3">
+            <Field label="Bill of Entry number (optional)">
+              <Input aria-label="Bill of Entry" value={billOfEntry} maxLength={40} onChange={(e) => setBillOfEntry(e.target.value)} placeholder="e.g. 1234567" />
+            </Field>
+            <Button onClick={clear} loading={busy}>
+              Mark cleared
+            </Button>
+          </div>
+        </div>
+      )}
       <div className={loading ? "grid gap-4 lg:grid-cols-2 lg:gap-5" : ""}>
         {loading && (
           <div className="space-y-4">
@@ -216,7 +255,7 @@ function ContainerDetail({ id, operator, onClose }: { id: string; operator: bool
             <div className="space-y-3 rounded-md border border-line bg-surface-2 p-3">
               <div className="text-sm font-bold">3. Dispatch the container</div>
               <div className="grid gap-3 sm:grid-cols-2">
-                <Field label="Destination (Velza Warehouse)">
+                <Field label="Destination (Customs)">
                   <Select aria-label="Container destination" value={target} onChange={(e) => setTo(e.target.value)}>
                     <option value="">Choose…</option>
                     {warehouses.map((p) => (

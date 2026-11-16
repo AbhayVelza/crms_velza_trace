@@ -19,6 +19,7 @@ import { alertPage, alerts, batchReport, dashboard, lookup, myStock, publicLooku
 import { verify } from "@/lib/services/verify";
 import { photoOf } from "../fixtures/damagePhoto";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
+import { shipToCustoms } from "../fixtures/shipToCustoms";
 
 let dir: string;
 const ids: Record<string, string> = {};
@@ -41,10 +42,9 @@ async function qcPass(lotCode: string) {
   for (const [i, code] of packs.entries()) await verify(ids.qc, { action: "scanPack", lotCode, code, scanned: packs.slice(0, i) });
   await verify(ids.qc, { action: "confirm", lotCode, packCodes: packs });
 }
-/** The plant ships only to the Velza Warehouse; the warehouse sends the stock on to SS-1 (in transit to it). */
+/** The plant ships to Customs in a container; Customs clears it and sends the stock on to SS-1 (in transit to it). */
 async function toSS1(codes: string[], invoice: string) {
-  await dispatch(ids.operator, { action: "confirm", toPartnerId: ids.VW, invoice: `${invoice}-VW`, codes });
-  for (const code of codes) await receive(ids.vw, { code });
+  await shipToCustoms({ operatorId: ids.operator, customsUserId: ids.vw, customsId: ids.VW, lotCodes: codes, invoice: `${invoice}-VW` });
   await dispatch(ids.vw, { action: "confirm", toPartnerId: ids.SS1, invoice, codes });
 }
 async function printAndVerify(cases: number) {

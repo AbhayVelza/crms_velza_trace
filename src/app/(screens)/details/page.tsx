@@ -83,7 +83,7 @@ export default function DetailsPage() {
         title={field ? "Scan" : "Product details"}
         subtitle={
           field
-            ? "View only: scanning shows the full chain and never receives anything. Use Take back to send stock to the Velza Warehouse."
+            ? "View only: scanning shows the full chain and never receives anything. Use Take back to send stock to Customs (Velza)."
             : "Scan a case, tray or pack: batch, manufacture and expiry date, and where it came from."
         }
       />
@@ -127,7 +127,7 @@ function Details({ r, retailer }: { r: Found; retailer: boolean }) {
             <Row label="Distributor" testId="came-from-db">
               {r.cameFrom.distributor ?? (r.cameFrom.superStockist ? "— (supplied by the Super Stockist directly)" : "—")}
             </Row>
-            {r.cameFrom.warehouse && <Row label="Velza Warehouse">{r.cameFrom.warehouse}</Row>}
+            {r.cameFrom.warehouse && <Row label="Customs (Velza)">{r.cameFrom.warehouse}</Row>}
           </dl>
         </Card>
       )}
@@ -304,7 +304,7 @@ function TakeBack({ code, kind, lotType, onDone }: { code: string; kind: "LOT" |
   return (
     <Card title={`Take back this ${what}`}>
       <p className="mb-3 text-sm text-muted-foreground">
-        It leaves the partner&apos;s stock and goes to the Velza Warehouse (RETURN IN TRANSIT).{kind === "PACK" ? " If its case or tray is still sealed, it is opened first." : ""}
+        It leaves the partner&apos;s stock and goes to Customs (Velza) (RETURN IN TRANSIT).{kind === "PACK" ? " If its case or tray is still sealed, it is opened first." : ""}
       </p>
       <div className="grid gap-3 sm:grid-cols-[14rem_1fr_auto] sm:items-end">
         <Field label="Reason">

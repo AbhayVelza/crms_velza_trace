@@ -4,14 +4,15 @@ import { buildPackCodes, PACKS_PER_LOT } from "./codes";
 import { PARTNER_TYPES, type ItemKind, type ItemStatus, type LotType, type Partner, type PartnerType } from "./types";
 
 /**
- * Distribution line (since 6 Nov 2026): Manufacturer → Velza Warehouse → Super Stockist, Distributor or Retailer.
- * The manufacturer ships only to the Velza Warehouse; the warehouse supplies any SS, DB or Retailer. Onward the
- * old chain continues: Super Stockist → its Distributors and direct Retailers, Distributor → its Retailers.
- * Retailers are the last tier.
+ * Distribution line (since 16 Nov 2026): Manufacturer → Customs → Super Stockist → Distributor → Retailer.
+ * Customs is the partner type WAREHOUSE (IDs VW…): the manufacturer ships to it only in shipping containers; goods
+ * received there are held (AT_CUSTOMS) until the Velza person at Customs clears the container (AT_WAREHOUSE), and
+ * cleared stock goes only to Super Stockists. Onward the chain continues: Super Stockist → its Distributors and
+ * direct Retailers, Distributor → its Retailers. Retailers are the last tier.
  */
 export const DESTINATION_TYPES: Record<PartnerType, PartnerType[]> = {
   MANUFACTURER: ["WAREHOUSE"],
-  WAREHOUSE: ["SS", "DB", "RETAILER"],
+  WAREHOUSE: ["SS"],
   SS: ["DB", "RETAILER"],
   DB: ["RETAILER"],
   RETAILER: [],
@@ -25,6 +26,11 @@ export const AT_STATUS: Record<PartnerType, ItemStatus> = {
   DB: "AT_DB",
   RETAILER: "AT_RETAILER",
 };
+
+/** Statuses that count as stock held at a partner of this tier: Customs holds stock awaiting clearance and cleared stock. */
+export function inStockStatuses(type: PartnerType): ItemStatus[] {
+  return type === "WAREHOUSE" ? ["AT_CUSTOMS", "AT_WAREHOUSE"] : [AT_STATUS[type]];
+}
 
 /** Scanning one of these raises a BLOCKED_CODE alert. */
 export const BLOCKED_STATUSES: ItemStatus[] = ["RECALLED", "QUARANTINED", "VOID"];
@@ -51,7 +57,10 @@ export type RejectCode =
   | "NOT_PRINTED"
   | "INCOMPLETE"
   | "REASON_REQUIRED"
-  | "NOT_ALLOWED";
+  | "NOT_ALLOWED"
+  | "NOT_CLEARED"
+  | "CONTAINER_REQUIRED"
+  | "RECEIVE_MODE_OFF";
 
 export type RuleResult = { ok: true } | { ok: false; code: RejectCode; message: string };
 
@@ -122,7 +131,7 @@ export function assignedPluralOf(type: PartnerType): string {
 
 /** A sender may supply only the partners assigned to it (when the receiver's tier is assigned at all). */
 export function isAssignedDestination(sender: Pick<Partner, "id" | "type">, receiver: Pick<Partner, "type" | "parentId">): boolean {
-  // The Velza Warehouse supplies any SS, Distributor or Retailer; assignments bind only the onward chain.
+  // Customs supplies any Super Stockist; assignments bind only the onward chain.
   if (sender.type === "WAREHOUSE") return true;
   if (ASSIGNED_TO[receiver.type]?.includes(sender.type)) return receiver.parentId === sender.id;
   return true;
@@ -144,6 +153,12 @@ export function checkDispatchHeader(sender: Partner, receiver: Partner | null, i
   return OK;
 }
 
+/** Loose (not containerised) dispatch: cases and trays go to Customs only inside a shipping container. */
+export function canDispatchLoose(receiver: Pick<Partner, "type" | "name">): RuleResult {
+  if (receiver.type === "WAREHOUSE") return reject("CONTAINER_REQUIRED", `Cases and trays go to ${receiver.name} in a container — use Containers`);
+  return OK;
+}
+
 export function canDispatch({ item, parentLotStatus, sender, receiver, invoice }: DispatchCheckInput): RuleResult {
   const header = checkDispatchHeader(sender, receiver, invoice);
   if (!header.ok) return header;
@@ -154,6 +169,9 @@ export function canDispatch({ item, parentLotStatus, sender, receiver, invoice }
   if (seal) return seal;
   if (item.status === "IN_TRANSIT") return reject("WRONG_STATUS", `${item.code} is already in transit`);
   if (item.locationId !== sender.id) return reject("NOT_AT_LOCATION", `${item.code} is not at ${sender.name}`);
+  if (item.status === "AT_CUSTOMS" && sender.type === "WAREHOUSE") {
+    return reject("NOT_CLEARED", `${item.code} is awaiting customs clearance — clear its container first`);
+  }
   const expected = AT_STATUS[sender.type];
   if (item.status !== expected) {
     const hint = item.status === "PRINTED" || item.status === "GENERATED" ? " — verify it first" : "";
@@ -191,9 +209,11 @@ export function canReceive({ item, parentLotStatus, receiver }: ReceiveCheckInpu
   return reject("WRONG_RECEIVER", `${item.code} is not in transit to ${receiver.name}`);
 }
 
-export function receivePatch(receiver: Partner, fromStatus: ItemStatus = "IN_TRANSIT") {
+export function receivePatch(receiver: Partner, fromStatus: ItemStatus = "IN_TRANSIT", opts: { cleared?: boolean } = {}) {
   // A return arrives as RETURNED and waits for the warehouse's inspection before it is stock again.
-  const status: ItemStatus = fromStatus === "RETURN_IN_TRANSIT" ? "RETURNED" : AT_STATUS[receiver.type];
+  // At Customs stock is held (AT_CUSTOMS) unless its container was already cleared (or it came without one).
+  const atCustoms = receiver.type === "WAREHOUSE" && !opts.cleared;
+  const status: ItemStatus = fromStatus === "RETURN_IN_TRANSIT" ? "RETURNED" : atCustoms ? "AT_CUSTOMS" : AT_STATUS[receiver.type];
   return { status, locationId: receiver.id, inTransitToId: null, dispatchedAt: null };
 }
 
@@ -297,7 +317,7 @@ export function canReportDamaged({ item, parentLotStatus, partner, reason, packs
     const hint = item.inTransitToId === partner.id ? " — receive it first, then report the damage" : "";
     return reject("NOT_AT_LOCATION", `${item.code} is in transit${hint}`);
   }
-  if (item.locationId !== partner.id || item.status !== AT_STATUS[partner.type]) {
+  if (item.locationId !== partner.id || !inStockStatuses(partner.type).includes(item.status)) {
     const hint = item.status === "PRINTED" || item.status === "GENERATED" ? " — not packed yet: use Void lot or Reprint instead" : "";
     return reject("NOT_AT_LOCATION", `${item.code} is not in stock at ${partner.name}${hint}`);
   }
@@ -350,7 +370,7 @@ export function packStatusForLot(lotStatus: ItemStatus, currentPackStatus: ItemS
  * The only statuses the public page calls genuine: QC-passed stock (PACKED) and everything after it in the chain.
  * An allowlist, so a new or unexpected status is never shown to a consumer as genuine.
  */
-export const PUBLIC_GENUINE_STATUSES: readonly ItemStatus[] = ["PACKED", "IN_TRANSIT", "AT_WAREHOUSE", "AT_SS", "AT_DB", "AT_RETAILER", "OPENED"];
+export const PUBLIC_GENUINE_STATUSES: readonly ItemStatus[] = ["PACKED", "IN_TRANSIT", "AT_CUSTOMS", "AT_WAREHOUSE", "AT_SS", "AT_DB", "AT_RETAILER", "OPENED"];
 
 /** Customer-facing status line for the public lookup page. */
 export function publicStatus(found: boolean, status: ItemStatus | null): { label: string; tone: "ok" | "danger" | "warn" } {

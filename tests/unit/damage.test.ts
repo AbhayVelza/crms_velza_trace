@@ -15,6 +15,7 @@ import { alerts, dashboard, lookup, myStock, publicLookup } from "@/lib/services
 import { verify } from "@/lib/services/verify";
 import { photoOf } from "../fixtures/damagePhoto";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
+import { shipToCustoms } from "../fixtures/shipToCustoms";
 
 let dir: string;
 const ids: Record<string, string> = {};
@@ -67,10 +68,9 @@ beforeAll(async () => {
   await viaWarehouseToSS1([lots[0], lots[1]], "INV-1");
 });
 
-/** Manufacturer → Velza Warehouse (received there) → SS-1; the lots end up in transit to SS-1. */
+/** Manufacturer → Customs (container received and cleared there) → SS-1; the lots end up in transit to SS-1. */
 async function viaWarehouseToSS1(codes: string[], invoice: string) {
-  await dispatch(ids.operator, { action: "confirm", toPartnerId: ids.VW, invoice, codes });
-  for (const code of codes) await receive(ids.vw, { code });
+  await shipToCustoms({ operatorId: ids.operator, customsUserId: ids.vw, customsId: ids.VW, lotCodes: codes, invoice });
   await dispatch(ids.vw, { action: "confirm", toPartnerId: ids.SS1, invoice: `VW-${invoice}`, codes });
 }
 afterAll(async () => {

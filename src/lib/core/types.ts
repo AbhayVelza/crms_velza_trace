@@ -7,7 +7,7 @@ export type PartnerType = (typeof PARTNER_TYPES)[number];
 
 export const PARTNER_TYPE_LABELS: Record<PartnerType, string> = {
   MANUFACTURER: "Manufacturer",
-  WAREHOUSE: "Velza Warehouse",
+  WAREHOUSE: "Customs (Velza)",
   SS: "Super Stockist",
   DB: "Distributor",
   RETAILER: "Retailer",
@@ -20,7 +20,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   ADMIN: "Velza Admin",
   OPERATOR: "Manufacturer Operator",
   QC: "Supervisor/QC",
-  WAREHOUSE: "Velza Warehouse",
+  WAREHOUSE: "Customs (Velza)",
   SS: "Super Stockist",
   DB: "Distributor",
   RETAILER: "Retailer",
@@ -53,6 +53,9 @@ export const MAIN_STATUSES = [
   "PRINTED",
   "PACKED",
   "IN_TRANSIT",
+  /** Received at Customs (the Velza Warehouse partner), held until its container is cleared. */
+  "AT_CUSTOMS",
+  /** At Customs and cleared: ready to dispatch to a Super Stockist. */
   "AT_WAREHOUSE",
   "AT_SS",
   "AT_DB",
@@ -211,7 +214,7 @@ export interface PrintOrder {
 /** Cases and trays one shipping container holds at most. */
 export const CONTAINER_CAPACITY = 2860;
 
-export const CONTAINER_STATUSES = ["LOADING", "IN_TRANSIT", "RECEIVED"] as const;
+export const CONTAINER_STATUSES = ["LOADING", "IN_TRANSIT", "RECEIVED", "CLEARED"] as const;
 export type ContainerStatus = (typeof CONTAINER_STATUSES)[number];
 
 /**
@@ -236,6 +239,11 @@ export interface Container {
   dispatchedBy: string | null;
   receivedAt: string | null;
   receivedBy: string | null;
+  /** Customs clearance by the Velza person at Customs (status CLEARED). */
+  clearedAt?: string | null;
+  clearedBy?: string | null;
+  /** Customs Bill of Entry number, optional. */
+  billOfEntry?: string | null;
 }
 
 export interface Lot {
@@ -302,6 +310,8 @@ export const MOVEMENT_TYPES = [
   /** The warehouse's inspection of a returned item: back to stock (AT_WAREHOUSE) or written off (DAMAGED / EXPIRED). */
   "RETURN_RESTOCKED",
   "RETURN_WRITTEN_OFF",
+  /** Customs cleared a container: each of its lots held AT_CUSTOMS → AT_WAREHOUSE (note: Bill of Entry). */
+  "CUSTOMS_CLEARED",
 ] as const;
 export type MovementType = (typeof MOVEMENT_TYPES)[number];
 
@@ -356,6 +366,13 @@ export interface StickerSize {
   heightMm: number;
 }
 
+/**
+ * How goods may be scanned in at Customs (not yet fixed by Velza): a container number receives the whole
+ * container, a case/tray code receives that lot. PALLET comes later (a pallet → lots resolver in services/customs.ts).
+ */
+export const CUSTOMS_RECEIVE_MODES = ["CONTAINER", "LOT"] as const;
+export type CustomsReceiveMode = (typeof CUSTOMS_RECEIVE_MODES)[number];
+
 export interface Settings {
   id: string;
   notReceivedThresholdDays: number;
@@ -371,6 +388,8 @@ export interface Settings {
   publicCloneScanThreshold?: number;
   /** PROVISIONAL — needs Velza business approval. Sliding window (hours) for publicCloneScanThreshold. */
   publicCloneWindowHours?: number;
+  /** Which scans Customs may receive with. Default: container number and case/tray. */
+  customsReceiveModes?: CustomsReceiveMode[];
 }
 
 export const DEFAULT_SETTINGS: Omit<Settings, "id"> = {
@@ -385,4 +404,5 @@ export const DEFAULT_SETTINGS: Omit<Settings, "id"> = {
   defaultCountry: "91",
   publicCloneScanThreshold: 5, // PROVISIONAL — needs Velza business approval
   publicCloneWindowHours: 24, // PROVISIONAL — needs Velza business approval
+  customsReceiveModes: ["CONTAINER", "LOT"],
 };

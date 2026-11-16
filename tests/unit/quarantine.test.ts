@@ -6,7 +6,7 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Role } from "@/lib/core/types";
 import { getStore } from "@/lib/store";
-import { dispatch } from "@/lib/services/movement";
+import { cancelContainer, createContainer, loadContainer } from "@/lib/services/containers";
 import { reprint, voidLot } from "@/lib/services/operator";
 import { createPrintOrder, markPrinted } from "@/lib/services/printOrders";
 import { verify } from "@/lib/services/verify";
@@ -51,11 +51,20 @@ afterAll(async () => {
   await fs.rm(dir, { recursive: true, force: true });
 });
 
+/** Can this lot leave the plant? It goes to Customs only in a container: try loading it into a fresh one. */
+let containerNo = 0;
+async function loadable(lotCode: string) {
+  const { container } = await createContainer(ids.operator, { code: `QTNU${String(++containerNo).padStart(7, "0")}` });
+  const r = await loadContainer(ids.operator, container.id, { code: lotCode });
+  await cancelContainer(ids.operator, container.id);
+  return r;
+}
+
 describe("quarantined lot", () => {
   it("stays blocked while quarantined: no QC, no dispatch", async () => {
     expect(await statusOf(lots[0])).toBe("QUARANTINED");
     expect(await verify(ids.qc, { action: "scanLot", code: lots[0] })).toMatchObject({ ok: false, code: "BLOCKED_CODE" });
-    expect(await dispatch(ids.operator, { action: "check", toPartnerId: ids.VW, invoice: "INV-1", code: lots[0] })).toMatchObject({ ok: false });
+    expect(await loadable(lots[0])).toMatchObject({ ok: false });
   });
 
   it("reprint with a reason → back to PRINTED for QC; QC verifies → PACKED, dispatchable", async () => {
@@ -66,11 +75,11 @@ describe("quarantined lot", () => {
     expect(await statusOf(lots[0])).toBe("PRINTED");
     expect((await store().packs.list({ lotCode: lots[0] })).every((p) => p.status === "PRINTED")).toBe(true);
     // not sellable until QC passes it
-    expect(await dispatch(ids.operator, { action: "check", toPartnerId: ids.VW, invoice: "INV-1", code: lots[0] })).toMatchObject({ ok: false });
+    expect(await loadable(lots[0])).toMatchObject({ ok: false });
 
     expect(await verifyAll(lots[0])).toMatchObject({ ok: true });
     expect(await statusOf(lots[0])).toBe("PACKED");
-    expect(await dispatch(ids.operator, { action: "check", toPartnerId: ids.VW, invoice: "INV-1", code: lots[0] })).toMatchObject({ ok: true });
+    expect(await loadable(lots[0])).toMatchObject({ ok: true });
 
     const history = (await store().movements.list()).filter((m) => m.itemCode.startsWith(lots[0])).map((m) => [m.type, m.toStatus]);
     expect(history.slice(-3)).toEqual([["QUARANTINED", "QUARANTINED"], ["REPRINTED", "PRINTED"], ["VERIFIED", "PACKED"]]);

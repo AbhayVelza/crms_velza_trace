@@ -99,7 +99,7 @@ export default function DispatchPage() {
   if (dest.error) return <Notice tone="error">{dest.error}</Notice>;
   if (!dest.data) return <Loading />;
   const { destinationTypes, destinations, sender } = dest.data;
-  // The manufacturer ships only to the Velza Warehouse; the warehouse supplies any SS, DB or Retailer;
+  // Customs supplies any Super Stockist (the plant ships to Customs only in containers);
   // SS and DB only the partners assigned to them.
   const assigned = assignedTypesOf(sender.type).length > 0;
   const scope = assigned ? " assigned to you" : sender.type === "WAREHOUSE" ? " (any)" : " only";

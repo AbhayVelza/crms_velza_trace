@@ -47,11 +47,11 @@ async function chooseWarehouse(tx: StoreTx, warehouseId: string | undefined): Pr
   const warehouses = (await tx.partners.list({ type: "WAREHOUSE" })).filter((p) => p.active);
   if (warehouseId) {
     const w = warehouses.find((p) => p.id === warehouseId);
-    if (!w) throw badRequest("WRONG_DESTINATION", `${warehouseId} is not an active Velza Warehouse`);
+    if (!w) throw badRequest("WRONG_DESTINATION", `${warehouseId} is not an active Customs (Velza) partner`);
     return w;
   }
-  if (!warehouses.length) throw badRequest("WRONG_DESTINATION", "No active Velza Warehouse is registered to take stock back to");
-  if (warehouses.length > 1) throw badRequest("WRONG_DESTINATION", "Choose the Velza Warehouse to send it to");
+  if (!warehouses.length) throw badRequest("WRONG_DESTINATION", "No active Customs (Velza) partner is registered to take stock back to");
+  if (warehouses.length > 1) throw badRequest("WRONG_DESTINATION", "Choose the Customs (Velza) partner to send it to");
   return warehouses[0];
 }
 

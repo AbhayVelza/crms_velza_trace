@@ -43,6 +43,12 @@ export default function StockPage() {
             <Stat label="Loose packs" value={data.counts.loosePacks} />
             <Stat label="Incoming" value={data.incoming.length} tone={data.incoming.length ? "warn" : undefined} />
           </div>
+          {partner?.type === "WAREHOUSE" && (
+            <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4" data-testid="customs-split">
+              <Stat label="Awaiting clearance" value={data.inStock.filter((i) => i.status === "AT_CUSTOMS").length} tone={data.inStock.some((i) => i.status === "AT_CUSTOMS") ? "warn" : undefined} hint="Clear the container on Containers" />
+              <Stat label="Cleared — ready to dispatch" value={data.inStock.filter((i) => i.status === "AT_WAREHOUSE").length} hint="Super Stockists only" />
+            </div>
+          )}
           {pendingHint && (
             <Notice tone="info" className="mb-4">
               Not counted as stock yet: {pendingHint}.

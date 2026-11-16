@@ -417,7 +417,19 @@ describe("PostgreSQL only: the schema guards the data", () => {
     expect(names).toEqual(
       expect.arrayContaining(["codes_manufacturer", "codes_device_unsynced", "print_orders_manufacturer", "print_orders_device_unsynced", "batches_manufacturer", "batches_device_unsynced", "batch_code_pool_device"]),
     );
-    expect(await sql(`SELECT version FROM schema_info`)).toEqual([{ version: 7 }]); // v5: Velza Warehouse; v6: returns; v7: self sign-up approval
+    expect(await sql(`SELECT version FROM schema_info`)).toEqual([{ version: 8 }]); // v5: Velza Warehouse; v6: returns; v7: self sign-up approval; v8: customs clearance
+  });
+
+  it("v8: allows AT_CUSTOMS and CLEARED, keeps clearance fields, and reuses a cleared container's number", async () => {
+    const held = lot("91AAA111OR00005", { status: "AT_CUSTOMS" });
+    await store.lots.create(held);
+    expect((await store.lots.findOne({ lotCode: held.lotCode }))?.status).toBe("AT_CUSTOMS");
+    const base = { code: "MSCU1234567", manufacturerId: "MF0001", lotCodes: [held.lotCode], toId: null, invoice: "INV-C", createdAt: "2026-11-16T00:00:00.000Z", createdBy: "MF0001-OP", dispatchedAt: null, dispatchedBy: null, receivedAt: null, receivedBy: null };
+    await store.containers.create({ ...base, id: "c-1", status: "CLEARED", clearedAt: "2026-11-16T05:00:00.000Z", clearedBy: "VW0001", billOfEntry: "BE-1234567" });
+    expect(await store.containers.get("c-1")).toMatchObject({ status: "CLEARED", clearedAt: "2026-11-16T05:00:00.000Z", clearedBy: "VW0001", billOfEntry: "BE-1234567" });
+    await store.containers.create({ ...base, id: "c-2", status: "LOADING" });
+    await expect(store.containers.create({ ...base, id: "c-3", status: "IN_TRANSIT" })).rejects.toThrow(/containers_one_active_per_code/);
+    await expect(store.containers.create({ ...base, id: "c-4", status: "HELD" as never })).rejects.toThrow(/containers_status_check/);
   });
 
   it("refuses a code that doesn't match its parts", async () => {

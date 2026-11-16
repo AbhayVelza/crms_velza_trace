@@ -15,6 +15,7 @@ import {
   STAFF_ID_PREFIX,
 } from "@/lib/core/ids";
 import {
+  CUSTOMS_RECEIVE_MODES,
   PARTNER_TYPE_LABELS,
   PARTNER_TYPES,
   ROLE_LABELS,
@@ -527,6 +528,8 @@ export const settingsSchema = z
     publicCloneScanThreshold: z.number().int().min(2).max(1000),
     /** PROVISIONAL (awaiting Velza approval): the window, in hours. */
     publicCloneWindowHours: z.number().min(1).max(720),
+    /** How Customs may receive: container number and/or case-tray scan (pallet later). At least one. */
+    customsReceiveModes: z.array(z.enum(CUSTOMS_RECEIVE_MODES)).min(1, "Choose at least one way for Customs to receive").max(CUSTOMS_RECEIVE_MODES.length),
   })
   .partial();
 

@@ -16,6 +16,7 @@ import { createPrintOrder, markPrinted } from "@/lib/services/printOrders";
 import { alerts, recall } from "@/lib/services/trace";
 import { verify } from "@/lib/services/verify";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
+import { shipToCustoms } from "../fixtures/shipToCustoms";
 
 let dir: string;
 const store = () => getStore();
@@ -53,9 +54,7 @@ beforeAll(async () => {
     await verify(ids.qc, { action: "scanLot", code: l });
     await verify(ids.qc, { action: "confirm", lotCode: l, packCodes: await packsOf(l) });
   }
-  await send(ids.op, "VW0001", "INV-D0", [lots[0], lots[1]]);
-  await receive("VW0001", { code: lots[0] });
-  await receive("VW0001", { code: lots[1] });
+  await shipToCustoms({ operatorId: ids.op, customsUserId: "VW0001", customsId: "VW0001", lotCodes: [lots[0], lots[1]], invoice: "INV-D0" });
   await send("VW0001", "SS0001", "INV-D1", [lots[0], lots[1]]);
   await receive("SS0001", { code: lots[0] });
   await receive("SS0001", { code: lots[1] });

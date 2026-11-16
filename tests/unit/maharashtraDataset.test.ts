@@ -118,7 +118,7 @@ describe("Maharashtra QA network (18 partners)", () => {
     expect((await destinations(plantOp)).destinations).toEqual([]);
   });
 
-  it("a registered Velza Warehouse is the plant's only destination and may supply every SS, DB and Retailer", async () => {
+  it("a registered Customs (Velza Warehouse) is the plant's only destination and supplies every Super Stockist, nobody else", async () => {
     const r = (await createEntity("AD0001", "partners", {
       type: "WAREHOUSE", name: "QA Velza Warehouse", place: "Bhiwandi", address: "Gala 1", city: "Thane", state: "Maharashtra",
       contactPerson: "QA Warehouse", phone: "+91 90000 77701", password: PASSWORD,
@@ -132,8 +132,8 @@ describe("Maharashtra QA network (18 partners)", () => {
 
     expect((await destinations(`${idOf(`${QA_PREFIX}-MFG-001`)}-OP`)).destinations.map((p) => p.id)).toEqual(["VW0001"]);
     const fromVw = (await destinations("VW0001")).destinations.map((p) => p.id).sort();
-    const everyoneElse = (await partners()).filter((p) => ["SS", "DB", "RETAILER"].includes(p.type) && p.active).map((p) => p.id).sort();
-    expect(fromVw).toEqual(everyoneElse);
-    expect(fromVw).toHaveLength(EXPECTED_COUNTS.SS + EXPECTED_COUNTS.DB + EXPECTED_COUNTS.RETAILER);
+    const everySS = (await partners()).filter((p) => p.type === "SS" && p.active).map((p) => p.id).sort();
+    expect(fromVw).toEqual(everySS);
+    expect(fromVw).toHaveLength(EXPECTED_COUNTS.SS);
   });
 });

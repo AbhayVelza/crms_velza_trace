@@ -240,10 +240,20 @@ test.describe.serial("Scanning: camera, scanner, checklists", () => {
 
   test("dispatch and receive checklists: ticked only after the server accepts; duplicates and removal; invoice shown on arrival", async ({ page, baseURL }) => {
     const lots = await newCases(baseURL!, 2, true);
-    await signInPage(page, "operator", "/dispatch");
+    // The plant ships to Customs only in a container; Customs receives it by its number and clears it.
+    const op = await api(baseURL!, "operator");
+    const containerNo = `SCNU${String(Date.now()).slice(-7)}`;
+    const created = await (await op.post("/api/containers", { data: { code: containerNo } })).json();
+    for (const l of lots) expect((await (await op.post(`/api/containers/${created.container.id}/load`, { data: { code: l } })).json()).ok).toBe(true);
+    expect((await op.post(`/api/containers/${created.container.id}/dispatch`, { data: { toPartnerId: "VW0001", invoice: "INV-SCAN-CONT" } })).status()).toBe(200);
+    const vw = await api(baseURL!, "vw");
+    expect((await (await vw.post("/api/receive", { data: { code: containerNo } })).json()).ok).toBe(true);
+    expect((await vw.post(`/api/containers/${created.container.id}/clear`, { data: {} })).status()).toBe(200);
+
+    // Customs dispatches the cleared cases to SS-1 with the checklist.
+    await signInPage(page, "vw", "/dispatch");
     const sel = page.getByLabel("Destination");
-    // The plant ships only to the Velza Warehouse.
-    await sel.selectOption((await sel.locator("option", { hasText: "VW-1" }).getAttribute("value"))!);
+    await sel.selectOption((await sel.locator("option", { hasText: "SS-1" }).getAttribute("value"))!);
     await page.getByLabel("Invoice").fill("INV-SCAN-E2E");
     for (const l of lots) await expect(row(page, l)).toHaveAttribute("data-status", "PENDING");
     const input = page.locator("#scan-input");
@@ -264,13 +274,13 @@ test.describe.serial("Scanning: camera, scanner, checklists", () => {
       await expect(row(page, l)).toHaveAttribute("data-status", "SCANNED");
     }
     await page.getByRole("button", { name: /Confirm dispatch of 2 items/ }).click();
-    await expect(page.getByText(/Dispatched 2 item\(s\) to .*VW-1.* on INV-SCAN-E2E/)).toBeVisible();
+    await expect(page.getByText(/Dispatched 2 item\(s\) to .*SS-1.* on INV-SCAN-E2E/)).toBeVisible();
     for (const l of lots) await expect(row(page, l)).toHaveCount(0); // left the stock list
 
-    // A Super Stockist cannot receive them; the warehouse sees them with the invoice and ticks them on receipt.
+    // Another Super Stockist cannot receive them; SS-1 sees them with the invoice and ticks them on receipt.
     const ss2 = await api(baseURL!, "ss2");
     expect((await (await ss2.post("/api/receive", { data: { code: lots[0] } })).json()).code).toBe("WRONG_RECEIVER");
-    await signInPage(page, "vw", "/receive");
+    await signInPage(page, "ss1", "/receive");
     for (const l of lots) {
       await expect(row(page, l)).toHaveAttribute("data-status", "PENDING");
       await expect(row(page, l)).toContainText("INV-SCAN-E2E");

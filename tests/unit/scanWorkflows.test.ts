@@ -17,6 +17,7 @@ import { myStock, recall } from "@/lib/services/trace";
 import { verify } from "@/lib/services/verify";
 import { photoOf } from "../fixtures/damagePhoto";
 import { buildSampleSeed } from "../fixtures/sampleNetwork";
+import { shipToCustoms } from "../fixtures/shipToCustoms";
 
 let dir: string;
 const ids: Record<string, string> = {};
@@ -36,10 +37,9 @@ async function qcPass(lotCode: string) {
   for (const [i, code] of packs.entries()) await verify(ids.qc, { action: "scanPack", lotCode, code, scanned: packs.slice(0, i) });
   return verify(ids.qc, { action: "confirm", lotCode, packCodes: packs });
 }
-/** The plant ships only to the Velza Warehouse: dispatch there and receive, so the warehouse can send it on. */
+/** The plant ships to Customs in a container; Customs receives and clears it, so it can send the stock on. */
 async function atWarehouse(codes: string[], invoice = "INV-VW") {
-  await dispatch(ids.operator, { action: "confirm", toPartnerId: ids.VW, invoice, codes });
-  for (const code of codes) await receive(ids.vw, { code });
+  await shipToCustoms({ operatorId: ids.operator, customsUserId: ids.vw, customsId: ids.VW, lotCodes: codes, invoice });
 }
 const scans = async (code: string) => (await store().scans.list()).filter((s) => s.code === code);
 
@@ -118,23 +118,25 @@ describe("dispatch and receive scans", () => {
   beforeAll(async () => {
     lots = await order("OR", 3);
     for (const l of lots) await qcPass(l);
+    await atWarehouse(lots); // cleared at Customs
   });
 
-  it("dispatch check: eligible stock accepted, a repeat in the list refused, unverified stock refused, nothing moves before confirm", async () => {
+  it("dispatch check: eligible stock accepted, a repeat in the list refused, stock not cleared refused, nothing moves before confirm", async () => {
     const [a] = lots;
-    const head = { toPartnerId: ids.VW, invoice: "INV-SCAN-1" };
-    expect(await dispatch(ids.operator, { action: "check", ...head, code: a, listed: [] })).toMatchObject({ ok: true });
-    expect(await dispatch(ids.operator, { action: "check", ...head, code: a, listed: [a] })).toMatchObject({ ok: false, code: "DUPLICATE_SCAN" });
-    const [printedOnly] = await order("MN", 1);
-    expect(await dispatch(ids.operator, { action: "check", ...head, code: printedOnly, listed: [a] })).toMatchObject({ ok: false, code: "WRONG_STATUS" });
-    expect(await dispatch(ids.operator, { action: "check", toPartnerId: ids.VW, invoice: " ", code: a, listed: [] })).toMatchObject({ ok: false, code: "INVOICE_REQUIRED" });
-    expect(await statusOf(a)).toBe("PACKED");
+    const head = { toPartnerId: ids.SS1, invoice: "INV-SCAN-1" };
+    expect(await dispatch(ids.vw, { action: "check", ...head, code: a, listed: [] })).toMatchObject({ ok: true });
+    expect(await dispatch(ids.vw, { action: "check", ...head, code: a, listed: [a] })).toMatchObject({ ok: false, code: "DUPLICATE_SCAN" });
+    const [held] = await order("MN", 1);
+    await qcPass(held);
+    await shipToCustoms({ operatorId: ids.operator, customsUserId: ids.vw, customsId: ids.VW, lotCodes: [held], invoice: "INV-HELD", clear: false });
+    expect(await dispatch(ids.vw, { action: "check", ...head, code: held, listed: [a] })).toMatchObject({ ok: false, code: "NOT_CLEARED" });
+    expect(await dispatch(ids.vw, { action: "check", toPartnerId: ids.SS1, invoice: " ", code: a, listed: [] })).toMatchObject({ ok: false, code: "INVOICE_REQUIRED" });
+    expect(await statusOf(a)).toBe("AT_WAREHOUSE");
     expect((await scans(a)).filter((s) => s.context === "DISPATCH").map((s) => s.result)).toEqual(["OK", "DUPLICATE_SCAN", "INVOICE_REQUIRED"]);
   });
 
   it("incoming items carry the invoice they were dispatched on; wrong receiver and duplicate receipt refused; stock counts follow", async () => {
     const [a, b] = lots;
-    await atWarehouse([a, b]);
     await dispatch(ids.vw, { action: "confirm", toPartnerId: ids.SS1, invoice: "INV-SCAN-2", codes: [a, b] });
     const incoming = (await myStock(ids.ss1)).incoming;
     expect(incoming.filter((i) => i.code === a || i.code === b).map((i) => [i.code, i.invoice])).toEqual([
@@ -147,10 +149,9 @@ describe("dispatch and receive scans", () => {
     const stock = await myStock(ids.ss1);
     expect(stock.inStock.map((i) => i.code)).toContain(a);
     expect(stock.incoming.map((i) => i.code)).toEqual([b]);
-    // Received once at the warehouse, once at SS-1.
+    // Received once at Customs (by its container's number, so no scan of a there), once at SS-1.
     expect((await store().movements.list({ itemCode: a, type: "RECEIVED" })).filter((m) => m.toId === ids.SS1).length).toBe(1);
     expect((await scans(a)).filter((s) => s.context === "RECEIVE").map((s) => [s.ok, s.result])).toEqual([
-      [true, "OK"], // the warehouse
       [false, "WRONG_RECEIVER"],
       [true, "OK"],
       [false, "DUPLICATE_RECEIPT"],
@@ -175,20 +176,19 @@ describe("chain scans take what the scanner sends (QR link, lower case, padding)
   beforeAll(async () => {
     [c1] = await order("OR", 1);
     await qcPass(c1);
+    await atWarehouse([c1]);
   });
 
   it("dispatch check, confirm, receive and open accept the full QR link and a padded lower-case code; no false UNKNOWN_CODE", async () => {
-    const head = { toPartnerId: ids.VW, invoice: "INV-QR-1" };
-    expect(await dispatch(ids.operator, { action: "check", ...head, code: url(c1), listed: [] })).toMatchObject({ ok: true, message: expect.stringContaining(c1) });
+    const head = { toPartnerId: ids.SS1, invoice: "INV-QR-1" };
+    expect(await dispatch(ids.vw, { action: "check", ...head, code: url(c1), listed: [] })).toMatchObject({ ok: true, message: expect.stringContaining(c1) });
     // A raw code and its QR link are the same item in the list.
-    expect(await dispatch(ids.operator, { action: "check", ...head, code: url(c1), listed: [c1] })).toMatchObject({ ok: false, code: "DUPLICATE_SCAN" });
-    expect(await dispatch(ids.operator, { action: "check", ...head, code: c1, listed: [url(c1)] })).toMatchObject({ ok: false, code: "DUPLICATE_SCAN" });
-    // Confirm with the code twice (raw + link) dispatches it once.
-    expect(await dispatch(ids.operator, { action: "confirm", ...head, codes: [c1, url(c1)] })).toMatchObject({ ok: true, count: 1 });
-    expect(await store().movements.list({ itemCode: c1, type: "DISPATCHED" })).toHaveLength(1);
-    expect(await receive(ids.vw, { code: ` ${c1.toLowerCase()}\r\n` })).toMatchObject({ ok: true, message: expect.stringContaining(c1) });
-    await dispatch(ids.vw, { action: "confirm", toPartnerId: ids.SS1, invoice: "INV-QR-1B", codes: [url(c1)] });
-    expect(await receive(ids.ss1, { code: url(c1) })).toMatchObject({ ok: true });
+    expect(await dispatch(ids.vw, { action: "check", ...head, code: url(c1), listed: [c1] })).toMatchObject({ ok: false, code: "DUPLICATE_SCAN" });
+    expect(await dispatch(ids.vw, { action: "check", ...head, code: c1, listed: [url(c1)] })).toMatchObject({ ok: false, code: "DUPLICATE_SCAN" });
+    // Confirm with the code twice (raw + link) dispatches it once (the plant's own dispatch was the container's).
+    expect(await dispatch(ids.vw, { action: "confirm", ...head, codes: [c1, url(c1)] })).toMatchObject({ ok: true, count: 1 });
+    expect((await store().movements.list({ itemCode: c1, type: "DISPATCHED" })).filter((m) => m.toId === ids.SS1)).toHaveLength(1);
+    expect(await receive(ids.ss1, { code: ` ${c1.toLowerCase()}\r\n` })).toMatchObject({ ok: true, message: expect.stringContaining(c1) });
     await dispatch(ids.ss1, { action: "confirm", toPartnerId: ids.DB1, invoice: "INV-QR-2", codes: [url(c1)] });
     expect(await receive(ids.db1, { code: url(c1) })).toMatchObject({ ok: true });
     await dispatch(ids.db1, { action: "confirm", toPartnerId: ids.RT1, invoice: "INV-QR-3", codes: [c1] });
@@ -260,22 +260,26 @@ describe("dispatch confirm is all-or-nothing", () => {
   it("one refused code: nothing dispatched, the refused code is named", async () => {
     const [good] = await order("OR", 1);
     await qcPass(good);
-    const [unverified] = await order("MN", 1);
-    const err = await dispatch(ids.operator, { action: "confirm", toPartnerId: ids.VW, invoice: "INV-AON", codes: [good, unverified] }).catch((e) => e);
+    await atWarehouse([good]);
+    const [held] = await order("MN", 1);
+    await qcPass(held);
+    await shipToCustoms({ operatorId: ids.operator, customsUserId: ids.vw, customsId: ids.VW, lotCodes: [held], invoice: "INV-AON-H", clear: false });
+    const err = await dispatch(ids.vw, { action: "confirm", toPartnerId: ids.SS1, invoice: "INV-AON", codes: [good, held] }).catch((e) => e);
     expect(err).toMatchObject({ status: 400, code: "DISPATCH_REJECTED" });
-    expect(err.details).toEqual([{ code: unverified, reason: expect.any(String) }]);
-    expect(await statusOf(good)).toBe("PACKED");
-    expect(await store().movements.list({ itemCode: good, type: "DISPATCHED" })).toHaveLength(0);
+    expect(err.details).toEqual([{ code: held, reason: expect.stringMatching(/awaiting customs clearance/) }]);
+    expect(await statusOf(good)).toBe("AT_WAREHOUSE");
+    expect((await store().movements.list({ itemCode: good, type: "DISPATCHED" })).filter((m) => m.toId === ids.SS1)).toHaveLength(0);
   });
 
   it("two confirms of the same lot at once: exactly one succeeds", async () => {
     const [lot] = await order("OR", 1);
     await qcPass(lot);
-    const head = { action: "confirm", toPartnerId: ids.VW, invoice: "INV-RACE", codes: [lot] } as const;
-    const results = await Promise.allSettled([dispatch(ids.operator, head), dispatch(ids.operator, head)]);
+    await atWarehouse([lot]);
+    const head = { action: "confirm", toPartnerId: ids.SS1, invoice: "INV-RACE", codes: [lot] } as const;
+    const results = await Promise.allSettled([dispatch(ids.vw, head), dispatch(ids.vw, head)]);
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     expect(results.find((r) => r.status === "rejected")).toMatchObject({ reason: { code: "DISPATCH_REJECTED" } });
-    expect(await store().movements.list({ itemCode: lot, type: "DISPATCHED" })).toHaveLength(1);
+    expect((await store().movements.list({ itemCode: lot, type: "DISPATCHED" })).filter((m) => m.toId === ids.SS1)).toHaveLength(1);
   });
 });
 

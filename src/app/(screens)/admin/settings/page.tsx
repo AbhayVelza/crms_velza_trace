@@ -5,8 +5,10 @@ import { useSession } from "@/components/session";
 import { useAction } from "@/components/useAction";
 import { Button, Card, Field, Input, Loading, Notice, PageTitle, Select } from "@/components/ui";
 import { api, errorText } from "@/lib/client";
-import type { Settings } from "@/lib/core/types";
+import { CUSTOMS_RECEIVE_MODES, type CustomsReceiveMode, type Settings } from "@/lib/core/types";
 import { isSafePublicUrl, PUBLIC_URL_RULE } from "@/lib/publicUrl";
+
+const CUSTOMS_MODE_LABEL: Record<CustomsReceiveMode, string> = { CONTAINER: "Container number (whole container)", LOT: "Case / tray (one by one)" };
 
 export default function SettingsPage() {
   const { data, refresh } = useSession();
@@ -28,6 +30,7 @@ export default function SettingsPage() {
     // Same rules as the server (which stays authoritative): a safe QR base URL, refill level within the issue size.
     if (!isSafePublicUrl(s!.publicBaseUrl.trim())) return setMsg({ tone: "error", text: PUBLIC_URL_RULE });
     if (s!.poolRefillBelow > s!.poolIssueSize) return setMsg({ tone: "error", text: "Refill pool below must not be more than the codes issued per refill" });
+    if (s!.customsReceiveModes && !s!.customsReceiveModes.length) return setMsg({ tone: "error", text: "Choose at least one way for Customs to receive" });
     try {
       const { id: _id, ...patch } = s!;
       void _id;
@@ -90,6 +93,26 @@ export default function SettingsPage() {
               <Input type="number" min="1" max="720" value={s.publicCloneWindowHours ?? 24} onChange={(e) => setS({ ...s, publicCloneWindowHours: num(e.target.value) })} />
             </Field>
           </div>
+        </Card>
+        <Card title="Customs receives by">
+          <Field label="How the Velza person at Customs scans goods in" hint="Not fixed yet — switch here, no change to the app needed. Returned goods are always received case by case.">
+            <div className="flex flex-wrap gap-x-6 gap-y-2">
+              {CUSTOMS_RECEIVE_MODES.map((mode) => {
+                const modes = s.customsReceiveModes ?? [...CUSTOMS_RECEIVE_MODES];
+                return (
+                  <label key={mode} className="flex min-h-10 items-center gap-2">
+                    <input
+                      type="checkbox"
+                      className="h-5 w-5 accent-foreground"
+                      checked={modes.includes(mode)}
+                      onChange={(e) => setS({ ...s, customsReceiveModes: e.target.checked ? [...modes, mode] : modes.filter((m) => m !== mode) })}
+                    />
+                    {CUSTOMS_MODE_LABEL[mode]}
+                  </label>
+                );
+              })}
+            </div>
+          </Field>
         </Card>
         <Card title="Batch codes">
           <div className="grid gap-3 sm:grid-cols-3">

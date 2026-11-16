@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   canDispatch,
+  canDispatchLoose,
+  inStockStatuses,
   canReportDamaged,
   canOpenLot,
   canReceive,
@@ -67,21 +69,41 @@ describe("canDispatch", () => {
     expect(canDispatch({ ...base, item: lot() })).toEqual({ ok: true });
   });
 
-  it("the manufacturer ships only to the Velza Warehouse; the warehouse supplies any SS, DB or Retailer", () => {
+  it("the manufacturer ships only to Customs; Customs supplies only Super Stockists", () => {
     for (const receiver of [SS1, DB1, RT3]) {
       expect(canDispatch({ ...base, item: lot(), receiver })).toMatchObject({ ok: false, code: "WRONG_DESTINATION", message: expect.stringMatching(/MANUFACTURER can only dispatch to WAREHOUSE/) });
     }
     const atVW = lot({ status: "AT_WAREHOUSE", locationId: "vw" });
-    // any partner of those tiers, assigned to anyone or to no one
-    for (const receiver of [SS1, SS2, DB1, DB2, RT1, RT2, RT3, { ...DB1, parentId: null }]) {
-      expect(canDispatch({ ...base, sender: VW, receiver, item: atVW })).toEqual({ ok: true });
+    for (const receiver of [SS1, SS2]) expect(canDispatch({ ...base, sender: VW, receiver, item: atVW })).toEqual({ ok: true });
+    for (const receiver of [DB1, DB2, RT1, RT3, MFG, partner("vw2", "WAREHOUSE")]) {
+      expect(canDispatch({ ...base, sender: VW, receiver, item: atVW })).toMatchObject({ code: "WRONG_DESTINATION", message: expect.stringMatching(/WAREHOUSE can only dispatch to SS, not/) });
     }
-    for (const receiver of [MFG, partner("vw2", "WAREHOUSE")]) {
-      expect(canDispatch({ ...base, sender: VW, receiver, item: atVW })).toMatchObject({ code: "WRONG_DESTINATION", message: expect.stringMatching(/WAREHOUSE can only dispatch to SS or DB or RETAILER/) });
-    }
-    // stock at the warehouse must be AT_WAREHOUSE
+    // stock at Customs must be cleared (AT_WAREHOUSE)
     expect(canDispatch({ ...base, sender: VW, receiver: SS1, item: lot({ locationId: "vw" }) })).toMatchObject({ code: "WRONG_STATUS", message: expect.stringMatching(/must be AT_WAREHOUSE/) });
-    expect(receivePatch(VW)).toEqual({ status: "AT_WAREHOUSE", locationId: "vw", inTransitToId: null, dispatchedAt: null });
+  });
+
+  it("held stock cannot leave Customs before clearance", () => {
+    const held = lot({ status: "AT_CUSTOMS", locationId: "vw" });
+    expect(canDispatch({ ...base, sender: VW, receiver: SS1, item: held })).toMatchObject({ ok: false, code: "NOT_CLEARED", message: expect.stringMatching(/awaiting customs clearance/) });
+  });
+
+  it("receiving at Customs holds the stock unless its container is cleared; returns and other tiers unchanged", () => {
+    expect(receivePatch(VW)).toEqual({ status: "AT_CUSTOMS", locationId: "vw", inTransitToId: null, dispatchedAt: null });
+    expect(receivePatch(VW, "IN_TRANSIT", { cleared: true }).status).toBe("AT_WAREHOUSE");
+    expect(receivePatch(VW, "RETURN_IN_TRANSIT").status).toBe("RETURNED");
+    expect(receivePatch(SS1).status).toBe("AT_SS");
+    expect(receivePatch(SS1, "IN_TRANSIT", { cleared: true }).status).toBe("AT_SS");
+  });
+
+  it("loose dispatch to Customs needs a container", () => {
+    expect(canDispatchLoose(VW)).toMatchObject({ ok: false, code: "CONTAINER_REQUIRED", message: expect.stringMatching(/in a container/) });
+    expect(canDispatchLoose(SS1)).toEqual({ ok: true });
+  });
+
+  it("in-stock statuses: Customs holds both awaiting and cleared stock", () => {
+    expect(inStockStatuses("WAREHOUSE")).toEqual(["AT_CUSTOMS", "AT_WAREHOUSE"]);
+    expect(inStockStatuses("SS")).toEqual(["AT_SS"]);
+    expect(inStockStatuses("MANUFACTURER")).toEqual(["PACKED"]);
   });
 
   it("enforces the onward tiers: SS → DB or Retailer, DB → Retailer", () => {

@@ -50,6 +50,7 @@ const nextConfig: NextConfig = {
     ];
   },
   experimental: {
+    agentUpgrade: "security",
     // Screens are client components that load data from the API after mount, so they can't be
     // "instant" by design; only validate segments that opt in with `export const instant`.
     instantInsights: { validationLevel: "manual-warning" },

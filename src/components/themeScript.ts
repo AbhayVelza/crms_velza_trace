@@ -1,4 +1,5 @@
 // Theme preference: "light", "dark" or "system" (follow the device), kept in this browser only.
+// Dark is the default (the Velza black and red identity) until the user picks something else.
 // Shared by the inline <head> script (runs before first paint, so no flash) and ThemeSwitcher.
 
 export type ThemeChoice = "light" | "dark" | "system";
@@ -17,7 +18,7 @@ export const SIDEBAR_EVENT = "velza-sidebar-change";
  */
 export const THEME_SCRIPT = `(function(){
 var d=document.documentElement,m=window.matchMedia("(prefers-color-scheme: dark)");
-function choice(){try{var c=localStorage.getItem("${THEME_KEY}");return c==="light"||c==="dark"?c:"system"}catch(e){return "system"}}
+function choice(){try{var c=localStorage.getItem("${THEME_KEY}");return c==="light"||c==="system"?c:"dark"}catch(e){return "dark"}}
 function apply(){var c=choice();d.setAttribute("data-theme",c==="system"?(m.matches?"dark":"light"):c)}
 apply();
 m.addEventListener("change",apply);

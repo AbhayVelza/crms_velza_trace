@@ -51,6 +51,10 @@ const nextConfig: NextConfig = {
   },
   experimental: {
     agentUpgrade: "security",
+    // The dev-only Turbopack disk cache (.next/dev/cache) is restored on every `next dev` restart; on this project it
+    // came back stale after restarts and made every open page reload in a loop ("HMR hash mismatch"). Dev compiles
+    // fresh instead (slightly slower first load per restart). Production builds keep their cache.
+    turbopackFileSystemCacheForDev: false,
     // Screens are client components that load data from the API after mount, so they can't be
     // "instant" by design; only validate segments that opt in with `export const instant`.
     instantInsights: { validationLevel: "manual-warning" },

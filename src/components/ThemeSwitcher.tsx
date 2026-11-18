@@ -11,9 +11,9 @@ import { cx } from "./ui";
 function read(): ThemeChoice {
   try {
     const c = localStorage.getItem(THEME_KEY);
-    return c === "light" || c === "dark" ? c : "system";
+    return c === "light" || c === "system" ? c : "dark";
   } catch {
-    return "system";
+    return "dark";
   }
 }
 
@@ -28,7 +28,8 @@ function subscribe(onChange: () => void) {
 
 function choose(c: ThemeChoice) {
   try {
-    if (c === "system") localStorage.removeItem(THEME_KEY);
+    // Dark is the default, so it needs no entry; light and system are remembered.
+    if (c === "dark") localStorage.removeItem(THEME_KEY);
     else localStorage.setItem(THEME_KEY, c);
   } catch {
     // Storage blocked (private mode): the theme still changes for this page.
@@ -64,7 +65,7 @@ export function ThemeSwitcher({ className }: { className?: string }) {
             onClick={() => choose(value)}
             className={cx(
               "inline-flex h-8 w-8 items-center justify-center rounded-full transition-[background-color,color,box-shadow,transform] duration-150 ease-out active:scale-95",
-              on ? "bg-primary text-primary-foreground shadow-card" : "text-muted-foreground hover:bg-muted hover:text-foreground",
+              on ? "bg-foreground text-background shadow-card" : "text-muted-foreground hover:bg-muted hover:text-foreground",
             )}
           >
             <Icon size={17} />

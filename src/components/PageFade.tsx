@@ -1,15 +1,18 @@
 "use client";
 
-// A short fade of the page content when the route changes. Nothing remounts (state, scroll and Suspense behave
-// as before) and navigation is never delayed: the new page is already rendered, it just eases in. Skipped on
-// the first load and under reduced motion. Search-param changes on the same page do not replay it.
+// Page transition on route change (Motion): the new page fades and lifts in. Nothing remounts (state, scroll and
+// Suspense behave as before) and navigation is never delayed: the new page is already rendered, it just eases
+// in (a plain fade under reduced motion). Skipped on the first load. Search-param changes on the same page do not replay it.
 
+import { useAnimate, useReducedMotion } from "motion/react";
 import { usePathname } from "next/navigation";
 import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { EASE_OUT } from "./motion";
 
 export function PageFade({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const box = useRef<HTMLDivElement>(null);
+  const [scope, animate] = useAnimate<HTMLDivElement>();
+  const reduced = useReducedMotion();
   const first = useRef(true);
 
   // Before paint, so the new page never shows for a frame at full opacity first.
@@ -18,12 +21,15 @@ export function PageFade({ children }: { children: ReactNode }) {
       first.current = false;
       return;
     }
-    const el = box.current;
-    if (!el?.animate || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    // --duration-base / --ease-out-soft in globals.css (opacity only: no transform, so fixed and sticky children are unaffected).
-    const fade = el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" });
-    return () => fade.cancel();
-  }, [pathname]);
+    if (!scope.current) return;
+    // Reduced motion: a plain fade. Otherwise fade and lift. Transform is cleared at the end, so fixed and
+    // sticky children behave normally once it settles.
+    const controls = animate(scope.current, reduced ? { opacity: [0, 1] } : { opacity: [0, 1], y: [16, 0] }, { duration: reduced ? 0.25 : 0.4, ease: EASE_OUT });
+    controls.then(() => {
+      if (scope.current) scope.current.style.transform = "";
+    });
+    return () => controls.stop();
+  }, [pathname, reduced, animate, scope]);
 
-  return <div ref={box}>{children}</div>;
+  return <div ref={scope}>{children}</div>;
 }

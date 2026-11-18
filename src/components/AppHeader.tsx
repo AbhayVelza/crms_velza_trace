@@ -27,7 +27,7 @@ export function AppHeader() {
   const PageIcon = page ? MENU_ICONS[page.href] : undefined;
 
   return (
-    <header className="sticky top-0 z-20 border-b border-line bg-surface/90 backdrop-blur-md supports-[backdrop-filter]:bg-surface/80 print:hidden">
+    <header className="sticky top-0 z-20 border-b border-line bg-background/90 pt-[env(safe-area-inset-top)] backdrop-blur-xl supports-[backdrop-filter]:bg-background/70 print:hidden">
       <div className="flex min-h-16 flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3 sm:px-6 lg:px-8 xl:flex-nowrap xl:gap-x-5 xl:py-2 xl:px-9">
         {/* Where you are */}
         <div className="order-1 flex min-w-0 items-center gap-3 xl:min-w-[14rem]">
@@ -46,7 +46,7 @@ export function AppHeader() {
               {pageLabel && (
                 <div className="mt-0.5 flex items-center gap-1.5 truncate text-base font-bold text-foreground">
                   <IconChevronRight size={14} className="hidden text-subtle-foreground sm:block" />
-                  {PageIcon && <PageIcon size={17} className="hidden text-muted-foreground sm:block" />}
+                  {PageIcon && <PageIcon size={17} className="hidden text-brand sm:block" />}
                   <span className="truncate">{pageLabel}</span>
                 </div>
               )}
@@ -89,11 +89,11 @@ export function AppHeader() {
         )}
         {user && !devUsers && (
           <div className="order-4 flex items-center gap-1 text-sm xl:border-l xl:border-line xl:pl-4">
-            <Link href="/account" className="inline-flex min-h-9 items-center gap-2 rounded-full px-3 font-medium text-foreground-2 transition-colors duration-150 hover:bg-muted hover:text-foreground">
+            <Link href="/account" className="inline-flex min-h-9 items-center gap-2 rounded-control px-3 font-medium text-foreground-2 transition-colors duration-150 hover:bg-muted hover:text-foreground">
               <IconUser size={16} />
               Account
             </Link>
-            <button type="button" onClick={() => void logout()} className="inline-flex min-h-9 items-center gap-2 rounded-full px-3 font-semibold text-danger transition-colors duration-150 hover:bg-danger-soft">
+            <button type="button" onClick={() => void logout()} className="inline-flex min-h-9 items-center gap-2 rounded-control px-3 font-semibold text-muted-foreground transition-colors duration-150 hover:bg-danger-soft hover:text-danger">
               <IconLogOut size={16} />
               Sign out
             </button>

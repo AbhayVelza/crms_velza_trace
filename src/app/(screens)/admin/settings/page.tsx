@@ -54,7 +54,7 @@ export default function SettingsPage() {
             </Field>
             <Field label="Demo mode" hint="Use minutes instead of days">
               <label className="flex min-h-10 items-center gap-2">
-                <input type="checkbox" className="h-5 w-5 accent-foreground" checked={s.demoMode} onChange={(e) => setS({ ...s, demoMode: e.target.checked })} />
+                <input type="checkbox" className="h-5 w-5 accent-primary" checked={s.demoMode} onChange={(e) => setS({ ...s, demoMode: e.target.checked })} />
                 {s.demoMode ? "On" : "Off"}
               </label>
             </Field>
@@ -103,7 +103,7 @@ export default function SettingsPage() {
                   <label key={mode} className="flex min-h-10 items-center gap-2">
                     <input
                       type="checkbox"
-                      className="h-5 w-5 accent-foreground"
+                      className="h-5 w-5 accent-primary"
                       checked={modes.includes(mode)}
                       onChange={(e) => setS({ ...s, customsReceiveModes: e.target.checked ? [...modes, mode] : modes.filter((m) => m !== mode) })}
                     />

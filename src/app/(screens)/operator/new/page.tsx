@@ -99,7 +99,7 @@ function StepList({ steps, step }: { steps: readonly string[]; step: number }) {
             <span
               className={cx(
                 "inline-flex h-5 w-5 items-center justify-center rounded-full text-[0.6875rem] font-bold",
-                i === step ? "bg-primary-foreground text-primary" : i < step ? "bg-foreground text-background" : "bg-muted text-muted-foreground",
+                i === step ? "bg-primary-foreground text-primary" : i < step ? "bg-brand-soft text-brand" : "bg-muted text-muted-foreground",
               )}
             >
               {i < step ? <IconCheck size={12} strokeWidth={2.5} /> : i + 1}

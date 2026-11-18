@@ -15,7 +15,7 @@ const openSans = localFont({
 
 export const metadata: Metadata = {
   title: "Velza Traceability",
-  description: "Velza barcode generation and lot traceability prototype",
+  description: "Velza barcode generation and lot traceability",
   // Transparent V that follows the browser's light/dark setting. Static import, so it is served from
   // /_next/static and stays visible to signed-out visitors; app/favicon.ico (V on white) is the fallback.
   icons: { icon: [{ url: favicon.src, type: "image/svg+xml" }] },
@@ -23,8 +23,8 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    // data-theme is replaced before first paint by THEME_SCRIPT (saved choice or the system setting).
-    <html lang="en" data-theme="light" className={`${openSans.variable} h-full antialiased`} suppressHydrationWarning>
+    // data-theme is replaced before first paint by THEME_SCRIPT (saved choice; dark by default).
+    <html lang="en" data-theme="dark" className={`${openSans.variable} h-full antialiased`} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>

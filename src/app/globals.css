@@ -1,86 +1,120 @@
 @import "tailwindcss";
 
 /*
- * Velza Global design tokens.
- * Brand book (p. 24): Black #000000, White #FFFFFF, Neutral Grey #777777, Light Neutral #F5F5F3 —
- * "monochrome by design, premium by restraint". Every other neutral below is a tint between those four.
- * Semantic colours (ok / warn / danger) are operational, not brand: they are kept only where a status
- * or risk must stay unmistakable, muted so the interface still reads black and white.
+ * Velza Traceability design tokens: premium black with Velza red as the accent.
+ * Black stays dominant; red is reserved for primary actions, the active navigation item, selected states and
+ * the few metrics that need attention. Semantic colours (success / warning / error / info) are operational and
+ * appear only where a status must stay unmistakable.
  *
- * Themes: <html data-theme="light|dark"> (set before first paint by the script in app/layout.tsx).
- * .theme-light / .theme-dark pin a subtree to one theme whatever the page theme is
- * (the brand bar is always dark; printed stickers are always light).
+ * Themes: <html data-theme="dark|light"> (set before first paint by the script in app/layout.tsx; dark is the
+ * default). .theme-light / .theme-dark pin a subtree to one theme whatever the page theme is (the sidebar and
+ * the sign-in brand panel are always dark; printed stickers are always light).
  */
 
 :root,
 .theme-light {
   color-scheme: light;
-  --background: #f5f5f3; /* brand Light Neutral */
-  --surface: #ffffff; /* brand White */
-  --surface-2: #fafaf9;
-  --muted: #efefec;
-  --muted-strong: #e4e4e0;
-  --line: #e4e4e0;
-  --line-strong: #cbcbc6;
+  --background: #fafafa;
+  --surface: #ffffff;
+  --surface-2: #fafafa;
+  --input: #ffffff;
+  --muted: #f0f0f1;
+  --muted-strong: #e4e4e7;
+  /* Crisp black hairlines (translucent black, so they sit evenly on white and on tinted rows). */
+  --line: rgb(10 10 10 / 0.16);
+  --line-strong: rgb(10 10 10 / 0.32);
   --foreground: #0a0a0a;
-  --foreground-2: #2e2e2e;
-  --muted-foreground: #5c5c5c; /* brand #777777 is 4.48:1 on white: kept for large/tertiary text only */
-  --subtle-foreground: #777777; /* brand Neutral Grey */
-  --primary: #000000; /* brand Black */
-  --primary-hover: #2a2a2a;
+  --foreground-2: #27272a;
+  --muted-foreground: #52525b;
+  --subtle-foreground: #71717a;
+  /* Velza red, a step deeper on white so white button text keeps AA contrast. */
+  --primary: #d61e14;
+  --primary-hover: #b8180f;
   --primary-foreground: #ffffff;
-  --ring: #000000;
-  --shadow-color: 0 0% 0%;
+  --brand-text: #c11a11;
+  --brand-soft: rgb(214 30 20 / 0.08);
+  --brand-line: rgb(214 30 20 / 0.3);
+  --ring: #d61e14;
+  --card-shadow: 0 1px 2px rgb(0 0 0 / 0.05), 0 1px 1px rgb(0 0 0 / 0.02);
+  --pop-shadow: 0 12px 32px -12px rgb(0 0 0 / 0.22);
+  --hover-shadow: 0 16px 36px -18px rgb(214 30 20 / 0.35);
+  /* White page with a faint Velza-red light from the corners, so red is present even before any accent. */
+  --page-glow:
+    radial-gradient(70rem 36rem at 105% -10%, rgb(214 30 20 / 0.07), transparent 60%),
+    radial-gradient(50rem 30rem at -10% 110%, rgb(214 30 20 / 0.04), transparent 60%);
+  --card-fill: linear-gradient(180deg, rgb(214 30 20 / 0.035), transparent 38%);
 
-  --success: #1d6b3a;
-  --success-soft: #eef6f0;
-  --success-line: #bcd9c5;
-  --warning: #855400;
-  --warning-soft: #fbf4e4;
-  --warning-line: #e8d2a0;
-  --danger: #b42318;
-  --danger-soft: #fcefed;
-  --danger-line: #f0c2bc;
-  --danger-hover: #93190f;
+  --success: #15803d;
+  --success-soft: #effaf3;
+  --success-line: #b7e4c7;
+  --warning: #9a5b00;
+  --warning-soft: #fdf6e7;
+  --warning-line: #f1d49a;
+  --danger: #c81e1e;
+  --danger-soft: #fdf0f0;
+  --danger-line: #f5c2c2;
+  --danger-hover: #a51818;
   --danger-foreground: #ffffff;
+  --info: #1d5fd1;
+  --info-soft: #eff5ff;
+  --info-line: #bfd5fb;
 }
 
 [data-theme="dark"],
 .theme-dark {
   color-scheme: dark;
-  --background: #0a0a0a;
-  --surface: #141414;
-  --surface-2: #191919;
-  --muted: #212121;
-  --muted-strong: #2c2c2c;
-  --line: #2a2a2a;
-  --line-strong: #3d3d3d;
-  --foreground: #f5f5f3;
-  --foreground-2: #dcdcd8;
-  --muted-foreground: #a6a6a2;
-  --subtle-foreground: #8a8a86;
-  --primary: #f5f5f3; /* dark field, white-led (brand book p. 25) */
-  --primary-hover: #d9d9d5;
-  --primary-foreground: #000000;
-  --ring: #f5f5f3;
-  --shadow-color: 0 0% 0%;
+  /* Near-black with only a whisper of warmth; red stays an accent, not a wash. */
+  --background: #070606;
+  --surface: #121011; /* cards */
+  --surface-2: #1a1718; /* elevated: table heads, hover, popovers */
+  --input: #0b0a0a;
+  --muted: #221e1f;
+  --muted-strong: #2d2829;
+  /* Cards and dividers edged in black; controls keep a visible grey edge. */
+  --line: #000000;
+  --line-strong: #3a3435;
+  --foreground: #ffffff;
+  --foreground-2: #e4e4e7;
+  --muted-foreground: #a1a1aa;
+  --subtle-foreground: #82828c; /* brief #71717A, lifted a little so small text stays readable on #151515 */
+  --primary: #e62117;
+  --primary-hover: #c91b16;
+  --primary-foreground: #ffffff;
+  --brand-text: #ff5249; /* red text on near-black needs a lighter step for contrast */
+  --brand-soft: rgb(230 33 23 / 0.12);
+  --brand-line: rgb(230 33 23 / 0.4);
+  --ring: #ff4036;
+  --card-shadow: inset 0 1px 0 rgb(255 255 255 / 0.045), 0 2px 6px rgb(0 0 0 / 0.6);
+  --pop-shadow: 0 16px 40px -12px rgb(0 0 0 / 0.75);
+  --hover-shadow: inset 0 1px 0 rgb(255 140 130 / 0.06), 0 18px 40px -18px rgb(230 33 23 / 0.35);
+  /* One faint red light in the top-right corner; cards stay flat. */
+  --page-glow: radial-gradient(60rem 30rem at 105% -12%, rgb(200 20 30 / 0.08), transparent 60%);
+  --card-fill: linear-gradient(transparent, transparent);
 
-  --success: #7fd19b;
-  --success-soft: #11241a;
-  --success-line: #24513a;
-  --warning: #e9b860;
-  --warning-soft: #2a2010;
-  --warning-line: #5a4519;
-  --danger: #ff8a80;
-  --danger-soft: #2c1412;
-  --danger-line: #6a2a25;
-  --danger-hover: #ffb0a9;
-  --danger-foreground: #1a0604;
+  --success: #22c55e;
+  --success-soft: rgb(34 197 94 / 0.1);
+  --success-line: rgb(34 197 94 / 0.3);
+  --warning: #f59e0b;
+  --warning-soft: rgb(245 158 11 / 0.1);
+  --warning-line: rgb(245 158 11 / 0.32);
+  --danger: #f05252;
+  --danger-soft: rgb(239 68 68 / 0.1);
+  --danger-line: rgb(239 68 68 / 0.35);
+  --danger-hover: #dc3a3a;
+  --danger-foreground: #ffffff;
+  --info: #60a5fa;
+  --info-soft: rgb(59 130 246 / 0.1);
+  --info-line: rgb(59 130 246 / 0.32);
 }
 
-/* Pure black brand bar (black in both themes, a step darker than the dark page). */
+/* Sidebar and brand panels: a red-black panel, a step lighter than the page. */
 .theme-dark.brand-bar {
-  --surface: #000000;
+  --surface: #0c0b0b;
+}
+
+/* Cards: wine sheen over the surface (the fill is transparent in the light theme). */
+.card-surface {
+  background-image: var(--card-fill);
 }
 
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
@@ -91,6 +125,7 @@
   --color-background: var(--background);
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
+  --color-input: var(--input);
   --color-muted: var(--muted);
   --color-muted-strong: var(--muted-strong);
   --color-line: var(--line);
@@ -102,6 +137,9 @@
   --color-primary: var(--primary);
   --color-primary-hover: var(--primary-hover);
   --color-primary-foreground: var(--primary-foreground);
+  --color-brand: var(--brand-text);
+  --color-brand-soft: var(--brand-soft);
+  --color-brand-line: var(--brand-line);
   --color-ring: var(--ring);
   --color-success: var(--success);
   --color-success-soft: var(--success-soft);
@@ -114,8 +152,11 @@
   --color-danger-line: var(--danger-line);
   --color-danger-hover: var(--danger-hover);
   --color-danger-foreground: var(--danger-foreground);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-info-line: var(--info-line);
 
-  /* Brand typography (p. 26): Open Sans — headline Bold, subhead Bold, body and caption Regular.
+  /* Brand typography: Open Sans (bundled locally, no extra dependency) — headings Bold, body Regular.
      Trebuchet MS, the corporate font, is the first fallback where it is installed. */
   --font-sans: var(--font-open-sans), "Open Sans", "Trebuchet MS", ui-sans-serif, system-ui, "Segoe UI", Arial, sans-serif;
   --font-mono: ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
@@ -123,21 +164,23 @@
   /* App content width: wide enough for operational tables on large monitors, never edge to edge. */
   --container-app: 100rem;
 
-  --radius-control: 0.5rem;
-  --radius-card: 0.75rem;
-  --shadow-card: 0 1px 2px hsl(var(--shadow-color) / 0.04), 0 1px 1px hsl(var(--shadow-color) / 0.02);
-  --shadow-pop: 0 8px 24px -8px hsl(var(--shadow-color) / 0.18);
+  --radius-control: 0.625rem;
+  --radius-card: 0.875rem;
+  --shadow-card: var(--card-shadow);
+  --shadow-pop: var(--pop-shadow);
+  --shadow-hover: var(--hover-shadow);
 
   /* Motion system. Short, restrained, opacity/transform only; everything collapses under reduced motion
      (rule at the end of this file). Use the tokens instead of ad-hoc durations:
      fast = hover/press feedback, base = state changes and entrances, panel = drawers and overlays. */
-  --duration-fast: 120ms;
-  --duration-base: 180ms;
-  --duration-panel: 220ms;
+  --duration-fast: 150ms;
+  --duration-base: 200ms;
+  --duration-panel: 260ms;
   --ease-out-soft: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ease-in-out-soft: cubic-bezier(0.4, 0, 0.2, 1);
   --animate-fade-in: fade-in var(--duration-base) var(--ease-out-soft) both;
-  --animate-rise-in: rise-in 200ms var(--ease-out-soft) both;
+  --animate-rise-in: rise-in 240ms var(--ease-out-soft) both;
+  --animate-pop-in: pop-in var(--duration-panel) var(--ease-out-soft) both;
   /* Loading indicators wait 150 ms before appearing, so fast loads never flash a spinner. */
   --animate-fade-in-late: fade-in var(--duration-base) var(--ease-out-soft) 150ms both;
   /* Skeleton placeholders breathe slowly; static under reduced motion. */
@@ -146,7 +189,7 @@
 
 @keyframes skeleton-pulse {
   50% {
-    opacity: 0.55;
+    opacity: 0.5;
   }
 }
 
@@ -159,15 +202,57 @@
 @keyframes rise-in {
   from {
     opacity: 0;
-    transform: translateY(4px);
+    transform: translateY(6px);
   }
 }
 
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+/* Tiles and cards that enter together arrive one after another (only the first few are delayed). */
+.stagger > * {
+  animation: rise-in 280ms var(--ease-out-soft) both;
+}
+.stagger > :nth-child(2) {
+  animation-delay: 40ms;
+}
+.stagger > :nth-child(3) {
+  animation-delay: 80ms;
+}
+.stagger > :nth-child(4) {
+  animation-delay: 120ms;
+}
+.stagger > :nth-child(5) {
+  animation-delay: 160ms;
+}
+.stagger > :nth-child(n + 6) {
+  animation-delay: 200ms;
+}
+
+/* Native <dialog>: eases in over a fading backdrop. */
+dialog[open] {
+  animation: pop-in var(--duration-panel) var(--ease-out-soft) both;
+}
+dialog[open]::backdrop {
+  animation: fade-in var(--duration-panel) var(--ease-out-soft) both;
+  backdrop-filter: blur(2px);
+}
+
 body {
-  background: var(--background);
+  background: var(--page-glow) no-repeat fixed, var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
   font-feature-settings: "tnum" 0;
+}
+
+/* No horizontal page scroll: wide content (tables) scrolls inside its own container. */
+html,
+body {
+  overflow-x: clip;
 }
 
 /* Theme switch: colours ease instead of snapping (only while switching, so normal paints stay instant).
@@ -190,8 +275,24 @@ body {
 }
 
 ::selection {
-  background: var(--foreground);
-  color: var(--background);
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+/* Thin, quiet scrollbars that match the surfaces. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+@layer base {
+  /* Native checkboxes, radios and range inputs take the Velza red when checked. */
+  input[type="checkbox"],
+  input[type="radio"],
+  input[type="range"],
+  progress {
+    accent-color: var(--primary);
+  }
 }
 
 /* Numbers in tables and stats line up. */
@@ -214,14 +315,31 @@ details[open] > :not(summary) {
   animation: fade-in 180ms var(--ease-out-soft) both;
 }
 
+/* Reduced motion (an OS setting): entrances become plain fades and nothing loops, but colour and opacity
+   transitions, hover feedback and the page fade stay, so the interface still feels responsive. */
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+  html {
     scroll-behavior: auto !important;
+  }
+  .stagger > *,
+  .animate-rise-in,
+  .animate-pop-in,
+  dialog[open] {
+    animation-name: fade-in !important;
+  }
+  .animate-spin,
+  .animate-skeleton {
+    animation-iteration-count: 1 !important;
+  }
+}
+
+/* Paper shows everything: scroll-triggered entrances (Motion inline opacity/transform) are forced to their end state. */
+@media print {
+  main [style*="opacity"] {
+    opacity: 1 !important;
+  }
+  main [style*="transform"] {
+    transform: none !important;
   }
 }
 
@@ -230,6 +348,8 @@ details[open] > :not(summary) {
   :root,
   [data-theme="dark"] {
     color-scheme: light;
+    --page-glow: linear-gradient(transparent, transparent);
+    --card-fill: linear-gradient(transparent, transparent);
     --background: #ffffff;
     --surface: #ffffff;
     --foreground: #000000;

@@ -70,7 +70,7 @@ export function ConfirmDialog({
         e.preventDefault(); // Escape: close through our handler so focus goes back
         close();
       }}
-      className="m-auto w-[min(28rem,calc(100vw-2rem))] rounded-xl border border-line bg-surface p-5 text-foreground shadow-xl backdrop:bg-black/50"
+      className="m-auto max-h-[calc(100dvh-2rem)] w-[min(28rem,calc(100vw-2rem))] overflow-y-auto rounded-card border border-line-strong bg-surface p-5 text-foreground shadow-pop backdrop:bg-black/70 sm:p-6"
     >
       {open && (
         <>

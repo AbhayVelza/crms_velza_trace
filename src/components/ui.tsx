@@ -1,10 +1,12 @@
 "use client";
 
-// Small UI kit (Tailwind + the Velza tokens in globals.css). Kept deliberately plain.
+// Small UI kit (Tailwind + the Velza tokens in globals.css): the one place buttons, fields, cards, tables,
+// badges and stat tiles are styled, so every screen shares the same black-and-red system.
 
 import type { ButtonHTMLAttributes, ComponentProps, ComponentType, ReactNode, SelectHTMLAttributes } from "react";
 import type { ItemStatus } from "@/lib/core/types";
-import { IconChevronDown, IconCircleCheck, IconCircleX, IconInfo, IconLoader, IconTriangleAlert, type IconProps } from "./icons";
+import { IconChevronDown, IconCircleCheck, IconCircleX, IconInbox, IconInfo, IconLoader, IconTriangleAlert, type IconProps } from "./icons";
+import { AnimatedNumber } from "./motion";
 
 export function cx(...c: (string | false | null | undefined)[]) {
   return c.filter(Boolean).join(" ");
@@ -15,11 +17,12 @@ const minH = (className?: string) => (className?.includes("min-h-") ? "" : "min-
 /** Full width unless the caller sets a width (`w-auto`, `w-28` …). */
 const width = (className?: string) => (/(^|\s)w-/.test(className ?? "") ? "" : "w-full");
 
-export function PageTitle({ title, subtitle, actions }: { title: string; subtitle?: ReactNode; actions?: ReactNode }) {
+export function PageTitle({ title, subtitle, actions, eyebrow }: { title: string; subtitle?: ReactNode; actions?: ReactNode; eyebrow?: ReactNode }) {
   return (
     <div className="mb-6 flex flex-wrap items-end justify-between gap-x-4 gap-y-3 sm:mb-8">
       <div className="min-w-0">
-        <h1 className="text-[1.625rem] font-bold leading-tight tracking-[-0.015em] text-foreground sm:text-[1.875rem]">{title}</h1>
+        {eyebrow && <div className="mb-2 text-[0.6875rem] font-semibold uppercase tracking-[0.16em] text-subtle-foreground">{eyebrow}</div>}
+        <h1 className="text-[1.625rem] font-bold leading-tight tracking-[-0.02em] text-foreground sm:text-[1.875rem]">{title}</h1>
         {subtitle && <p className="mt-2 max-w-3xl text-[0.9375rem] leading-relaxed text-muted-foreground">{subtitle}</p>}
       </div>
       {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
@@ -27,12 +30,21 @@ export function PageTitle({ title, subtitle, actions }: { title: string; subtitl
   );
 }
 
-export function Card({ title, children, className, actions }: { title?: ReactNode; children: ReactNode; className?: string; actions?: ReactNode }) {
+export function Card({ title, children, className, actions, icon: Icon }: { title?: ReactNode; children: ReactNode; className?: string; actions?: ReactNode; icon?: ComponentType<IconProps> }) {
   return (
-    <section className={cx("min-w-0 rounded-card border border-line bg-surface p-4 shadow-card sm:p-6", className)}>
+    <section className={cx("card-surface min-w-0 rounded-card border border-line bg-surface p-4 shadow-card transition-[border-color,box-shadow] duration-200 ease-out sm:p-6", className)}>
       {(title || actions) && (
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2 sm:mb-5">
-          {title && <h2 className="text-[1.0625rem] font-bold leading-snug tracking-[-0.005em] text-foreground sm:text-lg">{title}</h2>}
+          {title && (
+            <h2 className="flex min-w-0 items-center gap-2.5 text-[1.0625rem] font-bold leading-snug tracking-[-0.01em] text-foreground sm:text-lg">
+              {Icon && (
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-brand-line bg-brand-soft text-brand">
+                  <Icon size={17} />
+                </span>
+              )}
+              {title}
+            </h2>
+          )}
           {actions}
         </div>
       )}
@@ -41,10 +53,14 @@ export function Card({ title, children, className, actions }: { title?: ReactNod
   );
 }
 
-type Variant = "primary" | "secondary" | "danger" | "ghost";
+type Variant = "primary" | "secondary" | "outline" | "danger" | "ghost";
 const VARIANTS: Record<Variant, string> = {
-  primary: "bg-primary text-primary-foreground hover:bg-primary-hover disabled:bg-muted-strong disabled:text-subtle-foreground",
-  secondary: "border border-line-strong bg-surface text-foreground hover:border-foreground/40 hover:bg-muted disabled:border-line disabled:bg-surface disabled:text-subtle-foreground",
+  // Velza red: the main action on a screen.
+  primary:
+    "bg-primary text-primary-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.14),0_6px_16px_-10px_var(--primary)] hover:bg-primary-hover disabled:bg-muted-strong disabled:text-subtle-foreground disabled:shadow-none",
+  // Dark charcoal: everything else that acts.
+  secondary: "border border-line-strong bg-surface-2 text-foreground hover:border-subtle-foreground/60 hover:bg-muted disabled:border-line disabled:bg-surface disabled:text-subtle-foreground",
+  outline: "border border-line-strong bg-transparent text-foreground hover:border-brand-line hover:bg-brand-soft disabled:border-line disabled:text-subtle-foreground",
   danger: "bg-danger text-danger-foreground hover:bg-danger-hover disabled:bg-muted-strong disabled:text-subtle-foreground",
   ghost: "text-foreground hover:bg-muted disabled:text-subtle-foreground",
 };
@@ -58,7 +74,7 @@ export function Button({ variant = "primary", className, loading, disabled, chil
       disabled={disabled || loading}
       aria-busy={loading || undefined}
       className={cx(
-        "inline-flex select-none items-center justify-center gap-2 whitespace-nowrap rounded-full px-5 py-2 text-sm font-semibold transition-[background-color,border-color,color,box-shadow,transform] duration-150 ease-out active:translate-y-px active:duration-75 disabled:cursor-not-allowed disabled:active:translate-y-0",
+        "inline-flex select-none items-center justify-center gap-2 whitespace-nowrap rounded-control px-4.5 py-2 text-sm font-semibold transition-[background-color,border-color,color,box-shadow,transform] duration-150 ease-out active:scale-[0.98] active:duration-75 disabled:cursor-not-allowed disabled:active:scale-100",
         minH(className),
         VARIANTS[variant],
         className,
@@ -73,7 +89,7 @@ export function Button({ variant = "primary", className, loading, disabled, chil
 export function Field({ label, hint, error, children }: { label: string; hint?: ReactNode; error?: string | null; children: ReactNode }) {
   return (
     <label className="block text-sm">
-      <span className="mb-1.5 block text-sm font-semibold text-foreground-2">{label}</span>
+      <span className="mb-1.5 block text-[0.8125rem] font-semibold tracking-[0.01em] text-foreground-2">{label}</span>
       {children}
       {hint && !error && <span className="mt-1.5 block text-[0.8125rem] leading-snug text-muted-foreground">{hint}</span>}
       {error && <span className="mt-1.5 block animate-fade-in text-[0.8125rem] font-medium text-danger">{error}</span>}
@@ -82,7 +98,7 @@ export function Field({ label, hint, error, children }: { label: string; hint?: 
 }
 
 const inputClass =
-  "rounded-control border border-line-strong bg-surface px-3 py-2 text-sm text-foreground placeholder:text-subtle-foreground transition-[border-color,box-shadow,background-color] duration-150 ease-out hover:border-muted-foreground focus:border-foreground focus:outline-none focus:ring-3 focus:ring-foreground/10 disabled:cursor-not-allowed disabled:bg-muted disabled:text-subtle-foreground";
+  "rounded-control border border-line-strong bg-input px-3 py-2 text-sm text-foreground placeholder:text-subtle-foreground transition-[border-color,box-shadow,background-color] duration-150 ease-out hover:border-subtle-foreground focus:border-primary focus:outline-none focus:ring-3 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-muted disabled:text-subtle-foreground aria-[invalid=true]:border-danger";
 
 export function Input(props: ComponentProps<"input">) {
   return <input {...props} className={cx(inputClass, width(props.className), minH(props.className), props.className)} />;
@@ -109,7 +125,7 @@ const TONES: Record<Tone, { box: string; icon: string; Icon: ComponentType<IconP
   ok: { box: "border-success-line bg-success-soft", icon: "text-success", Icon: IconCircleCheck },
   error: { box: "border-danger-line bg-danger-soft", icon: "text-danger", Icon: IconCircleX },
   warn: { box: "border-warning-line bg-warning-soft", icon: "text-warning", Icon: IconTriangleAlert },
-  info: { box: "border-line bg-surface-2", icon: "text-muted-foreground", Icon: IconInfo },
+  info: { box: "border-info-line bg-info-soft", icon: "text-info", Icon: IconInfo },
 };
 
 export function Notice({ tone = "info", children, className }: { tone?: Tone; children: ReactNode; className?: string }) {
@@ -177,14 +193,15 @@ export function Code({ children }: { children: ReactNode }) {
   return <span className="font-mono text-[0.92em] tracking-wide">{children}</span>;
 }
 
+/** Wide tables scroll sideways inside their own box on small screens; the page itself never does. */
 export function Table({ head, children, empty }: { head: ReactNode[]; children: ReactNode; empty?: ReactNode }) {
   return (
-    <div className="-mx-4 overflow-x-auto sm:mx-0">
+    <div className="-mx-4 overflow-x-auto overscroll-x-contain sm:mx-0 sm:rounded-control sm:border sm:border-line">
       <table className="min-w-full text-left text-sm tabular">
-        <thead className="border-b border-line bg-surface-2 text-xs uppercase tracking-[0.05em] text-muted-foreground">
+        <thead className="border-b border-line bg-surface-2 text-[0.6875rem] uppercase tracking-[0.08em] text-muted-foreground">
           <tr>
             {head.map((h, i) => (
-              <th key={i} className="whitespace-nowrap px-3.5 py-3 font-semibold first:rounded-tl-control last:rounded-tr-control">
+              <th key={i} scope="col" className="whitespace-nowrap px-3.5 py-3 font-semibold">
                 {h}
               </th>
             ))}
@@ -202,7 +219,14 @@ export function Td({ children, className }: { children?: ReactNode; className?: 
 }
 
 export function Empty({ children }: { children: ReactNode }) {
-  return <p className="px-3 py-10 text-center text-[0.9375rem] text-muted-foreground">{children}</p>;
+  return (
+    <p className="flex flex-col items-center gap-3 px-3 py-10 text-center text-[0.9375rem] text-muted-foreground">
+      <span aria-hidden="true" className="flex h-11 w-11 items-center justify-center rounded-full border border-line bg-surface-2 text-subtle-foreground">
+        <IconInbox size={20} />
+      </span>
+      <span>{children}</span>
+    </p>
+  );
 }
 
 /**
@@ -250,15 +274,58 @@ export function LoadingPage({ title, subtitle, actions, children }: { title: str
   );
 }
 
-export function Stat({ label, value, tone, hint }: { label: string; value: ReactNode; tone?: "warn" | "danger"; hint?: string }) {
+/**
+ * A key figure. `icon` shows a red outline icon top-right; `tone` marks a figure that needs attention (border,
+ * icon and value colour). Numbers count up when first shown. `share` (0–1, from the caller's real data) draws a
+ * small meter under the value; the tile never invents a trend.
+ */
+export function Stat({
+  label,
+  value,
+  tone,
+  hint,
+  icon: Icon,
+  share,
+}: {
+  label: string;
+  value: ReactNode;
+  tone?: "warn" | "danger";
+  hint?: string;
+  icon?: ComponentType<IconProps>;
+  share?: number;
+}) {
+  const color = tone === "danger" ? "text-danger" : tone === "warn" ? "text-warning" : "text-foreground";
   return (
-    <div className={cx("rounded-card border bg-surface p-4 shadow-card sm:p-5", tone === "danger" ? "border-danger-line" : tone === "warn" ? "border-warning-line" : "border-line")}>
-      <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.05em] text-muted-foreground">
-        {tone === "danger" && <IconTriangleAlert size={15} className="text-danger" />}
-        {tone === "warn" && <IconTriangleAlert size={15} className="text-warning" />}
-        {label}
+    <div
+      className={cx(
+        "card-surface group/stat relative flex min-w-0 flex-col rounded-card border bg-surface p-4 shadow-card transition-[border-color,box-shadow,transform] duration-300 ease-out hover:-translate-y-1 hover:shadow-hover sm:p-5",
+        tone === "danger" ? "border-danger-line" : tone === "warn" ? "border-warning-line" : "border-line hover:border-brand-line",
+      )}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-1.5 text-[0.8125rem] font-semibold text-foreground-2">
+          {!Icon && tone === "danger" && <IconTriangleAlert size={15} className="text-danger" />}
+          {!Icon && tone === "warn" && <IconTriangleAlert size={15} className="text-warning" />}
+          <span className="truncate">{label}</span>
+        </div>
+        {Icon && (
+          <Icon
+            size={20}
+            className={cx("transition-transform duration-300 ease-out group-hover/stat:scale-110", tone === "danger" ? "text-danger" : tone === "warn" ? "text-warning" : "text-brand")}
+          />
+        )}
       </div>
-      <div className={cx("mt-2.5 text-[1.875rem] font-bold leading-none tracking-[-0.01em] tabular", tone === "danger" ? "text-danger" : tone === "warn" ? "text-warning" : "text-foreground")}>{value}</div>
+      <div className={cx("mt-3 text-[1.75rem] font-bold leading-none tracking-[-0.02em] tabular sm:text-[2rem]", color)}>
+        {typeof value === "number" ? <AnimatedNumber value={value} /> : value}
+      </div>
+      {share !== undefined && (
+        <div aria-hidden="true" className="mt-4 h-1.5 overflow-hidden rounded-full bg-muted">
+          <div
+            className="h-full origin-left rounded-full bg-gradient-to-r from-primary-hover to-primary transition-transform duration-700 ease-out"
+            style={{ transform: `scaleX(${Math.max(0, Math.min(1, share))})` }}
+          />
+        </div>
+      )}
       {hint && <div className="mt-2 text-[0.8125rem] text-muted-foreground">{hint}</div>}
     </div>
   );

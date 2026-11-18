@@ -1,4 +1,4 @@
--- Velza Traceability — PostgreSQL schema v8.
+-- Velza Traceability — PostgreSQL schema v9.
 -- Generated from src/lib/store/sql/schema.ts by `npm run db:schema`; do not edit by hand.
 -- The app applies this itself on first use (and `npm run db:migrate` does it on demand); every
 -- statement is safe to run again.
@@ -386,5 +386,132 @@ DROP INDEX IF EXISTS containers_one_active_per_code;
 CREATE UNIQUE INDEX containers_one_active_per_code ON containers (container_code) WHERE status IN ('LOADING', 'IN_TRANSIT');
 CREATE INDEX IF NOT EXISTS containers_by_receiver ON containers (to_partner_id);
 
-INSERT INTO schema_info (id, version) VALUES (1, 8)
+-- ============================================================ v9: live read model + read-path indexes
+-- Read paths that must not grow with the whole ledger: the HQ scan log (newest scans), Customs receiving one case
+-- (which container carried it), and NOT_RECEIVED (units in transit, oldest first).
+CREATE INDEX IF NOT EXISTS code_history_scans_recent ON code_history (event_time DESC) WHERE record_type = 'SCAN';
+CREATE INDEX IF NOT EXISTS containers_lot_codes ON containers USING gin (lot_codes);
+CREATE INDEX IF NOT EXISTS codes_in_transit_since ON codes (dispatched_at) WHERE status = 'IN_TRANSIT';
+
+-- Live stock counts. Every change to codes appends signed counts to stock_deltas (inserts only, so concurrent scans
+-- never wait for each other or conflict); stock_summary_rollup() folds them into stock_summary. stock_current is
+-- always exact: summary + deltas not yet folded in. A pack carries its lot's sync flag (lots.update keeps them equal).
+CREATE TABLE IF NOT EXISTS stock_summary (
+  location_id  text    NOT NULL,
+  status       text    NOT NULL,
+  code_type    text    NOT NULL,
+  lot_type     text    NOT NULL,
+  flavour      text    NOT NULL,
+  synced       boolean NOT NULL,
+  units        bigint  NOT NULL,
+  PRIMARY KEY (location_id, status, code_type, lot_type, flavour, synced)
+);
+CREATE TABLE IF NOT EXISTS stock_deltas (
+  delta_id     bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  location_id  text    NOT NULL,
+  status       text    NOT NULL,
+  code_type    text    NOT NULL,
+  lot_type     text    NOT NULL,
+  flavour      text    NOT NULL,
+  synced       boolean NOT NULL,
+  units        bigint  NOT NULL
+);
+CREATE OR REPLACE VIEW stock_current AS
+  SELECT location_id, status, code_type, lot_type, flavour, synced, sum(units)::bigint AS units
+    FROM (SELECT location_id, status, code_type, lot_type, flavour, synced, units FROM stock_summary
+          UNION ALL
+          SELECT location_id, status, code_type, lot_type, flavour, synced, units FROM stock_deltas) AS s
+   GROUP BY location_id, status, code_type, lot_type, flavour, synced
+  HAVING sum(units) <> 0;
+
+CREATE OR REPLACE FUNCTION stock_on_codes_insert() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  INSERT INTO stock_deltas (location_id, status, code_type, lot_type, flavour, synced, units)
+  SELECT location_id, status, code_type, lot_type, flavour, synced, count(*)
+    FROM stock_new GROUP BY location_id, status, code_type, lot_type, flavour, synced;
+  RETURN NULL;
+END
+$$;
+CREATE OR REPLACE FUNCTION stock_on_codes_delete() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  INSERT INTO stock_deltas (location_id, status, code_type, lot_type, flavour, synced, units)
+  SELECT location_id, status, code_type, lot_type, flavour, synced, -count(*)
+    FROM stock_old GROUP BY location_id, status, code_type, lot_type, flavour, synced;
+  RETURN NULL;
+END
+$$;
+CREATE OR REPLACE FUNCTION stock_on_codes_update() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  -- Only keys that actually changed get a row (a dispatch moves units; an updated_at change moves nothing).
+  INSERT INTO stock_deltas (location_id, status, code_type, lot_type, flavour, synced, units)
+  SELECT location_id, status, code_type, lot_type, flavour, synced, sum(d)
+    FROM (SELECT location_id, status, code_type, lot_type, flavour, synced, -1 AS d FROM stock_old
+          UNION ALL
+          SELECT location_id, status, code_type, lot_type, flavour, synced, 1 FROM stock_new) AS c
+   GROUP BY location_id, status, code_type, lot_type, flavour, synced
+  HAVING sum(d) <> 0;
+  RETURN NULL;
+END
+$$;
+CREATE OR REPLACE FUNCTION stock_on_codes_truncate() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  TRUNCATE stock_summary, stock_deltas;
+  RETURN NULL;
+END
+$$;
+DROP TRIGGER IF EXISTS stock_codes_insert ON codes;
+CREATE TRIGGER stock_codes_insert AFTER INSERT ON codes REFERENCING NEW TABLE AS stock_new
+  FOR EACH STATEMENT EXECUTE FUNCTION stock_on_codes_insert();
+DROP TRIGGER IF EXISTS stock_codes_delete ON codes;
+CREATE TRIGGER stock_codes_delete AFTER DELETE ON codes REFERENCING OLD TABLE AS stock_old
+  FOR EACH STATEMENT EXECUTE FUNCTION stock_on_codes_delete();
+DROP TRIGGER IF EXISTS stock_codes_update ON codes;
+CREATE TRIGGER stock_codes_update AFTER UPDATE ON codes REFERENCING OLD TABLE AS stock_old NEW TABLE AS stock_new
+  FOR EACH STATEMENT EXECUTE FUNCTION stock_on_codes_update();
+DROP TRIGGER IF EXISTS stock_codes_truncate ON codes;
+CREATE TRIGGER stock_codes_truncate AFTER TRUNCATE ON codes
+  FOR EACH STATEMENT EXECUTE FUNCTION stock_on_codes_truncate();
+
+-- Fold the deltas into the summary (run every minute or so; any time is safe). Returns the delta rows folded in.
+CREATE OR REPLACE FUNCTION stock_summary_rollup() RETURNS bigint LANGUAGE plpgsql AS $$
+DECLARE
+  folded bigint;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('velza_stock_summary'));
+  WITH moved AS (DELETE FROM stock_deltas RETURNING location_id, status, code_type, lot_type, flavour, synced, units),
+       counted AS (SELECT count(*) AS n FROM moved),
+       merged AS (
+         INSERT INTO stock_summary AS s (location_id, status, code_type, lot_type, flavour, synced, units)
+         SELECT location_id, status, code_type, lot_type, flavour, synced, sum(units)
+           FROM moved GROUP BY location_id, status, code_type, lot_type, flavour, synced
+         ON CONFLICT (location_id, status, code_type, lot_type, flavour, synced) DO UPDATE SET units = s.units + EXCLUDED.units
+         RETURNING 1)
+  SELECT n INTO folded FROM counted, (SELECT count(*) FROM merged) AS m;
+  DELETE FROM stock_summary WHERE units = 0;
+  RETURN folded;
+END
+$$;
+-- Recount the summary from codes (recovery, or after a bulk change made with triggers off). Writes to codes wait
+-- until it finishes; at 2 crore codes expect seconds, so run it outside shift peaks.
+CREATE OR REPLACE FUNCTION stock_summary_rebuild() RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('velza_stock_summary'));
+  LOCK TABLE codes IN SHARE MODE;
+  DELETE FROM stock_deltas;
+  DELETE FROM stock_summary;
+  INSERT INTO stock_summary (location_id, status, code_type, lot_type, flavour, synced, units)
+  SELECT location_id, status, code_type, lot_type, flavour, synced, count(*)
+    FROM codes GROUP BY location_id, status, code_type, lot_type, flavour, synced;
+END
+$$;
+-- A database upgraded to v9 already holds codes: count them once (a new or empty database gets nothing to count).
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM stock_summary) AND NOT EXISTS (SELECT 1 FROM stock_deltas) AND EXISTS (SELECT 1 FROM codes) THEN
+    PERFORM stock_summary_rebuild();
+  END IF;
+END
+$$;
+
+INSERT INTO schema_info (id, version) VALUES (1, 9)
   ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version, applied_at = now();

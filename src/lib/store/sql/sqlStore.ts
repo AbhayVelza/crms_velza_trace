@@ -3,8 +3,8 @@
 // rows of `code_history`. Field names stay the app's; column names are the database's.
 
 import { LOT_NUMBER_MAX } from "@/lib/core/codes";
-import { DEFAULT_SETTINGS, type Movement, type Settings } from "@/lib/core/types";
-import { IntegrityError, NotFoundError, type AppendOnlyRepo, type DbSnapshot, type NewMovement, type NewScan, type Repo, type Row, type Store, type StoreTx, type TransactionOptions, type Where } from "../Store";
+import { DEFAULT_SETTINGS, type Container, type ContainerStatus, type ItemStatus, type LotType, type Movement, type Scan, type Settings } from "@/lib/core/types";
+import { IntegrityError, NotFoundError, type AppendOnlyRepo, type DbSnapshot, type NewMovement, type NewScan, type Repo, type Row, type StockSummaryRow, type Store, type StoreTx, type TransactionOptions, type Where } from "../Store";
 import type { Query, SqlDriver } from "./driver";
 import { ALL_TABLES, SCHEMA_SQL, SCHEMA_VERSION } from "./schema";
 
@@ -258,6 +258,12 @@ const SPECS = {
     cols: PACK_COLS,
     async derive(rows, q) {
       const info = await batchInfo(q, rows.map((r) => String(r.packCode ?? r.id).slice(2, 8)));
+      // A pack carries its lot's sync flag (lots.update keeps them equal afterwards). Taken from the lot, not the batch:
+      // a continuation order made offline adds unsynced lots to a batch that is already synced.
+      const lotCodes = [...new Set(rows.map((r) => String(r.lotCode)))];
+      const lotSynced = new Map(
+        (await q<{ code: string; synced: boolean }>(`SELECT code, synced FROM codes WHERE code = ANY($1::text[]) AND code_type = 'LOT'`, [lotCodes])).map((l) => [l.code, l.synced]),
+      );
       return rows.map((r) => {
         const code = String(r.packCode ?? r.id);
         const p = parts(code);
@@ -270,7 +276,7 @@ const SPECS = {
           manufacturer_id: b?.manufacturer_id ?? null,
           device_id: b?.device_id ?? null,
           print_order_id: b?.print_order_id ?? null,
-          synced: b?.synced ?? true,
+          synced: lotSynced.get(String(r.lotCode)) ?? b?.synced ?? true,
           generated_by: b?.created_by ?? null,
         };
       });
@@ -329,6 +335,9 @@ const SPECS = {
 } satisfies Record<string, Spec>;
 
 type RepoName = keyof typeof SPECS;
+
+/** `SELECT <every column AS its field> FROM <table>` of a collection, for the few hand-written queries below. */
+const selectOf = (spec: Spec) => `SELECT ${spec.cols.map(selectExpr).join(", ")} FROM ${spec.table}`;
 
 // ---------------------------------------------------------------- generic repo
 
@@ -548,11 +557,50 @@ function makeTx(q: Query): StoreTx {
       await q(`INSERT INTO settings (id, data) VALUES ($1, $2::jsonb) ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data`, [SETTINGS_ID, JSON.stringify(next)]);
       return next;
     },
+
+    async recentScans(limit) {
+      // Index code_history_scans_recent (v9): reads `limit` rows, never the whole ledger.
+      return q<Scan>(`${selectOf(SPECS.scans)} WHERE record_type = 'SCAN' ORDER BY event_time DESC, history_id ASC LIMIT $1`, [Math.max(0, Math.floor(limit))]);
+    },
+    async latestContainerWithLot(toId, lotCode, statuses) {
+      // GIN index containers_lot_codes (v9) answers `lot_codes @> ARRAY[lot]` without reading every container.
+      const rows = await q<Container>(
+        `${selectOf(SPECS.containers)} WHERE lot_codes @> ARRAY[$1]::text[] AND to_partner_id = $2 AND status = ANY($3::text[])
+          ORDER BY dispatched_at DESC NULLS LAST, row_no ASC LIMIT 1`,
+        [lotCode, toId, [...statuses]],
+      );
+      return rows[0] ?? null;
+    },
+    async stockSummary() {
+      // stock_current (v9) = rolled-up stock_summary + recent stock_deltas: a few hundred rows whatever the code count.
+      const rows = await q<{ location_id: string; status: string; code_type: string; lot_type: string; flavour: string; synced: boolean; units: string | number }>(
+        `SELECT location_id, status, code_type, lot_type, flavour, synced, units FROM stock_current`,
+      );
+      return rows.map(
+        (r): StockSummaryRow => ({
+          locationId: r.location_id,
+          status: r.status as ItemStatus,
+          kind: r.code_type as StockSummaryRow["kind"],
+          lotType: r.lot_type as LotType,
+          flavour: r.flavour,
+          synced: r.synced,
+          units: Number(r.units),
+        }),
+      );
+    },
   };
   return tx;
 }
 
 // ---------------------------------------------------------------- store
+
+let warnedNewerSchema = false;
+/** Running older code on a newer database (a rollback): fine by design, but say so once in the log. */
+function warnNewerSchema(version: number) {
+  if (warnedNewerSchema) return;
+  warnedNewerSchema = true;
+  console.warn(`[velza] The database schema is v${version}, newer than this release's v${SCHEMA_VERSION} (a rollback?). Leaving it unchanged.`);
+}
 
 /** The schema version recorded in the database (0 = no schema yet). */
 async function schemaVersion(d: SqlDriver): Promise<number> {
@@ -593,7 +641,12 @@ export class SqlStore implements Store {
   driver(): Promise<SqlDriver> {
     this.ready ??= (async () => {
       const d = await this.connection();
-      if ((await schemaVersion(d)) !== SCHEMA_VERSION) await d.exec(SCHEMA_SQL);
+      const version = await schemaVersion(d);
+      // Only ever move the schema forward. A database that is newer than this code (a rollback to the previous
+      // release) is left as it is: schema changes are backward compatible, and re-applying an older schema would
+      // set the recorded version back (and, as the app's database role, isn't allowed anyway).
+      if (version < SCHEMA_VERSION) await d.exec(SCHEMA_SQL);
+      else if (version > SCHEMA_VERSION) warnNewerSchema(version);
       if (this.firstRun && !(await d.query(`SELECT 1 FROM users LIMIT 1`)).length) await this.load(d, this.firstRun(d.label));
       return d;
     })().catch((e) => {
@@ -611,7 +664,8 @@ export class SqlStore implements Store {
   /** Apply the schema even if the database reports this version (`npm run db:migrate`). */
   async migrate(): Promise<SqlDriver> {
     const d = await this.driver();
-    await d.exec(SCHEMA_SQL);
+    // Re-applying the current schema is safe (every statement is idempotent); an older release's schema is not.
+    if ((await schemaVersion(d)) <= SCHEMA_VERSION) await d.exec(SCHEMA_SQL);
     return d;
   }
 
@@ -635,7 +689,7 @@ export class SqlStore implements Store {
       await q(`TRUNCATE ${ALL_TABLES.join(", ")} RESTART IDENTITY CASCADE`);
       // An older schema is upgraded once its rows are gone, so values it no longer allows (a v1
       // database's Suppliers and Outlets) don't stop the upgrade; the new data is then checked by it.
-      if (version && version !== SCHEMA_VERSION) await exec(SCHEMA_SQL);
+      if (version && version < SCHEMA_VERSION) await exec(SCHEMA_SQL);
       const tx = makeTx(q);
       for (const name of COLLECTION_REPOS) await (tx[name] as Repo<Row>).createMany((data[name] ?? []) as Row[]);
       for (const name of LEDGERS) for (const row of data[name] ?? []) await (tx[name] as AppendOnlyRepo<Row>).append(row);
@@ -733,6 +787,15 @@ export class SqlStore implements Store {
   }
   async getSettings() {
     return makeTx((await this.driver()).query).getSettings();
+  }
+  async recentScans(limit: number) {
+    return makeTx((await this.driver()).query).recentScans(limit);
+  }
+  async latestContainerWithLot(toId: string, lotCode: string, statuses: readonly ContainerStatus[]) {
+    return makeTx((await this.driver()).query).latestContainerWithLot(toId, lotCode, statuses);
+  }
+  async stockSummary() {
+    return makeTx((await this.driver()).query).stockSummary();
   }
   updateSettings(patch: Partial<Omit<Settings, "id">>) {
     return this.transaction((tx) => tx.updateSettings(patch));

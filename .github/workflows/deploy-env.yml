@@ -1,0 +1,107 @@
+# Deploys one environment (called by deploy.yml). Needs, per GitHub environment (Settings → Environments):
+#   variable AWS_DEPLOY_ROLE_ARN   from `terraform -chdir=infra/terraform/global output deploy_role_arns`
+#   secret   DEPLOY_SSH_KEY        private key matching the environment's deploy_ssh_public_key
+#   variable DEPLOY_KNOWN_HOSTS    optional: the server's SSH host key line (recommended; else it is scanned)
+# For `production`, add required reviewers so every production deploy waits for an approval.
+name: Deploy environment
+
+on:
+  workflow_call:
+    inputs:
+      environment: { type: string, required: true } # GitHub environment: staging | production
+      param_env: { type: string, required: true } # Parameter Store path: staging | prod
+      tag: { type: string, required: true } # image tag = commit SHA
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write # AWS sign-in with OIDC, no stored AWS keys
+      packages: read # the server pulls the images with this run's token
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - name: Settings from Parameter Store → .env
+        id: env
+        env:
+          PARAM_ENV: ${{ inputs.param_env }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          umask 077
+          aws ssm get-parameters-by-path --path "/velza/${PARAM_ENV}/" --recursive --with-decryption \
+            --query 'Parameters[].[Name,Value]' --output text > params.tsv
+          : > .env
+          while IFS=$'\t' read -r name value; do
+            key="${name##*/}"
+            [ "$value" = "-" ] && continue # placeholder for "not set"
+            echo "::add-mask::${value}"
+            printf '%s=%s\n' "$key" "$value" >> .env
+          done < params.tsv
+          rm -f params.tsv
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          {
+            echo "APP_IMAGE=ghcr.io/${owner}/velza-app:${TAG}"
+            echo "OPS_IMAGE=ghcr.io/${owner}/velza-ops:${TAG}"
+            echo "BACKUP_IMAGE=ghcr.io/${owner}/velza-backup:${TAG}"
+          } >> .env
+          host="$(grep -m1 '^DEPLOY_HOST=' .env | cut -d= -f2-)"
+          domain="$(grep -m1 '^DOMAIN=' .env | cut -d= -f2-)"
+          [ -n "$host" ] && [ -n "$domain" ] || { echo "::error::DEPLOY_HOST or DOMAIN missing under /velza/${PARAM_ENV}/"; exit 1; }
+          echo "host=${host}" >> "$GITHUB_OUTPUT"
+          echo "domain=${domain}" >> "$GITHUB_OUTPUT"
+
+      - name: SSH key and host key
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS }}
+          HOST: ${{ steps.env.outputs.host }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+          if [ -n "$KNOWN_HOSTS" ]; then
+            printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            echo "::warning::DEPLOY_KNOWN_HOSTS is not set: trusting the host key scanned now. Save it as the variable."
+            ssh-keyscan -T 15 -t ed25519 "$HOST" > ~/.ssh/known_hosts
+          fi
+          printf 'Host target\n  HostName %s\n  User ubuntu\n  IdentityFile ~/.ssh/id_deploy\n  IdentitiesOnly yes\n  StrictHostKeyChecking yes\n  ServerAliveInterval 30\n' "$HOST" > ~/.ssh/config
+
+      - name: Copy the stack definition and settings
+        run: scp -q deploy/compose.yml deploy/Caddyfile deploy/remote-deploy.sh db/roles.sql .env target:/srv/velza/
+
+      - name: Deploy on the server
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$GHCR_TOKEN" \
+            | ssh target "GHCR_USER='${{ github.actor }}' DEPLOY_TAG='${TAG}' bash /srv/velza/remote-deploy.sh"
+
+      - name: Check the site answers over HTTPS
+        env:
+          DOMAIN: ${{ steps.env.outputs.domain }}
+        run: |
+          # The first deploy waits for DNS and the Let's Encrypt certificate, so allow a few minutes.
+          curl -fsS -o /dev/null --retry 20 --retry-delay 10 --retry-all-errors "https://${DOMAIN}/login"
+          echo "### Deployed \`${{ inputs.tag }}\` to ${{ inputs.environment }} — https://${DOMAIN}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove secrets from the runner
+        if: always()
+        run: rm -f .env ~/.ssh/id_deploy

@@ -37,6 +37,8 @@ export function databaseUrl(env: Record<string, string | undefined> = process.en
 export function storeKind(): StoreKind {
   const kind = process.env.STORE || (databaseUrl() ? "postgres" : "json");
   if (kind !== "json" && kind !== "postgres" && kind !== "pglite") throw new Error(`Unsupported STORE "${kind}" (use json, postgres or pglite)`);
+  // Vercel functions have a read-only disk and many short-lived copies: a JSON file there would be lost or split.
+  if (kind === "json" && process.env.VERCEL) throw new Error("On Vercel connect a PostgreSQL database (DATABASE_URL_UNPOOLED or DATABASE_URL, docs/VERCEL.md); the JSON store needs a real disk");
   return kind;
 }
 

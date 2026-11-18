@@ -1,0 +1,24 @@
+# HTTPS front door. Caddy gets and renews the Let's Encrypt certificate for $DOMAIN by itself (ports 80 and 443 must
+# be open and DNS must point at this server), redirects HTTP to HTTPS, and forwards to the app container.
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# Damage reports carry up to 5 photos as base64 JSON (about 8 MB); nothing else is near this.
+	request_body {
+		max_size 12MB
+	}
+
+	reverse_proxy app:3000 {
+		# The app's rate limits and sign-in lockout read the client address from this header (CLIENT_IP_HEADER).
+		header_up X-Real-IP {remote_host}
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

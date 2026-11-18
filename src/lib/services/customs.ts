@@ -23,6 +23,6 @@ export const RECEIVE_MODE_OFF_MESSAGE: Record<CustomsReceiveMode, string> = {
 
 /** The container (on its way to, received at, or cleared at this Customs) that carried this lot; null if none. */
 export async function containerOfLot(tx: StoreTx, receiverId: string, lotCode: string): Promise<Container | null> {
-  const sent = (await tx.containers.list({ toId: receiverId, status: ["IN_TRANSIT", "RECEIVED", "CLEARED"] })).filter((c) => c.lotCodes.includes(lotCode));
-  return sent.sort((a, b) => (b.dispatchedAt ?? "").localeCompare(a.dispatchedAt ?? ""))[0] ?? null;
+  // One indexed lookup (GIN on lot_codes, schema v9), not every container ever sent to this Customs.
+  return tx.latestContainerWithLot(receiverId, lotCode, ["IN_TRANSIT", "RECEIVED", "CLEARED"]);
 }

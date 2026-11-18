@@ -649,9 +649,8 @@ export async function listScans(userId: string | null, limit = 300) {
   const store = getStore();
   const actor = await loadActor(store, userId);
   requireAction(actor, "dashboard");
-  const n = await names(store);
-  return (await store.scans.list())
-    .sort((a, b) => b.at.localeCompare(a.at))
-    .slice(0, limit)
-    .map((s) => ({ ...s, user: n.user(s.userId), partner: n.partner(s.partnerId) }));
+  // Only the newest `limit` scans are read (indexed), and only the names they refer to.
+  const scans = await store.recentScans(limit);
+  const n = await names(store, { partners: scans.map((s) => s.partnerId), users: scans.map((s) => s.userId), devices: [] });
+  return scans.map((s) => ({ ...s, user: n.user(s.userId), partner: n.partner(s.partnerId) }));
 }

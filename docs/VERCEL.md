@@ -15,7 +15,9 @@ These steps are done once, by hand, in the Vercel, Neon and GitHub dashboards. N
 | Vercel's disk is read-only and is not kept between requests. | The JSON store (`data/db.json`) cannot work: production and previews must use PostgreSQL. |
 | The app holds a **session-level advisory lock** across a transaction when it allocates codes (`src/lib/store/sql/driver.ts`). Neon's pooled address runs PgBouncer in transaction mode, which does not support session-level locks. | The app must use Neon's **direct** (non-pooled) address. It reads `DATABASE_URL_UNPOOLED` first, which the Neon integration sets to the direct address, and falls back to `DATABASE_URL`. |
 | Neon has no Mumbai region; the closest is Singapore (`aws-ap-southeast-1`). Every request makes several database round trips. | The functions run next to the database, in Vercel's Singapore region `sin1` (`vercel.json`). One Mumbai ↔ Singapore hop per request (about 60 ms) is cheaper than one per query. |
-| Damage photos are saved as files (`src/lib/services/damagePhotos.ts`). | On Vercel they can only go to `/tmp`, which is temporary and not shared between function instances. See [Known limits](#known-limits). |
+| Damage photos are saved as files (`src/lib/services/damagePhotos.ts`). | On Vercel they go to `/tmp/velza-uploads` (the default when `VERCEL` is set), which is temporary and not shared between function instances. See [Known limits](#known-limits). |
+| The Docker image uses `output: "standalone"`. | `next.config.ts` turns it off when `VERCEL` is set (during Vercel builds); Vercel packages the app itself. |
+| The app falls back to the JSON file when no database is set. | On Vercel it refuses to start instead, with a message pointing here, so a missing Neon connection is obvious. |
 
 ## 1. Vercel project
 
@@ -62,7 +64,7 @@ Vercel → Project → **Settings → Environment Variables**. Mark passwords **
 | `VELZA_HQ_PASSWORD` | a strong, unique password | a different strong password | As above. |
 | `HTTPS_ONLY` | `1` | `1` | Vercel serves HTTPS only: turns on HSTS and `upgrade-insecure-requests`. |
 | `CLIENT_IP_HEADER` | `x-real-ip` | `x-real-ip` | Vercel sets this header to the visitor's IP; clients can't fake it. Without it, rate limits and the sign-in lockout trust `X-Forwarded-For`. |
-| `VELZA_UPLOAD_DIR` | `/tmp/velza-uploads` | `/tmp/velza-uploads` | Without it, every damage report fails (the default `data/uploads` is read-only on Vercel). Photos stored in `/tmp` are **temporary**: see [Known limits](#known-limits). |
+| `VELZA_UPLOAD_DIR` | optional | optional | On Vercel it already defaults to `/tmp/velza-uploads` (the usual `data/uploads` is read-only there). Photos stored in `/tmp` are **temporary**: see [Known limits](#known-limits). |
 
 Leave these **unset** on Vercel:
 
@@ -149,6 +151,9 @@ These are fine for a test deployment, but each needs fixing before Vercel could 
 - **Rate limits and the sign-in lockout are per function instance.** They are kept in memory
   (`src/lib/security.ts`, `src/lib/services/auth.ts`), so with several instances the effective limits are higher,
   and they reset when an instance stops. Vercel's firewall (WAF) rate limiting can cover this.
+- **Live stock summary upkeep.** Counts are exact without it, but `stock_deltas` grows until it is folded. Now and
+  then run `npm run db:stock -- rollup` (and `-- check`) from a laptop with the direct Neon address in
+  `DATABASE_URL`, as in step 4. Vercel Hobby crons run at most once a day, so there is no per-minute job here.
 - **Connections.** Each function instance keeps up to `PG_POOL_MAX` direct connections. If Vercel logs show
   `too many connections` / `remaining connection slots are reserved`, lower `PG_POOL_MAX` or give the Neon
   compute more CU.

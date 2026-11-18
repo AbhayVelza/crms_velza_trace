@@ -10,7 +10,8 @@ import { JsonStore } from "./jsonStore";
 import { buildBaseSeed } from "./seedData";
 import { createPgliteDriver } from "./sql/driver";
 import { SqlStore } from "./sql/sqlStore";
-import type { DbSnapshot, Store } from "./Store";
+import { SCHEMA_SQL } from "./sql/schema";
+import type { DbSnapshot, StockSummaryRow, Store } from "./Store";
 
 const AT = "2026-10-26T10:00:00.000Z";
 const seed = buildBaseSeed({ admin: "Admin2026pass", hq: "Hq2026pass" });
@@ -360,6 +361,59 @@ describe.each(IMPLS)("Store contract: $name", (impl) => {
     expect(await store.snapshot()).toEqual(before);
     expect(before.sequences).toEqual(expect.arrayContaining([{ id: "MF", value: 1 }]));
   });
+
+  it("recentScans: the newest scans first, equal times in the order recorded, at most `limit`", async () => {
+    const scan = (code: string, at: string) => ({ context: "RECEIVE" as const, code, ok: false, result: "UNKNOWN_CODE", message: "Unknown", userId: null, partnerId: "SS0001", deviceId: null, at });
+    await store.appendScan(scan("A", "2026-11-01T10:00:00.000Z"));
+    await store.appendScan(scan("B", "2026-11-03T10:00:00.000Z"));
+    await store.appendScan(scan("C", "2026-11-02T10:00:00.000Z"));
+    await store.appendScan(scan("D", "2026-11-03T10:00:00.000Z"));
+    expect((await store.recentScans(3)).map((s) => s.code)).toEqual(["B", "D", "C"]);
+    expect((await store.recentScans(10)).map((s) => s.code)).toEqual(["B", "D", "C", "A"]);
+    expect(await store.recentScans(0)).toEqual([]);
+    expect((await store.recentScans(1))[0]).toMatchObject({ code: "B", context: "RECEIVE", ok: false, result: "UNKNOWN_CODE", partnerId: "SS0001", at: "2026-11-03T10:00:00.000Z" });
+  });
+
+  it("latestContainerWithLot: the latest container to that receiver, in those statuses, that carried the lot", async () => {
+    const base = { manufacturerId: "MF0001", invoice: "INV", createdAt: AT, createdBy: "MF0001-OP", dispatchedBy: null, receivedAt: null, receivedBy: null };
+    const box = (id: string, code: string, over: Record<string, unknown>) => ({ ...base, id, code, status: "RECEIVED" as const, lotCodes: ["91AAA111OR00001"], toId: "SS0001", dispatchedAt: "2026-11-01T00:00:00.000Z", ...over });
+    await store.containers.create(box("c-old", "CONT001", { status: "CLEARED", dispatchedAt: "2026-11-01T00:00:00.000Z" }));
+    await store.containers.create(box("c-new", "CONT002", { dispatchedAt: "2026-11-05T00:00:00.000Z", lotCodes: ["91AAA111OR00009", "91AAA111OR00001"] }));
+    await store.containers.create(box("c-other-receiver", "CONT003", { toId: "MF0001", dispatchedAt: "2026-11-09T00:00:00.000Z" }));
+    await store.containers.create(box("c-loading", "CONT004", { status: "LOADING", dispatchedAt: null }));
+    await store.containers.create(box("c-other-lot", "CONT005", { lotCodes: ["91AAA111OR00002"], dispatchedAt: "2026-11-09T00:00:00.000Z" }));
+    const statuses = ["IN_TRANSIT", "RECEIVED", "CLEARED"] as const;
+    expect((await store.latestContainerWithLot("SS0001", "91AAA111OR00001", statuses))?.id).toBe("c-new");
+    expect((await store.latestContainerWithLot("SS0001", "91AAA111OR00001", ["CLEARED"]))?.id).toBe("c-old");
+    expect(await store.latestContainerWithLot("SS0001", "91AAA111OR00007", statuses)).toBeNull();
+    expect((await store.latestContainerWithLot("SS0001", "91AAA111OR00001", ["LOADING"]))?.id).toBe("c-loading");
+  });
+
+  it("stockSummary: units per location, status, kind, lot type, flavour and sync flag, following every change", async () => {
+    await store.batches.create(batch("AAA111"));
+    const sort = (rows: StockSummaryRow[]) => [...rows].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+    const row = (over: Partial<StockSummaryRow>): StockSummaryRow => ({ locationId: "MF0001", status: "GENERATED", kind: "LOT", lotType: "CASE", flavour: "OR", synced: true, units: 1, ...over });
+    expect(await store.stockSummary()).toEqual([]);
+    const a = lot("91AAA111OR00001");
+    const b = lot("91AAA111OR00002", { synced: false });
+    await store.lots.createMany([a, b]);
+    await store.packs.createMany([...packs(a), ...packs(b)]);
+    expect(sort(await store.stockSummary())).toEqual(
+      sort([row({}), row({ kind: "PACK", units: 4 }), row({ synced: false }), row({ kind: "PACK", units: 4, synced: false })]),
+    );
+    // A lot dispatched, one pack moved on its own, and the unsynced lot synced (its packs follow).
+    await store.lots.update(a.id, { status: "AT_SS", locationId: "SS0001" });
+    await store.packs.update(`${a.lotCode}61`, { status: "AT_SS", locationId: "SS0001" });
+    await store.lots.update(b.id, { synced: true });
+    expect(sort(await store.stockSummary())).toEqual(
+      sort([
+        row({ locationId: "SS0001", status: "AT_SS" }),
+        row({ locationId: "SS0001", status: "AT_SS", kind: "PACK" }),
+        row({}), // the second lot, now synced
+        row({ kind: "PACK", units: 7 }), // 3 left of the first lot + the second lot's 4, now synced
+      ]),
+    );
+  });
 });
 
 describe("PostgreSQL only: the schema guards the data", () => {
@@ -417,7 +471,70 @@ describe("PostgreSQL only: the schema guards the data", () => {
     expect(names).toEqual(
       expect.arrayContaining(["codes_manufacturer", "codes_device_unsynced", "print_orders_manufacturer", "print_orders_device_unsynced", "batches_manufacturer", "batches_device_unsynced", "batch_code_pool_device"]),
     );
-    expect(await sql(`SELECT version FROM schema_info`)).toEqual([{ version: 8 }]); // v5: Velza Warehouse; v6: returns; v7: self sign-up approval; v8: customs clearance
+    expect(await sql(`SELECT version FROM schema_info`)).toEqual([{ version: 9 }]); // v5: Velza Warehouse; v6: returns; v7: self sign-up approval; v8: customs clearance; v9: live read model
+  });
+
+  it("v9: the stock summary stays exact through inserts, moves, sync, deletes, rollup, rebuild and an upgrade", async () => {
+    // What stock_current must always equal: a full recount of codes.
+    const recount = `SELECT location_id, status, code_type, lot_type, flavour, synced, count(*)::bigint AS units FROM codes
+                      GROUP BY 1, 2, 3, 4, 5, 6 ORDER BY 1, 2, 3, 4, 5, 6`;
+    const current = `SELECT location_id, status, code_type, lot_type, flavour, synced, units FROM stock_current ORDER BY 1, 2, 3, 4, 5, 6`;
+    const same = async () => expect(await sql(current)).toEqual(await sql(recount));
+    const l1 = lot("91AAA111OR00001");
+    const l2 = lot("91AAA111OR00002", { synced: false });
+    await store.lots.createMany([l1, l2]);
+    await store.packs.createMany([...packs(l1), ...packs(l2)]);
+    await same();
+    // Bulk moves in one statement (a container), a sync, a single-pack move and a delete.
+    await sql(`UPDATE codes SET status = 'IN_TRANSIT', in_transit_to = 'SS0001' WHERE lot_code = $1`, [l1.lotCode]);
+    await store.lots.updateWhere({ deviceId: "dev-1", synced: false }, { synced: true });
+    await store.packs.update(`${l2.lotCode}62`, { status: "DAMAGED" });
+    await sql(`UPDATE codes SET updated_at = now()`); // touches every row, changes no key: no delta rows
+    const deltasBefore = Number((await sql(`SELECT count(*) AS n FROM stock_deltas`))[0].n);
+    await sql(`UPDATE codes SET updated_at = now()`);
+    expect(Number((await sql(`SELECT count(*) AS n FROM stock_deltas`))[0].n)).toBe(deltasBefore);
+    await same();
+    await sql(`DELETE FROM print_orders`); // codes issued by a print order are protected; free them for the delete test
+    await sql(`DELETE FROM codes WHERE code = $1`, [`${l2.lotCode}64`]);
+    await same();
+    // Rollup folds every delta into the summary and changes nothing visible.
+    expect(Number((await sql(`SELECT stock_summary_rollup() AS n`))[0].n)).toBeGreaterThan(0);
+    expect(await sql(`SELECT count(*)::int AS n FROM stock_deltas`)).toEqual([{ n: 0 }]);
+    expect(await sql(`SELECT count(*)::int AS n FROM stock_summary WHERE units = 0`)).toEqual([{ n: 0 }]);
+    await same();
+    // A wrong summary is put right by a rebuild.
+    await sql(`UPDATE stock_summary SET units = units + 100`);
+    await sql(`SELECT stock_summary_rebuild()`);
+    await same();
+    // Upgrading a v8 database that already holds codes fills the summary once.
+    await sql(`DELETE FROM stock_summary`);
+    await sql(`DELETE FROM stock_deltas`);
+    await sql(`UPDATE schema_info SET version = 8`);
+    await (await store.driver()).exec(SCHEMA_SQL);
+    await same();
+    expect(await sql(`SELECT version FROM schema_info`)).toEqual([{ version: 9 }]);
+    // A reset (TRUNCATE) empties it too.
+    await store.reset(withPartners());
+    expect(await sql(current)).toEqual([]);
+  });
+
+  it("never moves the schema backwards: older code on a newer database leaves it as it is (rollback)", async () => {
+    // Pretend a later release already upgraded this database.
+    await sql(`UPDATE schema_info SET version = 99`);
+    const driver = await store.driver();
+    const older = new SqlStore(async () => driver, () => withPartners());
+    expect((await older.users.list()).map((u) => u.id)).toEqual(["AD0001", "HQ0001"]); // the app still works
+    await older.migrate(); // and a migration run by the older release is a no-op
+    expect(await sql(`SELECT version FROM schema_info`)).toEqual([{ version: 99 }]);
+    // An older database is still upgraded.
+    await sql(`UPDATE schema_info SET version = 8`);
+    await older.migrate();
+    expect(await sql(`SELECT version FROM schema_info`)).toEqual([{ version: 9 }]);
+  });
+
+  it("v9: has the read-path indexes", async () => {
+    const names = (await sql(`SELECT indexname FROM pg_indexes WHERE schemaname = current_schema()`)).map((r) => (r as { indexname: string }).indexname);
+    expect(names).toEqual(expect.arrayContaining(["code_history_scans_recent", "containers_lot_codes", "codes_in_transit_since"]));
   });
 
   it("v8: allows AT_CUSTOMS and CLEARED, keeps clearance fields, and reuses a cleared container's number", async () => {

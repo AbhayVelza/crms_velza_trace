@@ -52,3 +52,11 @@ next-env.d.ts
 /playwright-report/
 /data/*/
 .neon
+
+# terraform (state lives in S3; never commit local state or provider caches)
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.terraform.lock.hcl.bak

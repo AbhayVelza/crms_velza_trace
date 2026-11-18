@@ -32,14 +32,15 @@ export function activityCounts(s: DbSnapshot): Record<string, number> {
 
 /**
  * Store settings that make it unclear which data would be cleared. Returns the reason, or null when the target is clear.
- * (Mirrors src/lib/store/index.ts storeKind: STORE wins, else DATABASE_URL means PostgreSQL, else the JSON file.)
+ * (Mirrors src/lib/store/index.ts storeKind: STORE wins, else DATABASE_URL[_UNPOOLED] means PostgreSQL, else the JSON file.)
  */
 export function ambiguousTarget(env: Record<string, string | undefined>): string | null {
   const store = env.STORE?.trim();
-  if (!store && env.DATABASE_URL && env.VELZA_DB_PATH) {
+  const dbUrl = env.DATABASE_URL_UNPOOLED || env.DATABASE_URL;
+  if (!store && dbUrl && env.VELZA_DB_PATH) {
     return "both DATABASE_URL and VELZA_DB_PATH are set and STORE is not: set STORE=postgres or STORE=json to say which one to clear";
   }
-  if (store === "json" && env.DATABASE_URL) return "STORE=json but DATABASE_URL is also set: unset one of them";
+  if (store === "json" && dbUrl) return "STORE=json but DATABASE_URL is also set: unset one of them";
   if ((store === "postgres" || store === "pglite") && env.VELZA_DB_PATH) return `STORE=${store} but VELZA_DB_PATH is also set: unset one of them`;
   return null;
 }

@@ -1,6 +1,6 @@
 // Active store, one instance per process (kept on globalThis so every route bundle shares it):
 //   STORE=json      (default) data/db.json, or VELZA_DB_PATH
-//   STORE=postgres  PostgreSQL at DATABASE_URL (chosen automatically when DATABASE_URL is set)
+//   STORE=postgres  PostgreSQL at DATABASE_URL_UNPOOLED or DATABASE_URL (chosen automatically when either is set)
 //   STORE=pglite    embedded PostgreSQL in PGLITE_DIR (in memory when unset) — local trials and tests
 // Business logic only sees the Store interface, so switching is configuration, not code.
 
@@ -23,8 +23,19 @@ export function dbFilePath(): string {
   return process.env.VELZA_DB_PATH ?? path.join(process.cwd(), "data", "db.json");
 }
 
+/**
+ * The PostgreSQL connection string. DATABASE_URL_UNPOOLED wins when set: on Vercel the Neon integration sets
+ * DATABASE_URL to Neon's pooled address (PgBouncer in transaction mode) and DATABASE_URL_UNPOOLED to the direct
+ * one, for each preview's own database branch too. The app needs the direct one: code allocation holds a
+ * session-level advisory lock across a transaction (sql/driver.ts), and a transaction-mode pooler may run the
+ * lock, the transaction and the unlock on different server connections, leaving the lock held.
+ */
+export function databaseUrl(env: Record<string, string | undefined> = process.env): string | undefined {
+  return env.DATABASE_URL_UNPOOLED || env.DATABASE_URL || undefined;
+}
+
 export function storeKind(): StoreKind {
-  const kind = process.env.STORE || (process.env.DATABASE_URL ? "postgres" : "json");
+  const kind = process.env.STORE || (databaseUrl() ? "postgres" : "json");
   if (kind !== "json" && kind !== "postgres" && kind !== "pglite") throw new Error(`Unsupported STORE "${kind}" (use json, postgres or pglite)`);
   return kind;
 }
@@ -32,20 +43,20 @@ export function storeKind(): StoreKind {
 /** Where the data lives, for log lines. Never includes a password. */
 export function describeStore(): string {
   const kind = storeKind();
-  if (kind === "postgres") return describeDatabaseUrl(process.env.DATABASE_URL ?? "");
+  if (kind === "postgres") return describeDatabaseUrl(databaseUrl() ?? "");
   if (kind === "pglite") return process.env.PGLITE_DIR ? `PostgreSQL (embedded) in ${process.env.PGLITE_DIR}` : "PostgreSQL (embedded, in memory)";
   return dbFilePath();
 }
 
 function storeKey(kind: StoreKind): string {
-  if (kind === "postgres") return `postgres:${process.env.DATABASE_URL ?? ""}`;
+  if (kind === "postgres") return `postgres:${databaseUrl() ?? ""}`;
   if (kind === "pglite") return `pglite:${process.env.PGLITE_DIR ?? ":memory:"}`;
   return `json:${dbFilePath()}`;
 }
 
 function openStore(kind: StoreKind): Store {
   if (kind === "postgres") {
-    const url = process.env.DATABASE_URL;
+    const url = databaseUrl();
     if (!url) throw new Error("STORE=postgres needs DATABASE_URL, e.g. postgres://user:password@host:5432/velza?sslmode=require");
     return new SqlStore(() => createPgDriver(url), firstRunSeed);
   }

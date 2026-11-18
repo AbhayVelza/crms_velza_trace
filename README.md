@@ -255,3 +255,6 @@ Columns are only added and existing rows keep NULL. Back up first, as for any mi
 Decisions made where the spec was silent are listed in [ASSUMPTIONS.md](ASSUMPTIONS.md).
 
 Security layers built into the app, and what to set up around it on a server, are in [SECURITY.md](SECURITY.md).
+
+The test deployment (Vercel + Neon) is set up as in [docs/VERCEL.md](docs/VERCEL.md); how the team branches, reviews
+and merges is in [CONTRIBUTING.md](CONTRIBUTING.md).

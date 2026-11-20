@@ -11,7 +11,7 @@ import { cx } from "./ui";
 export interface Datum {
   label: string;
   value: number;
-  /** CSS colour (defaults to the Velza red gradient). */
+  /** CSS colour (defaults to the chart's neutral series colour). */
   color?: string;
 }
 
@@ -28,15 +28,18 @@ function niceScale(max: number) {
 
 const compact = (n: number) => (n >= 1_000_000 ? `${+(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${+(n / 1000).toFixed(1)}k` : String(n));
 
-/** Vertical bars with a y-axis, gridlines and a hover readout. Bars grow in when first shown. */
-export function BarChart({ data, height = 240, label }: { data: Datum[]; height?: number; label: string }) {
+/**
+ * Vertical bars with a y-axis, hairline gridlines, a value above each bar and a hover readout (DESIGN.md: calm
+ * charcoal series, tabular mono figures). Bars grow in when first shown.
+ */
+export function BarChart({ data, height = 256, label }: { data: Datum[]; height?: number; label: string }) {
   const [hover, setHover] = useState<number | null>(null);
   const { top, ticks } = niceScale(Math.max(0, ...data.map((d) => d.value)));
   return (
     <figure className="min-w-0">
       <div className="flex gap-2" style={{ height }}>
         {/* y-axis */}
-        <div aria-hidden="true" className="flex w-9 shrink-0 flex-col-reverse justify-between pb-6 text-right text-[0.6875rem] text-subtle-foreground tabular">
+        <div aria-hidden="true" className="flex w-9 shrink-0 flex-col-reverse justify-between pb-8 text-right font-mono text-[0.6875rem] text-subtle-foreground tabular">
           {ticks.map((t) => (
             <span key={t} className="leading-none">
               {compact(t)}
@@ -44,15 +47,16 @@ export function BarChart({ data, height = 240, label }: { data: Datum[]; height?
           ))}
         </div>
         <div className="relative min-w-0 flex-1">
-          {/* gridlines */}
-          <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-6 top-0 flex flex-col justify-between">
-            {ticks.map((t) => (
-              <span key={t} className="block h-px w-full bg-line/70" />
+          {/* gridlines (the baseline a step stronger) */}
+          <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-8 top-0 flex flex-col justify-between">
+            {ticks.map((t, i) => (
+              <span key={t} className={cx("block h-px w-full", i === ticks.length - 1 ? "bg-line-strong" : "bg-line")} />
             ))}
           </div>
-          <div aria-hidden="true" className="absolute inset-x-0 bottom-0 top-0 flex items-end gap-[clamp(6px,2.5%,18px)] px-1">
+          <div aria-hidden="true" className="absolute inset-x-0 bottom-0 top-0 flex items-end gap-[clamp(8px,4%,48px)] px-2 sm:px-6">
             {data.map((d, i) => {
               const pct = top ? (d.value / top) * 100 : 0;
+              const h = Math.max(pct, d.value ? 1.5 : 0);
               return (
                 <div
                   key={d.label}
@@ -60,12 +64,15 @@ export function BarChart({ data, height = 240, label }: { data: Datum[]; height?
                   onMouseEnter={() => setHover(i)}
                   onMouseLeave={() => setHover(null)}
                 >
-                  <div className="relative mx-auto flex h-[calc(100%-1.5rem)] w-full max-w-12 items-end">
+                  <div className="relative mx-auto flex h-[calc(100%-2rem)] w-full max-w-14 items-end">
+                    <span className="absolute inset-x-0 text-center font-mono text-xs font-semibold leading-4 text-foreground tabular" style={{ bottom: `calc(${h}% + 4px)` }}>
+                      {fmt(d.value)}
+                    </span>
                     <motion.div
-                      className="w-full rounded-t-md shadow-[0_0_24px_-6px_rgb(230_33_23/0.55)]"
+                      className="w-full rounded-t-md transition-[filter] duration-200 group-hover:brightness-110"
                       style={{
-                        height: `${Math.max(pct, d.value ? 1.5 : 0)}%`,
-                        background: d.color ?? "linear-gradient(180deg, #ff3b30 0%, #c1121f 55%, #6e0b12 100%)",
+                        height: `${h}%`,
+                        background: d.color ?? "var(--chart-bar)",
                         originY: 1,
                       }}
                       initial={{ scaleY: 0 }}
@@ -74,7 +81,7 @@ export function BarChart({ data, height = 240, label }: { data: Datum[]; height?
                       transition={{ duration: 0.7, delay: i * 0.05, ease: EASE_OUT }}
                     />
                   </div>
-                  <span className={cx("mt-2 h-4 truncate text-center text-[0.6875rem] leading-4 transition-colors", hover === i ? "text-foreground" : "text-subtle-foreground")} title={d.label}>
+                  <span className={cx("mt-2 line-clamp-2 h-6 text-center text-[0.6875rem] font-medium leading-3 transition-colors sm:h-6 sm:text-xs sm:leading-3", hover === i ? "text-foreground" : "text-muted-foreground")} title={d.label}>
                     {d.label}
                   </span>
                   {hover === i && (
@@ -105,10 +112,10 @@ export function DonutChart({ data, label, centerLabel = "Total" }: { data: Datum
   const c = 2 * Math.PI * r;
   let offset = 0;
   return (
-    <figure className="flex min-w-0 flex-col items-center gap-5">
-      <div className="relative h-44 w-44 shrink-0">
+    <figure className="flex min-w-0 flex-col items-center gap-6">
+      <div className="relative mt-2 h-44 w-44 shrink-0">
         <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90" aria-hidden="true">
-          <circle cx="50" cy="50" r={r} fill="none" stroke="var(--muted)" strokeWidth="11" />
+          <circle cx="50" cy="50" r={r} fill="none" stroke="var(--chart-track)" strokeWidth="11" />
           {total > 0 &&
             data.map((d, i) => {
               const len = (d.value / total) * c;
@@ -135,17 +142,17 @@ export function DonutChart({ data, label, centerLabel = "Total" }: { data: Datum
             })}
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className="text-2xl font-bold leading-none text-foreground tabular">{compact(total)}</span>
-          <span className="mt-1 text-[0.6875rem] uppercase tracking-[0.08em] text-subtle-foreground">{centerLabel}</span>
+          <span className="text-2xl font-bold leading-none tracking-[-0.02em] text-foreground tabular">{compact(total)}</span>
+          <span className="mt-1.5 text-[0.625rem] font-bold uppercase tracking-[0.08em] text-subtle-foreground">{centerLabel}</span>
         </div>
       </div>
-      <ul className="w-full min-w-0 space-y-2 text-sm">
+      <ul className="w-full min-w-0 divide-y divide-line border-t border-line text-xs">
         {data.map((d) => (
-          <li key={d.label} className="flex items-center gap-2.5">
-            <span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-[3px]" style={{ background: d.color ?? "var(--primary)" }} />
-            <span className="min-w-0 flex-1 truncate text-foreground-2">{d.label}</span>
-            <span className="font-semibold text-foreground tabular">{fmt(d.value)}</span>
-            <span className="w-12 text-right text-xs text-subtle-foreground tabular">{total ? `${Math.round((d.value / total) * 100)}%` : "0%"}</span>
+          <li key={d.label} className="flex items-center gap-2.5 py-2.5 first:pt-4">
+            <span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-[3px]" style={{ background: d.color ?? "var(--chart-ink)" }} />
+            <span className="min-w-0 flex-1 truncate font-medium text-foreground-2">{d.label}</span>
+            <span className="font-mono font-medium text-foreground tabular">{fmt(d.value)}</span>
+            <span className="w-11 text-right font-mono text-subtle-foreground tabular">{total ? `${Math.round((d.value / total) * 100)}%` : "0%"}</span>
           </li>
         ))}
       </ul>
@@ -154,21 +161,24 @@ export function DonutChart({ data, label, centerLabel = "Total" }: { data: Datum
   );
 }
 
-/** Horizontal meters (label, value, red bar scaled to the largest value). */
+/**
+ * Rows of label and count divided by hairlines (DESIGN.md). A row with a count gets a slim bar scaled to the
+ * largest value (red: these are alerts); zero rows show just the hairline.
+ */
 export function MeterList({ data, label }: { data: Datum[]; label: string }) {
   const max = Math.max(1, ...data.map((d) => d.value));
   return (
-    <ul aria-label={label} className="space-y-3">
+    <ul aria-label={label} className="divide-y divide-line">
       {data.map((d, i) => (
-        <li key={d.label}>
-          <div className="mb-1.5 flex items-baseline justify-between gap-3 text-sm">
-            <span className="truncate text-foreground-2">{d.label}</span>
-            <span className={cx("font-semibold tabular", d.value ? "text-foreground" : "text-subtle-foreground")}>{fmt(d.value)}</span>
+        <li key={d.label} className="py-2 first:pt-0">
+          <div className="flex items-baseline justify-between gap-3 text-[0.8125rem]">
+            <span className={cx("truncate", d.value ? "font-medium text-foreground" : "text-muted-foreground")}>{d.label}</span>
+            <span className={cx("font-mono tabular", d.value ? "font-semibold text-foreground" : "text-subtle-foreground")}>{fmt(d.value)}</span>
           </div>
-          <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+          <div className={cx("overflow-hidden rounded-full", d.value ? "mt-1.5 h-1" : "h-0")}>
             <motion.div
               className="h-full rounded-full"
-              style={{ background: d.color ?? "linear-gradient(90deg, #8f0f18, #e62117)", originX: 0, width: `${(d.value / max) * 100}%` }}
+              style={{ background: d.color ?? "var(--primary)", originX: 0, width: `${(d.value / max) * 100}%` }}
               initial={{ scaleX: 0 }}
               whileInView={{ scaleX: 1 }}
               viewport={{ once: true }}

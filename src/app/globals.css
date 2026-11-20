@@ -1,118 +1,126 @@
 @import "tailwindcss";
 
 /*
- * Velza Traceability design tokens: premium black with Velza red as the accent.
- * Black stays dominant; red is reserved for primary actions, the active navigation item, selected states and
- * the few metrics that need attention. Semantic colours (success / warning / error / info) are operational and
- * appear only where a status must stay unmistakable.
+ * Velza Traceability design tokens — the approved Stitch design system
+ * (docs/ui-redesign/stitch/hq-dashboard/DESIGN.md): Apple-like neutral canvases, crisp surfaces with hairline
+ * borders, Velza red (#DF2531) reserved for primary actions, the active navigation anchor, key icon accents and
+ * focus. Semantic colours (success / warning / danger / info) appear only where a status must stay unmistakable.
+ * Where a DESIGN.md grey or semantic colour is too light for small text, the nearest AA shade is used
+ * (see IMPLEMENTATION-MAP.md, conflicts C2–C3).
  *
- * Themes: <html data-theme="dark|light"> (set before first paint by the script in app/layout.tsx; dark is the
- * default). .theme-light / .theme-dark pin a subtree to one theme whatever the page theme is (the sidebar and
- * the sign-in brand panel are always dark; printed stickers are always light).
+ * Themes: <html data-theme="dark|light"> (set before first paint by the script in app/layout.tsx; dark stays the
+ * default). .theme-light / .theme-dark pin a subtree to one theme whatever the page theme is (the sign-in brand
+ * panel and camera panel are always dark; printed stickers are always light).
  */
 
 :root,
 .theme-light {
   color-scheme: light;
-  --background: #fafafa;
-  --surface: #ffffff;
-  --surface-2: #fafafa;
+  --background: #f5f5f7; /* canvas */
+  --surface: #ffffff; /* cards, tables, sidebar */
+  --surface-2: #f9f9fb; /* table heads, row hover, popovers */
   --input: #ffffff;
-  --muted: #f0f0f1;
-  --muted-strong: #e4e4e7;
-  /* Crisp black hairlines (translucent black, so they sit evenly on white and on tinted rows). */
-  --line: rgb(10 10 10 / 0.16);
-  --line-strong: rgb(10 10 10 / 0.32);
-  --foreground: #0a0a0a;
-  --foreground-2: #27272a;
-  --muted-foreground: #52525b;
-  --subtle-foreground: #71717a;
-  /* Velza red, a step deeper on white so white button text keeps AA contrast. */
-  --primary: #d61e14;
-  --primary-hover: #b8180f;
+  --muted: #f0f0f2;
+  --muted-strong: #e5e5ea;
+  --line: #e5e5ea; /* hairline */
+  --line-strong: #d1d1d6; /* control borders */
+  --foreground: #1d1d1f; /* text primary */
+  --foreground-2: #3a3a3c;
+  --muted-foreground: #6e6e73; /* text secondary (DESIGN #86868B, AA shade) */
+  --subtle-foreground: #737378; /* text tertiary (DESIGN #AEAEB2, AA shade) */
+  --primary: #df2531;
+  --primary-hover: #c01c27;
   --primary-foreground: #ffffff;
-  --brand-text: #c11a11;
-  --brand-soft: rgb(214 30 20 / 0.08);
-  --brand-line: rgb(214 30 20 / 0.3);
-  --ring: #d61e14;
-  --card-shadow: 0 1px 2px rgb(0 0 0 / 0.05), 0 1px 1px rgb(0 0 0 / 0.02);
-  --pop-shadow: 0 12px 32px -12px rgb(0 0 0 / 0.22);
-  --hover-shadow: 0 16px 36px -18px rgb(214 30 20 / 0.35);
-  /* White page with a faint Velza-red light from the corners, so red is present even before any accent. */
+  --brand-text: #c01c27;
+  --brand-soft: rgb(223 37 49 / 0.08);
+  --brand-line: rgb(223 37 49 / 0.25);
+  --ring: #df2531;
+  --card-shadow: 0 1px 3px rgb(0 0 0 / 0.04), 0 4px 12px rgb(0 0 0 / 0.03);
+  --pop-shadow: 0 4px 16px rgb(0 0 0 / 0.06), 0 1px 2px rgb(0 0 0 / 0.04);
+  --hover-shadow: 0 2px 8px -2px rgb(0 0 0 / 0.06), 0 12px 24px -6px rgb(0 0 0 / 0.07);
+  /* A faint warm light from the corners (screen.png); the canvas stays essentially neutral. */
   --page-glow:
-    radial-gradient(70rem 36rem at 105% -10%, rgb(214 30 20 / 0.07), transparent 60%),
-    radial-gradient(50rem 30rem at -10% 110%, rgb(214 30 20 / 0.04), transparent 60%);
-  --card-fill: linear-gradient(180deg, rgb(214 30 20 / 0.035), transparent 38%);
+    radial-gradient(64rem 34rem at 108% -12%, rgb(223 37 49 / 0.07), transparent 62%),
+    radial-gradient(48rem 30rem at -12% 112%, rgb(255 138 148 / 0.07), transparent 62%);
+  --card-fill: linear-gradient(transparent, transparent);
+  /* Charts: calm charcoal series (DESIGN.md "Apple slate"). */
+  --chart-bar: linear-gradient(0deg, #262626 0%, #525252 100%);
+  --chart-track: #e5e5ea;
+  --chart-ink: #3a3a3c;
 
-  --success: #15803d;
-  --success-soft: #effaf3;
-  --success-line: #b7e4c7;
-  --warning: #9a5b00;
-  --warning-soft: #fdf6e7;
-  --warning-line: #f1d49a;
-  --danger: #c81e1e;
-  --danger-soft: #fdf0f0;
-  --danger-line: #f5c2c2;
-  --danger-hover: #a51818;
+  /* Text shades meet AA on white; -soft / -line are the DESIGN.md colours as tints. */
+  --success: #1e7f35;
+  --success-soft: rgb(52 199 89 / 0.12);
+  --success-line: rgb(52 199 89 / 0.32);
+  --warning: #a35f00;
+  --warning-soft: rgb(255 159 10 / 0.12);
+  --warning-line: rgb(255 159 10 / 0.35);
+  --danger: #d70015;
+  --danger-soft: rgb(255 59 48 / 0.09);
+  --danger-line: rgb(255 59 48 / 0.3);
+  --danger-hover: #b80012;
   --danger-foreground: #ffffff;
-  --info: #1d5fd1;
-  --info-soft: #eff5ff;
-  --info-line: #bfd5fb;
+  --info: #0060df;
+  --info-soft: rgb(10 132 255 / 0.09);
+  --info-line: rgb(10 132 255 / 0.3);
 }
 
 [data-theme="dark"],
 .theme-dark {
   color-scheme: dark;
-  /* Near-black with only a whisper of warmth; red stays an accent, not a wash. */
-  --background: #070606;
-  --surface: #121011; /* cards */
-  --surface-2: #1a1718; /* elevated: table heads, hover, popovers */
-  --input: #0b0a0a;
-  --muted: #221e1f;
-  --muted-strong: #2d2829;
-  /* Cards and dividers edged in black; controls keep a visible grey edge. */
-  --line: #000000;
-  --line-strong: #3a3435;
-  --foreground: #ffffff;
-  --foreground-2: #e4e4e7;
-  --muted-foreground: #a1a1aa;
-  --subtle-foreground: #82828c; /* brief #71717A, lifted a little so small text stays readable on #151515 */
-  --primary: #e62117;
-  --primary-hover: #c91b16;
+  /* Obsidian canvas, elevated charcoal surfaces, light hairlines. */
+  --background: #0b0b0d;
+  --surface: #1c1c1e;
+  --surface-2: #232326;
+  --input: #161618;
+  --muted: #2c2c2e;
+  --muted-strong: #3a3a3c;
+  --line: rgb(255 255 255 / 0.08);
+  --line-strong: rgb(255 255 255 / 0.16);
+  --foreground: #f5f5f7;
+  --foreground-2: #e5e5ea;
+  --muted-foreground: #98989d;
+  --subtle-foreground: #86868b; /* DESIGN #636366, AA shade on #1C1C1E */
+  --primary: #df2531;
+  --primary-hover: #e8434e;
   --primary-foreground: #ffffff;
-  --brand-text: #ff5249; /* red text on near-black needs a lighter step for contrast */
-  --brand-soft: rgb(230 33 23 / 0.12);
-  --brand-line: rgb(230 33 23 / 0.4);
-  --ring: #ff4036;
-  --card-shadow: inset 0 1px 0 rgb(255 255 255 / 0.045), 0 2px 6px rgb(0 0 0 / 0.6);
-  --pop-shadow: 0 16px 40px -12px rgb(0 0 0 / 0.75);
-  --hover-shadow: inset 0 1px 0 rgb(255 140 130 / 0.06), 0 18px 40px -18px rgb(230 33 23 / 0.35);
-  /* One faint red light in the top-right corner; cards stay flat. */
-  --page-glow: radial-gradient(60rem 30rem at 105% -12%, rgb(200 20 30 / 0.08), transparent 60%);
+  --brand-text: #ff5a64; /* red text on charcoal needs a lighter step for contrast */
+  --brand-soft: rgb(223 37 49 / 0.14);
+  --brand-line: rgb(223 37 49 / 0.38);
+  --ring: #ff5a64;
+  --card-shadow: inset 0 1px 0 rgb(255 255 255 / 0.04), 0 8px 24px -12px rgb(0 0 0 / 0.5);
+  --pop-shadow: 0 8px 24px rgb(0 0 0 / 0.45);
+  --hover-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06), 0 12px 32px -10px rgb(0 0 0 / 0.6);
+  --page-glow:
+    radial-gradient(60rem 32rem at 108% -14%, rgb(223 37 49 / 0.1), transparent 62%),
+    radial-gradient(46rem 28rem at -12% 112%, rgb(138 21 32 / 0.1), transparent 62%);
   --card-fill: linear-gradient(transparent, transparent);
+  --chart-bar: linear-gradient(0deg, #404040 0%, #a3a3a3 100%);
+  --chart-track: #2c2c2e;
+  --chart-ink: #d4d4d8;
 
-  --success: #22c55e;
-  --success-soft: rgb(34 197 94 / 0.1);
-  --success-line: rgb(34 197 94 / 0.3);
-  --warning: #f59e0b;
-  --warning-soft: rgb(245 158 11 / 0.1);
-  --warning-line: rgb(245 158 11 / 0.32);
-  --danger: #f05252;
-  --danger-soft: rgb(239 68 68 / 0.1);
-  --danger-line: rgb(239 68 68 / 0.35);
-  --danger-hover: #dc3a3a;
+  --success: #34c759;
+  --success-soft: rgb(52 199 89 / 0.14);
+  --success-line: rgb(52 199 89 / 0.32);
+  --warning: #ff9f0a;
+  --warning-soft: rgb(255 159 10 / 0.14);
+  --warning-line: rgb(255 159 10 / 0.34);
+  --danger: #ff453a;
+  --danger-soft: rgb(255 69 58 / 0.13);
+  --danger-line: rgb(255 69 58 / 0.34);
+  --danger-hover: #e0362c;
   --danger-foreground: #ffffff;
-  --info: #60a5fa;
-  --info-soft: rgb(59 130 246 / 0.1);
-  --info-line: rgb(59 130 246 / 0.32);
+  --info: #409cff;
+  --info-soft: rgb(10 132 255 / 0.14);
+  --info-line: rgb(10 132 255 / 0.34);
 }
 
-/* Sidebar and brand panels: a red-black panel, a step lighter than the page. */
+/* Sign-in brand panel: a step darker than a card. */
 .theme-dark.brand-bar {
-  --surface: #0c0b0b;
+  --surface: #161618;
 }
 
-/* Cards: wine sheen over the surface (the fill is transparent in the light theme). */
+/* Cards: no sheen in this design (kept as a hook so card markup stays the same). */
 .card-surface {
   background-image: var(--card-fill);
 }
@@ -120,6 +128,17 @@
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 /* Desktop sidebar collapsed to its icon rail (<html data-sidebar="collapsed">). */
 @custom-variant sidebar-collapsed (&:where([data-sidebar="collapsed"] *));
+/* Sidebar shown as the 68px icon rail: always on tablets (md–lg), and on desktop when collapsed. */
+@custom-variant rail {
+  @media (width >= 48rem) and (width < 64rem) {
+    @slot;
+  }
+  &:where([data-sidebar="collapsed"] *) {
+    @media (width >= 64rem) {
+      @slot;
+    }
+  }
+}
 
 @theme inline {
   --color-background: var(--background);
@@ -156,16 +175,19 @@
   --color-info-soft: var(--info-soft);
   --color-info-line: var(--info-line);
 
-  /* Brand typography: Open Sans (bundled locally, no extra dependency) — headings Bold, body Regular.
-     Trebuchet MS, the corporate font, is the first fallback where it is installed. */
-  --font-sans: var(--font-open-sans), "Open Sans", "Trebuchet MS", ui-sans-serif, system-ui, "Segoe UI", Arial, sans-serif;
-  --font-mono: ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
+  /* DESIGN.md typography: Inter for the interface, JetBrains Mono for codes and identifiers (both self-hosted
+     by next/font in app/layout.tsx). */
+  --font-sans: var(--font-inter), "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Arial, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
 
   /* App content width: wide enough for operational tables on large monitors, never edge to edge. */
-  --container-app: 100rem;
+  --container-app: 95rem;
 
-  --radius-control: 0.625rem;
-  --radius-card: 0.875rem;
+  /* DESIGN.md shapes: controls 8px, icon surrounds 12px, cards 16px, sheets 24px. */
+  --radius-control: 0.5rem;
+  --radius-icon: 0.75rem;
+  --radius-card: 1rem;
+  --radius-sheet: 1.5rem;
   --shadow-card: var(--card-shadow);
   --shadow-pop: var(--pop-shadow);
   --shadow-hover: var(--hover-shadow);
@@ -246,7 +268,10 @@ body {
   background: var(--page-glow) no-repeat fixed, var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
-  font-feature-settings: "tnum" 0;
+  /* Inter alternates used by the Stitch design (open digits, single-storey a off). */
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 /* No horizontal page scroll: wide content (tables) scrolls inside its own container. */
@@ -293,6 +318,16 @@ body {
   progress {
     accent-color: var(--primary);
   }
+}
+
+/* Printed stickers keep their original fonts (Open Sans and the system monospace), so the redesign never
+   changes sticker text width; the sheet is sized in mm. */
+.sheet {
+  font-family: var(--font-open-sans), "Open Sans", "Trebuchet MS", ui-sans-serif, system-ui, "Segoe UI", Arial, sans-serif;
+  font-feature-settings: normal;
+}
+.sheet .font-mono {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
 }
 
 /* Numbers in tables and stats line up. */

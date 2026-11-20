@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+
+<html class="h-full" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Velza Traceability - HQ Dashboard</title>
+<!-- Tailwind CSS v3 with Plugins -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Google Fonts: Inter & JetBrains Mono -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind Configuration for Apple-inspired Palette and Typography -->
+<script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+          },
+          colors: {
+            velza: {
+              red: '#DF2531',
+              'red-dark': '#C01C27',
+              'red-light': '#FEE2E2',
+            },
+            apple: {
+              canvas: '#F5F5F7',
+              card: '#FFFFFF',
+              darkCanvas: '#0B0B0D',
+              darkSurface: '#161618',
+              darkElevated: '#1C1C1E',
+              darkBorder: '#2C2C2E',
+              success: '#34C759',
+              warning: '#FF9F0A',
+              danger: '#FF3B30',
+              info: '#0A84FF',
+            }
+          },
+          boxShadow: {
+            'apple-subtle': '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03)',
+            'apple-card': '0 2px 8px -2px rgba(0, 0, 0, 0.05), 0 12px 24px -4px rgba(0, 0, 0, 0.04)',
+            'glass-light': '0 4px 20px -2px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0, 0, 0, 0.03)',
+            'glass-dark': '0 8px 32px -4px rgba(0, 0, 0, 0.5), inset 0 1px 0 0 rgba(255, 255, 255, 0.08)',
+            'dark-inner': 'inset 0 1px 0 0 rgba(255, 255, 255, 0.06)',
+          },
+          borderRadius: {
+            'apple': '20px',
+            'squircle': '12px',
+          }
+        }
+      }
+    }
+  </script>
+<!-- Layout & Elevation Base Styles -->
+<style data-purpose="base-typography">
+    body {
+      font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    .numeral-tabular {
+      font-variant-numeric: tabular-nums;
+    }
+    .frosted-glass-surface {
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+    }
+    .frosted-card {
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      background-color: rgba(255, 255, 255, 0.78);
+      border: 1px solid rgba(255, 255, 255, 0.85);
+      box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.02);
+    }
+    .dark .frosted-card {
+      background-color: rgba(28, 28, 30, 0.72);
+      border: 1px solid rgba(255, 255, 255, 0.10);
+      box-shadow: 0 8px 32px -4px rgba(0, 0, 0, 0.45), inset 0 1px 0 0 rgba(255, 255, 255, 0.06);
+    }
+    .frosted-card-dense {
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      background-color: rgba(255, 255, 255, 0.90);
+      border: 1px solid rgba(255, 255, 255, 0.85);
+      box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.04);
+    }
+    .dark .frosted-card-dense {
+      background-color: rgba(28, 28, 30, 0.88);
+      border: 1px solid rgba(255, 255, 255, 0.10);
+      box-shadow: 0 8px 32px -4px rgba(0, 0, 0, 0.5), inset 0 1px 0 0 rgba(255, 255, 255, 0.06);
+    }
+    .hero-border-wrap {
+      position: relative;
+    }
+    .hero-border-wrap::before {
+      content: '';
+      position: absolute;
+      inset: -1px;
+      border-radius: inherit;
+      padding: 1px;
+      background: linear-gradient(135deg, rgba(223, 37, 49, 0.28) 0%, rgba(223, 37, 49, 0.04) 60%, transparent 100%);
+      -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+      -webkit-mask-composite: xor;
+      mask-composite: exclude;
+      pointer-events: none;
+    }
+  </style>
+<!-- Chart & Component Micro-Styles -->
+<style data-purpose="chart-enhancements">
+    .donut-chart-fill {
+      stroke-dasharray: 282.7;
+      stroke-dashoffset: 0;
+      transition: stroke-dashoffset 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .pulse-dot {
+      box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.5);
+      animation: pulse-ring 2.2s cubic-bezier(0.24, 0, 0.38, 1) infinite;
+    }
+    @keyframes pulse-ring {
+      0% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.5); }
+      70% { box-shadow: 0 0 0 7px rgba(52, 199, 89, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0); }
+    }
+    .frosted-glass {
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+    }
+  </style>
+</head>
+<body class="h-full bg-apple-canvas dark:bg-[#0B0B0D] text-neutral-900 dark:text-neutral-100 transition-colors duration-200 relative selection:bg-velza-red selection:text-white">
+<!-- BEGIN: AmbientMeshBackground -->
+<div aria-hidden="true" class="fixed inset-0 pointer-events-none z-0 overflow-hidden" id="ambient-mesh-background">
+<!-- LIGHT THEME AMBIENT BLOBS -->
+<div class="absolute inset-0 dark:opacity-0 opacity-100 transition-opacity duration-500">
+<!-- Top-right blob (900px, blur, Velza red 14%) -->
+<div class="absolute -top-48 -right-48 w-[920px] h-[920px] rounded-full bg-[#DF2531]/[0.14] blur-[170px]"></div>
+<!-- Bottom-left warm rose blob (700px, 16% opacity) -->
+<div class="absolute -bottom-40 -left-40 w-[720px] h-[720px] rounded-full bg-[#FF8A94]/[0.16] blur-[170px]"></div>
+<!-- Center faint peach accent (400px, 12% opacity) -->
+<div class="absolute top-1/2 left-1/3 -translate-y-1/2 w-[420px] h-[420px] rounded-full bg-[#FFC2A8]/[0.12] blur-[180px]"></div>
+</div>
+<!-- DARK THEME AMBIENT BLOBS (Obsidian Base) -->
+<div class="absolute inset-0 opacity-0 dark:opacity-100 transition-opacity duration-500">
+<!-- Top-right large blurred blob (~900px, Velza red #DF2531 at 55% opacity) -->
+<div class="absolute -top-56 -right-56 w-[940px] h-[940px] rounded-full bg-[#DF2531]/[0.55] blur-[160px]"></div>
+<!-- Bottom-left blob (~700px, deep crimson #8A1520 at 45% opacity) -->
+<div class="absolute -bottom-48 -left-48 w-[740px] h-[740px] rounded-full bg-[#8A1520]/[0.45] blur-[160px]"></div>
+<!-- Center-left accent blob (~400px, #FF5A64 at 15% opacity) -->
+<div class="absolute top-[42%] left-[16%] w-[420px] h-[420px] rounded-full bg-[#FF5A64]/[0.15] blur-[150px]"></div>
+<!-- Subtle secondary deep dark red void filler at top-center -->
+<div class="absolute top-0 left-1/3 w-[360px] h-[360px] rounded-full bg-[#52090F]/[0.35] blur-[170px]"></div>
+</div>
+<!-- Subtle Film Grain / Noise Overlay (2.5% opacity, SVG feTurbulence) -->
+<svg class="absolute inset-0 w-full h-full opacity-[0.025] mix-blend-overlay" xmlns="http://www.w3.org/2000/svg">
+<filter id="mesh-noise">
+<feturbulence basefrequency="0.8" numoctaves="3" stitchtiles="stitch" type="fractalNoise"></feturbulence>
+<fecolormatrix type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 1 0"></fecolormatrix>
+</filter>
+<rect filter="url(#mesh-noise)" height="100%" width="100%"></rect>
+</svg>
+</div>
+<!-- END: AmbientMeshBackground -->
+<!-- BEGIN: ApplicationLayoutWrapper -->
+<div class="min-h-full flex flex-col relative z-10" id="app-viewport">
+<!-- Top Master Control Bar for Presentation & Theme Switching -->
+<aside class="bg-neutral-900/90 dark:bg-black/80 backdrop-blur-md text-neutral-300 text-xs px-4 py-2 border-b border-neutral-800/80 flex items-center justify-between z-50" data-purpose="presentation-toolbar">
+<div class="flex items-center gap-2">
+<span class="inline-flex items-center px-1.5 py-0.5 rounded font-mono font-medium text-[10px] bg-neutral-800/90 text-neutral-300 border border-neutral-700/80">HQ SYSTEM v3.4.1</span>
+<span class="text-neutral-400">Desktop Workspace Presentation</span>
+</div>
+<div class="flex items-center gap-3">
+<span class="text-neutral-400 hidden sm:inline">Color Appearance:</span>
+<div class="inline-flex rounded-lg bg-neutral-800/90 p-0.5 border border-neutral-700">
+<button class="px-2.5 py-1 rounded-md text-xs font-medium bg-white text-neutral-900 shadow-sm transition-all" id="theme-btn-light" onclick="setAppTheme('light')">
+            Light
+          </button>
+<button class="px-2.5 py-1 rounded-md text-xs font-medium text-neutral-400 hover:text-white transition-all" id="theme-btn-dark" onclick="setAppTheme('dark')">
+            Dark (Obsidian)
+          </button>
+</div>
+</div>
+</aside>
+<div class="flex-1 flex overflow-hidden">
+<!-- BEGIN: MainSidebar -->
+<aside class="w-64 bg-white/80 dark:bg-[#1C1C1E]/75 frosted-glass-surface border-r border-white/80 dark:border-white/10 flex flex-col justify-between shrink-0 transition-colors duration-200 z-30 select-none shadow-sm dark:shadow-[inset_-1px_0_0_0_rgba(255,255,255,0.06)]" data-purpose="desktop-sidebar">
+<div>
+<!-- Brand Logo Header -->
+<div class="h-16 px-5 flex items-center gap-3 border-b border-neutral-200/50 dark:border-white/10">
+<!-- Modern Stylized geometric V in Velza Red -->
+<div class="w-8 h-8 rounded-xl bg-velza-red flex items-center justify-center shadow-md shadow-red-500/25 text-white shrink-0">
+<svg class="w-4 h-4 fill-current" viewbox="0 0 24 24">
+<path d="M12 21.35l-9.1-16.7h5.1L12 14.5l4-9.85h5.1L12 21.35z"></path>
+</svg>
+</div>
+<div>
+<div class="text-[10px] font-bold tracking-wider uppercase text-neutral-400 dark:text-neutral-400 leading-none">Velza</div>
+<div class="text-base font-semibold text-neutral-900 dark:text-white tracking-tight leading-snug">Traceability</div>
+</div>
+</div>
+<!-- Section Navigation -->
+<div class="px-3 py-4">
+<div class="px-3 mb-2 text-[10px] font-bold tracking-wider text-neutral-400 dark:text-neutral-400 uppercase">
+              Velza HQ Portal
+            </div>
+<nav class="space-y-1">
+<!-- Active Navigation Item: Quiet pill with Velza red icon mark -->
+<a class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-semibold bg-neutral-900/5 dark:bg-white/10 text-neutral-900 dark:text-white border border-transparent dark:border-white/10 transition-colors" href="#">
+<span class="w-2 h-2 rounded-full bg-velza-red shrink-0 shadow-sm shadow-red-500/40"></span>
+<svg class="w-4 h-4 text-velza-red" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<rect height="7" rx="1.5" width="7" x="3" y="3"></rect>
+<rect height="7" rx="1.5" width="7" x="14" y="3"></rect>
+<rect height="7" rx="1.5" width="7" x="14" y="14"></rect>
+<rect height="7" rx="1.5" width="7" x="3" y="14"></rect>
+</svg>
+<span>Dashboard</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-neutral-600 dark:text-neutral-300 hover:bg-white/60 dark:hover:bg-white/5 hover:text-neutral-900 dark:hover:text-white transition-colors" href="#">
+<span class="w-2 h-2 rounded-full opacity-0 shrink-0"></span>
+<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<circle cx="11" cy="11" r="7"></circle>
+<path d="M21 21l-4.35-4.35"></path>
+</svg>
+<span>Search code</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-neutral-600 dark:text-neutral-300 hover:bg-white/60 dark:hover:bg-white/5 hover:text-neutral-900 dark:hover:text-white transition-colors" href="#">
+<span class="w-2 h-2 rounded-full opacity-0 shrink-0"></span>
+<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+<path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+</svg>
+<span>Alerts</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-neutral-600 dark:text-neutral-300 hover:bg-white/60 dark:hover:bg-white/5 hover:text-neutral-900 dark:hover:text-white transition-colors" href="#">
+<span class="w-2 h-2 rounded-full opacity-0 shrink-0"></span>
+<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+<polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+<line x1="12" x2="12" y1="22.08" y2="12"></line>
+</svg>
+<span>Batches &amp; recall</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-neutral-600 dark:text-neutral-300 hover:bg-white/60 dark:hover:bg-white/5 hover:text-neutral-900 dark:hover:text-white transition-colors" href="#">
+<span class="w-2 h-2 rounded-full opacity-0 shrink-0"></span>
+<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<rect height="14" rx="2" ry="2" width="20" x="2" y="7"></rect>
+<path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
+</svg>
+<span>Containers</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-neutral-600 dark:text-neutral-300 hover:bg-white/60 dark:hover:bg-white/5 hover:text-neutral-900 dark:hover:text-white transition-colors" href="#">
+<span class="w-2 h-2 rounded-full opacity-0 shrink-0"></span>
+<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<path d="M3 7V5a2 2 0 0 1 2-2h2"></path>
+<path d="M17 3h2a2 2 0 0 1 2 2v2"></path>
+<path d="M21 17v2a2 2 0 0 1-2 2h-2"></path>
+<path d="M7 21H5a2 2 0 0 1-2-2v-2"></path>
+<line x1="7" x2="17" y1="12" y2="12"></line>
+</svg>
+<span>Scan audit</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-neutral-600 dark:text-neutral-300 hover:bg-white/60 dark:hover:bg-white/5 hover:text-neutral-900 dark:hover:text-white transition-colors" href="#">
+<span class="w-2 h-2 rounded-full opacity-0 shrink-0"></span>
+<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path>
+<line x1="7" x2="7.01" y1="7" y2="7"></line>
+</svg>
+<span>Product details</span>
+</a>
+</nav>
+</div>
+</div>
+<!-- Sidebar Footer Status & Organization Profile -->
+<div class="p-3 border-t border-neutral-200/50 dark:border-white/10">
+<div class="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-white/60 dark:bg-white/5 border border-neutral-200/60 dark:border-white/10 backdrop-blur-md">
+<div class="w-8 h-8 rounded-lg bg-neutral-900 dark:bg-white/10 text-white font-semibold text-xs flex items-center justify-center shrink-0 border border-transparent dark:border-white/10">
+              N
+            </div>
+<div class="min-w-0 flex-1">
+<div class="text-xs font-semibold text-neutral-900 dark:text-white truncate">Velza HQ</div>
+<div class="text-[11px] text-neutral-500 dark:text-neutral-400 truncate">Velza Global India</div>
+</div>
+</div>
+</div>
+</aside>
+<!-- END: MainSidebar -->
+<!-- Main Content Area with Fixed Top Bar and Scrollable Body -->
+<div class="flex-1 flex flex-col min-w-0 overflow-y-auto">
+<!-- BEGIN: TopBar -->
+<header class="sticky top-0 z-20 h-14 bg-white/78 dark:bg-[#1C1C1E]/72 frosted-glass border-b border-white/80 dark:border-white/10 px-6 flex items-center justify-between shrink-0 shadow-sm dark:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]" data-purpose="top-navigation">
+<!-- Left: Breadcrumb & Sidebar collapse affordance -->
+<div class="flex items-center gap-3 text-sm">
+<button class="text-neutral-400 hover:text-neutral-700 dark:hover:text-white p-1 rounded-md transition" title="Toggle Sidebar">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<rect height="18" rx="2" width="18" x="3" y="3"></rect>
+<line x1="9" x2="9" y1="3" y2="21"></line>
+</svg>
+</button>
+<span class="text-neutral-300 dark:text-neutral-700">|</span>
+<div class="flex items-center gap-1.5 text-xs text-neutral-500 dark:text-neutral-400">
+<span class="hover:text-neutral-800 dark:hover:text-neutral-200 cursor-pointer">VELZA HQ PORTAL</span>
+<svg class="w-3 h-3 text-neutral-400" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<polyline points="9 18 15 12 9 6"></polyline>
+</svg>
+<span class="font-medium text-neutral-900 dark:text-neutral-100">Dashboard</span>
+</div>
+</div>
+<!-- Right: Sync Pill, Entity Switcher, User Menu -->
+<div class="flex items-center gap-3">
+<!-- Sync & Online Badge -->
+<div class="hidden md:flex items-center gap-2 px-3 py-1 rounded-full bg-white/70 dark:bg-white/5 border border-white/90 dark:border-white/10 text-xs backdrop-blur-md">
+<span class="w-2 h-2 rounded-full bg-apple-success pulse-dot"></span>
+<span class="text-neutral-700 dark:text-neutral-200 font-medium">Online · Synced just now</span>
+<span class="text-neutral-300 dark:text-neutral-600">|</span>
+<span class="text-neutral-500 dark:text-neutral-400 font-mono text-[11px]">Unsynced: 0 lots</span>
+</div>
+<!-- Organisation Dropdown -->
+<button class="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium text-neutral-700 dark:text-neutral-200 bg-white/50 dark:bg-white/5 hover:bg-white/80 dark:hover:bg-white/10 border border-white/80 dark:border-white/10 transition backdrop-blur-md">
+<svg class="w-3.5 h-3.5 text-neutral-400" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+</svg>
+<span>Velza HQ</span>
+<svg class="w-3 h-3 text-neutral-400" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<polyline points="6 9 12 15 18 9"></polyline>
+</svg>
+</button>
+<!-- Consolidated User Profile Menu -->
+<div class="flex items-center gap-2 pl-1">
+<button class="flex items-center gap-2 p-1 pl-1.5 pr-2 rounded-full bg-white/60 dark:bg-white/5 border border-white/90 dark:border-white/10 hover:bg-white/90 dark:hover:bg-white/10 transition backdrop-blur-md">
+<div class="w-6 h-6 rounded-full bg-neutral-200 dark:bg-neutral-700 text-neutral-800 dark:text-neutral-200 flex items-center justify-center text-[10px] font-bold">
+                  VH
+                </div>
+<div class="text-left hidden sm:block">
+<span class="text-xs font-medium text-neutral-800 dark:text-neutral-200">Velza HQ</span>
+<span class="font-mono text-[10px] text-neutral-400 ml-1">(HQ0001)</span>
+</div>
+<svg class="w-3 h-3 text-neutral-400" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<polyline points="6 9 12 15 18 9"></polyline>
+</svg>
+</button>
+</div>
+</div>
+</header>
+<!-- END: TopBar -->
+<!-- BEGIN: DashboardBodyContent -->
+<main class="flex-1 p-6 lg:p-8 max-w-[1520px] w-full mx-auto space-y-6">
+<!-- Page Header Block with Human Subtitle and Primary Red Action -->
+<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-2" data-purpose="page-title-header">
+<div>
+<div class="text-[11px] font-bold uppercase tracking-wider text-neutral-400 dark:text-neutral-400">VELZA HQ</div>
+<h1 class="text-3xl font-semibold tracking-tight text-neutral-900 dark:text-white mt-0.5">HQ dashboard</h1>
+<p class="text-sm text-neutral-500 dark:text-neutral-300 mt-1 max-w-3xl">
+                Showing synced data. Packs are flagged as not received after 3 days. Updates automatically every 15 seconds.
+              </p>
+</div>
+<div class="flex items-center gap-3 shrink-0">
+<span class="text-xs text-neutral-500 dark:text-neutral-400 font-mono hidden md:inline">Last updated: Just now</span>
+<!-- Reserved Red Action Button -->
+<button class="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-velza-red hover:bg-velza-red-dark text-white font-medium text-sm shadow-md shadow-red-500/20 transition active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-velza-red/30">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<path d="M23 4v6h-6"></path>
+<path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+</svg>
+<span>Refresh</span>
+</button>
+</div>
+</div>
+<!-- BEGIN: Row1KPIs -->
+<!-- 5 Metric Cards on Responsive 12-Column Grid -->
+<section class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4" data-purpose="kpi-metrics-row">
+<!-- Card 1: Batches -->
+<div class="frosted-card rounded-apple p-5 flex flex-col justify-between transition-all hover:translate-y-[-2px]">
+<div class="flex items-center justify-between">
+<span class="text-xs font-semibold text-neutral-500 dark:text-neutral-400">Batches</span>
+<div class="w-8 h-8 rounded-squircle bg-neutral-900/5 dark:bg-white/10 flex items-center justify-center text-neutral-700 dark:text-neutral-300">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<rect height="14" rx="2" width="20" x="2" y="7"></rect>
+<path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
+</svg>
+</div>
+</div>
+<div class="mt-4">
+<div class="text-3xl lg:text-4xl font-bold tracking-tight text-neutral-900 dark:text-white numeral-tabular">2</div>
+<div class="mt-2 text-[11px] text-neutral-500 dark:text-neutral-400 font-medium">Production active</div>
+</div>
+</div>
+<!-- Card 2: Lots -->
+<div class="frosted-card rounded-apple p-5 flex flex-col justify-between transition-all hover:translate-y-[-2px]">
+<div class="flex items-center justify-between">
+<span class="text-xs font-semibold text-neutral-500 dark:text-neutral-400">Lots</span>
+<div class="w-8 h-8 rounded-squircle bg-neutral-900/5 dark:bg-white/10 flex items-center justify-center text-neutral-700 dark:text-neutral-300">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+<path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
+<path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
+</svg>
+</div>
+</div>
+<div class="mt-4">
+<div class="text-3xl lg:text-4xl font-bold tracking-tight text-neutral-900 dark:text-white numeral-tabular">407</div>
+<div class="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+<span>+12% this week</span>
+</div>
+</div>
+</div>
+<!-- Card 3: Packs -->
+<div class="frosted-card rounded-apple p-5 flex flex-col justify-between transition-all hover:translate-y-[-2px]">
+<div class="flex items-center justify-between">
+<span class="text-xs font-semibold text-neutral-500 dark:text-neutral-400">Packs</span>
+<div class="w-8 h-8 rounded-squircle bg-neutral-900/5 dark:bg-white/10 flex items-center justify-center text-neutral-700 dark:text-neutral-300">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+</svg>
+</div>
+</div>
+<div class="mt-4">
+<div class="text-3xl lg:text-4xl font-bold tracking-tight text-neutral-900 dark:text-white numeral-tabular">2,134</div>
+<div class="mt-2 text-[11px] text-neutral-500 dark:text-neutral-400 font-medium">All generated units</div>
+</div>
+</div>
+<!-- Card 4: In transit -->
+<div class="frosted-card rounded-apple p-5 flex flex-col justify-between transition-all hover:translate-y-[-2px]">
+<div class="flex items-center justify-between">
+<span class="text-xs font-semibold text-neutral-500 dark:text-neutral-400">In transit</span>
+<div class="w-8 h-8 rounded-squircle bg-neutral-900/5 dark:bg-white/10 flex items-center justify-center text-neutral-700 dark:text-neutral-300">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<rect height="13" width="15" x="1" y="3"></rect>
+<polygon points="16 8 20 8 23 11 23 16 16 16 8"></polygon>
+<circle cx="5.5" cy="18.5" r="2.5"></circle>
+<circle cx="18.5" cy="18.5" r="2.5"></circle>
+</svg>
+</div>
+</div>
+<div class="mt-4">
+<div class="text-3xl lg:text-4xl font-bold tracking-tight text-neutral-400 dark:text-neutral-500 numeral-tabular">0</div>
+<div class="mt-2 text-[11px] text-neutral-400 dark:text-neutral-500 font-medium">No active dispatches</div>
+</div>
+</div>
+<!-- Card 5: SIGNATURE STACKED WIDGET (Alerts) with faint red-tinted gradient accent border -->
+<div class="hero-border-wrap relative frosted-card rounded-apple p-5 flex flex-col justify-between overflow-hidden col-span-2 sm:col-span-1 transition-all hover:translate-y-[-2px]">
+<!-- Top bar indicator line -->
+<div class="absolute top-0 left-0 right-0 h-1 bg-apple-success"></div>
+<div class="flex items-center justify-between">
+<span class="text-xs font-semibold text-neutral-500 dark:text-neutral-400">Alerts</span>
+<div class="w-8 h-8 rounded-squircle bg-emerald-500/10 dark:bg-emerald-500/15 text-apple-success flex items-center justify-center">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+<path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+</svg>
+</div>
+</div>
+<div class="mt-4">
+<div class="text-3xl lg:text-4xl font-bold tracking-tight text-neutral-900 dark:text-white numeral-tabular">0</div>
+<div class="mt-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20">
+<span class="w-1.5 h-1.5 rounded-full bg-apple-success"></span>
+<span>All clear · 0 incidents</span>
+</div>
+</div>
+</div>
+</section>
+<!-- END: Row1KPIs -->
+<!-- BEGIN: Row2Visualizations -->
+<!-- 12-Column Grid: 8 Cols Bar Chart + 4 Cols Donut Ring -->
+<section class="grid grid-cols-1 lg:grid-cols-12 gap-6" data-purpose="status-visualizations">
+<!-- Lots by Status Chart (8 Columns) - using dense frosted card (88-92% opacity) for high chart contrast -->
+<div class="lg:col-span-8 frosted-card-dense rounded-apple p-6 flex flex-col justify-between">
+<div class="flex items-center justify-between mb-6">
+<div class="flex items-center gap-2">
+<div class="w-7 h-7 rounded-lg bg-neutral-900/5 dark:bg-white/10 flex items-center justify-center text-neutral-600 dark:text-neutral-300">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<rect height="18" rx="2" width="18" x="3" y="3"></rect>
+<line x1="3" x2="21" y1="9" y2="9"></line>
+<line x1="9" x2="9" y1="21" y2="9"></line>
+</svg>
+</div>
+<div>
+<h3 class="text-sm font-semibold text-neutral-900 dark:text-white">Lots by status</h3>
+<p class="text-xs text-neutral-500 dark:text-neutral-400">Inventory flow distribution across workflow states</p>
+</div>
+</div>
+<span class="text-xs font-mono font-medium text-neutral-600 dark:text-neutral-300 bg-neutral-900/5 dark:bg-white/5 px-2 py-1 rounded-md border border-neutral-200/50 dark:border-white/10">Total: 407</span>
+</div>
+<!-- Bar Chart Canvas SVG / Structured Visualization -->
+<div class="h-64 w-full relative flex flex-col justify-end pt-4">
+<!-- Hairline Y-Axis Gridlines -->
+<div class="absolute inset-0 flex flex-col justify-between pointer-events-none text-[11px] font-mono text-neutral-400 dark:text-neutral-500">
+<div class="border-b border-neutral-200/60 dark:border-white/5 w-full flex justify-between pr-2"><span>800</span></div>
+<div class="border-b border-neutral-200/60 dark:border-white/5 w-full flex justify-between pr-2"><span>600</span></div>
+<div class="border-b border-neutral-200/60 dark:border-white/5 w-full flex justify-between pr-2"><span>400</span></div>
+<div class="border-b border-neutral-200/60 dark:border-white/5 w-full flex justify-between pr-2"><span>200</span></div>
+<div class="border-b border-neutral-300/80 dark:border-white/10 w-full flex justify-between pr-2"><span>0</span></div>
+</div>
+<!-- Column Bars Area -->
+<div class="h-56 z-10 grid grid-cols-4 items-end px-6 gap-6 sm:gap-12">
+<!-- Bar 1: GENERATED (407) -->
+<div class="flex flex-col items-center h-full justify-end group">
+<span class="text-xs font-mono font-semibold text-neutral-800 dark:text-neutral-100 mb-1 numeral-tabular">407</span>
+<!-- Apple-styled calm slate bar with gentle gradient -->
+<div class="w-full max-w-[56px] bg-gradient-to-t from-neutral-800 to-neutral-600 dark:from-neutral-700 dark:to-neutral-400 rounded-t-md transition-all duration-300 group-hover:brightness-110 shadow-sm" style="height: 50.8%;"></div>
+<span class="mt-2 text-xs font-medium text-neutral-700 dark:text-neutral-300">Generated</span>
+</div>
+<!-- Bar 2: PRINTED (0) -->
+<div class="flex flex-col items-center h-full justify-end group">
+<span class="text-xs font-mono text-neutral-400 dark:text-neutral-500 mb-1 numeral-tabular">0</span>
+<div class="w-full max-w-[56px] bg-neutral-200 dark:bg-neutral-800 rounded-t-sm" style="height: 3px;"></div>
+<span class="mt-2 text-xs font-medium text-neutral-400 dark:text-neutral-500">Printed</span>
+</div>
+<!-- Bar 3: DISPATCHED (0) -->
+<div class="flex flex-col items-center h-full justify-end group">
+<span class="text-xs font-mono text-neutral-400 dark:text-neutral-500 mb-1 numeral-tabular">0</span>
+<div class="w-full max-w-[56px] bg-neutral-200 dark:bg-neutral-800 rounded-t-sm" style="height: 3px;"></div>
+<span class="mt-2 text-xs font-medium text-neutral-400 dark:text-neutral-500">Dispatched</span>
+</div>
+<!-- Bar 4: RECEIVED (0) -->
+<div class="flex flex-col items-center h-full justify-end group">
+<span class="text-xs font-mono text-neutral-400 dark:text-neutral-500 mb-1 numeral-tabular">0</span>
+<div class="w-full max-w-[56px] bg-neutral-200 dark:bg-neutral-800 rounded-t-sm" style="height: 3px;"></div>
+<span class="mt-2 text-xs font-medium text-neutral-400 dark:text-neutral-500">Received</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Pack Status Mix Donut Ring (4 Columns) - dense frosted card -->
+<div class="lg:col-span-4 frosted-card-dense rounded-apple p-6 flex flex-col justify-between">
+<div class="flex items-center gap-2">
+<div class="w-7 h-7 rounded-lg bg-neutral-900/5 dark:bg-white/10 flex items-center justify-center text-neutral-600 dark:text-neutral-300">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<circle cx="12" cy="12" r="10"></circle>
+<path d="M12 2a10 10 0 0 1 10 10"></path>
+</svg>
+</div>
+<h3 class="text-sm font-semibold text-neutral-900 dark:text-white">Pack status mix</h3>
+</div>
+<!-- Center Donut Chart Graphic -->
+<div class="py-6 flex items-center justify-center relative">
+<div class="relative w-44 h-44 flex items-center justify-center">
+<svg class="w-full h-full transform -rotate-90" viewbox="0 0 100 100">
+<!-- Background Track -->
+<circle class="text-neutral-200 dark:text-neutral-800" cx="50" cy="50" fill="transparent" r="42" stroke="currentColor" stroke-width="12"></circle>
+<!-- 100% Value Solid Arc (Neutral Charcoal / Apple Slate) -->
+<circle class="text-neutral-700 dark:text-neutral-300 donut-chart-fill" cx="50" cy="50" fill="transparent" r="42" stroke="currentColor" stroke-linecap="round" stroke-width="12"></circle>
+</svg>
+<!-- Inside Callout Display -->
+<div class="absolute inset-0 flex flex-col items-center justify-center text-center">
+<span class="text-2xl font-bold tracking-tight text-neutral-900 dark:text-white numeral-tabular">2.1k</span>
+<span class="text-[10px] font-bold tracking-wider uppercase text-neutral-400 dark:text-neutral-400">PACKS</span>
+</div>
+</div>
+</div>
+<!-- Legend Item -->
+<div class="pt-4 border-t border-neutral-200/50 dark:border-white/10 flex items-center justify-between text-xs">
+<div class="flex items-center gap-2">
+<span class="w-2.5 h-2.5 rounded-sm bg-neutral-700 dark:bg-neutral-300"></span>
+<span class="font-medium text-neutral-700 dark:text-neutral-300">GENERATED</span>
+</div>
+<div class="flex items-center gap-3">
+<span class="font-mono font-medium text-neutral-900 dark:text-white numeral-tabular">2,134</span>
+<span class="font-mono text-neutral-400 dark:text-neutral-500">100%</span>
+</div>
+</div>
+</div>
+</section>
+<!-- END: Row2Visualizations -->
+<!-- BEGIN: Row3OperationalBreakdown -->
+<!-- 3 Columns: Recent alerts (compact empty state), Alerts by type (9 structured items), Counts by status -->
+<section class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" data-purpose="operational-trio">
+<!-- Col 1: Recent alerts -->
+<div class="frosted-card rounded-apple p-6 flex flex-col justify-between">
+<div class="flex items-center justify-between mb-4">
+<div class="flex items-center gap-2">
+<div class="w-7 h-7 rounded-lg bg-neutral-900/5 dark:bg-white/10 flex items-center justify-center text-neutral-600 dark:text-neutral-300">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+<path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+</svg>
+</div>
+<h3 class="text-sm font-semibold text-neutral-900 dark:text-white">Recent alerts</h3>
+</div>
+<a class="text-xs font-medium text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition" href="#">All alerts →</a>
+</div>
+<!-- Compact Calm Empty State -->
+<div class="h-44 flex flex-col items-center justify-center text-center p-4 rounded-xl bg-white/40 dark:bg-white/[0.03] border border-dashed border-neutral-300 dark:border-white/15">
+<div class="w-9 h-9 rounded-full bg-emerald-500/10 dark:bg-emerald-500/15 text-apple-success flex items-center justify-center mb-2">
+<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+<path d="M9 12l2 2 4-4"></path>
+</svg>
+</div>
+<div class="text-xs font-semibold text-neutral-800 dark:text-neutral-200">No active alerts</div>
+<div class="text-[11px] text-neutral-400 dark:text-neutral-400 max-w-[210px] mt-0.5">All scanning checkpoints and registered packs verified intact.</div>
+</div>
+</div>
+<!-- Col 2: Alerts by type -->
+<div class="frosted-card rounded-apple p-6">
+<div class="flex items-center gap-2 mb-4">
+<div class="w-7 h-7 rounded-lg bg-neutral-900/5 dark:bg-white/10 flex items-center justify-center text-neutral-600 dark:text-neutral-300">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<polygon points="12 2 2 22 22 22"></polygon>
+<line x1="12" x2="12" y1="8" y2="12"></line>
+<line x1="12" x2="12.01" y1="16" y2="16"></line>
+</svg>
+</div>
+<h3 class="text-sm font-semibold text-neutral-900 dark:text-white">Alerts by type</h3>
+</div>
+<!-- 9 Structured Rows with sentence case labels and zero counters -->
+<div class="space-y-2 text-xs">
+<div class="flex items-center justify-between py-1 border-b border-neutral-200/50 dark:border-white/5">
+<span class="text-neutral-600 dark:text-neutral-300">Not received</span>
+<span class="font-mono text-neutral-400 dark:text-neutral-500 numeral-tabular">0</span>
+</div>
+<div class="flex items-center justify-between py-1 border-b border-neutral-200/50 dark:border-white/5">
+<span class="text-neutral-600 dark:text-neutral-300">Wrong receiver</span>
+<span class="font-mono text-neutral-400 dark:text-neutral-500 numeral-tabular">0</span>
+</div>
+<div class="flex items-center justify-between py-1 border-b border-neutral-200/50 dark:border-white/5">
+<span class="text-neutral-600 dark:text-neutral-300">Unknown code</span>
+<span class="font-mono text-neutral-400 dark:text-neutral-500 numeral-tabular">0</span>
+</div>
+<div class="flex items-center justify-between py-1 border-b border-neutral-200/50 dark:border-white/5">
+<span class="text-neutral-600 dark:text-neutral-300">Duplicate receipt</span>
+<span class="font-mono text-neutral-400 dark:text-neutral-500 numeral-tabular">0</span>
+</div>
+<div class="flex items-center justify-between py-1 border-b border-neutral-200/50 dark:border-white/5">
+<span class="text-neutral-600 dark:text-neutral-300">Blocked code</span>
+<span class="font-mono text-neutral-400 dark:text-neutral-500 numeral-tabular">0</span>
+</div>
+<div class="flex items-center justify-between py-1 border-b border-neutral-200/50 dark:border-white/5">
+<span class="text-neutral-600 dark:text-neutral-300">Damaged unit</span>
+<span class="font-mono text-neutral-400 dark:text-neutral-500 numeral-tabular">0</span>
+</div>
+<div class="flex items-center justify-between py-1 border-b border-neutral-200/50 dark:border-white/5">
+<span class="text-neutral-600 dark:text-neutral-300">Suspect clone</span>
+<span class="font-mono text-neutral-400 dark:text-neutral-500 numeral-tabular">0</span>
+</div>
+<div class="flex items-center justify-between py-1 border-b border-neutral-200/50 dark:border-white/5">
+<span class="text-neutral-600 dark:text-neutral-300">Public unknown lookup</span>
+<span class="font-mono text-neutral-400 dark:text-neutral-500 numeral-tabular">0</span>
+</div>
+<div class="flex items-center justify-between py-1">
+<span class="text-neutral-600 dark:text-neutral-300">Public blocked scan</span>
+<span class="font-mono text-neutral-400 dark:text-neutral-500 numeral-tabular">0</span>
+</div>
+</div>
+</div>
+<!-- Col 3: Counts by status -->
+<div class="frosted-card rounded-apple p-6 flex flex-col justify-between">
+<div>
+<div class="flex items-center gap-2 mb-4">
+<div class="w-7 h-7 rounded-lg bg-neutral-900/5 dark:bg-white/10 flex items-center justify-center text-neutral-600 dark:text-neutral-300">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<line x1="8" x2="21" y1="6" y2="6"></line>
+<line x1="8" x2="21" y1="12" y2="12"></line>
+<line x1="8" x2="21" y1="18" y2="18"></line>
+<line x1="3" x2="3.01" y1="6" y2="6"></line>
+<line x1="3" x2="3.01" y1="12" y2="12"></line>
+<line x1="3" x2="3.01" y1="18" y2="18"></line>
+</svg>
+</div>
+<h3 class="text-sm font-semibold text-neutral-900 dark:text-white">Counts by status</h3>
+</div>
+<!-- Structured Status Table -->
+<table class="w-full text-left text-xs mb-4">
+<thead>
+<tr class="text-neutral-400 dark:text-neutral-400 border-b border-neutral-200/50 dark:border-white/10 uppercase text-[10px] font-semibold tracking-wider">
+<th class="py-2">Status</th>
+<th class="py-2 text-right">Lots</th>
+<th class="py-2 text-right">Packs</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-neutral-200/40 dark:divide-white/5 font-medium">
+<tr>
+<td class="py-3 flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-neutral-700 dark:bg-neutral-300"></span>
+<span class="text-neutral-800 dark:text-neutral-200">GENERATED</span>
+</td>
+<td class="py-3 text-right font-mono text-neutral-900 dark:text-white numeral-tabular">407</td>
+<td class="py-3 text-right font-mono text-neutral-900 dark:text-white numeral-tabular">2,134</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- Descriptive counting logic explanation note -->
+<div class="text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-300 bg-white/40 dark:bg-white/[0.03] p-3 rounded-xl border border-neutral-200/50 dark:border-white/10">
+                Cases and trays include opened ones; loose packs are the packs of opened cases still there. Stock by location counts released stock only: recalled, damaged, and unverified units are shown apart.
+              </div>
+</div>
+</section>
+<!-- END: Row3OperationalBreakdown -->
+<!-- BEGIN: Row4LogisticsAndMovement -->
+<section class="space-y-6" data-purpose="logistics-stock-tables">
+<!-- Stock by Location Table with Warning Callout Strip - dense frosted card for AA text contrast -->
+<div class="frosted-card-dense rounded-apple overflow-hidden">
+<div class="px-6 py-4 border-b border-neutral-200/50 dark:border-white/10 flex items-center justify-between">
+<div class="flex items-center gap-2">
+<div class="w-7 h-7 rounded-lg bg-neutral-900/5 dark:bg-white/10 flex items-center justify-center text-neutral-600 dark:text-neutral-300">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
+<circle cx="12" cy="10" r="3"></circle>
+</svg>
+</div>
+<div>
+<h3 class="text-sm font-semibold text-neutral-900 dark:text-white">Stock by location</h3>
+<p class="text-xs text-neutral-500 dark:text-neutral-400">Inventory stationed across manufacture facilities and hubs</p>
+</div>
+</div>
+</div>
+<!-- Airy Table -->
+<div class="overflow-x-auto">
+<table class="w-full text-left text-xs">
+<thead class="bg-neutral-50/50 dark:bg-white/[0.02] text-[10px] uppercase font-bold tracking-wider text-neutral-400 dark:text-neutral-400 border-b border-neutral-200/50 dark:border-white/10">
+<tr>
+<th class="py-3 px-6">Tier</th>
+<th class="py-3 px-4">Partner</th>
+<th class="py-3 px-4 text-right">Cases</th>
+<th class="py-3 px-4 text-right">Trays</th>
+<th class="py-3 px-4 text-right">Loose Packs</th>
+<th class="py-3 px-4 text-right">Damaged</th>
+<th class="py-3 px-6 text-right">Recalled</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-neutral-200/40 dark:divide-white/5 font-medium">
+<tr class="hover:bg-white/40 dark:hover:bg-white/[0.04] transition">
+<td class="py-4 px-6 font-semibold uppercase tracking-wider text-[11px] text-neutral-700 dark:text-neutral-300">Manufacturer</td>
+<td class="py-4 px-4 text-neutral-900 dark:text-white font-medium">vietnam</td>
+<td class="py-4 px-4 text-right font-mono text-neutral-800 dark:text-neutral-200 numeral-tabular">0</td>
+<td class="py-4 px-4 text-right font-mono text-neutral-800 dark:text-neutral-200 numeral-tabular">0</td>
+<td class="py-4 px-4 text-right font-mono text-neutral-800 dark:text-neutral-200 numeral-tabular">0</td>
+<td class="py-4 px-4 text-right font-mono text-neutral-400 dark:text-neutral-500 numeral-tabular">0</td>
+<td class="py-4 px-6 text-right font-mono text-neutral-400 dark:text-neutral-500 numeral-tabular">0</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- Warning Callout Banner for unprinted lots in Vietnam -->
+<div class="m-4 p-3.5 rounded-xl bg-amber-500/10 dark:bg-amber-500/15 border border-amber-500/25 flex items-center justify-between text-xs backdrop-blur-md">
+<div class="flex items-center gap-2.5">
+<div class="w-5 h-5 rounded-full bg-apple-warning/20 text-apple-warning flex items-center justify-center shrink-0">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<circle cx="12" cy="12" r="10"></circle>
+<line x1="12" x2="12" y1="8" y2="12"></line>
+<line x1="12" x2="12.01" y1="16" y2="16"></line>
+</svg>
+</div>
+<span class="text-amber-900 dark:text-amber-200 font-medium">
+                    407 lot(s) not printed yet in Vietnam facility.
+                  </span>
+</div>
+<a class="font-semibold text-amber-900 dark:text-amber-400 hover:underline shrink-0" href="#">
+                  Review lots →
+                </a>
+</div>
+</div>
+<!-- In Transit & Returns Side-by-Side or Stacked -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+<!-- In transit (0) -->
+<div class="frosted-card rounded-apple p-6 flex flex-col justify-between">
+<div>
+<div class="flex items-center justify-between mb-4">
+<div class="flex items-center gap-2">
+<div class="w-7 h-7 rounded-lg bg-neutral-900/5 dark:bg-white/10 flex items-center justify-center text-neutral-600 dark:text-neutral-300">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<rect height="13" width="15" x="1" y="3"></rect>
+<polygon points="16 8 20 8 23 11 23 16 16 16 8"></polygon>
+</svg>
+</div>
+<h3 class="text-sm font-semibold text-neutral-900 dark:text-white">In transit (0)</h3>
+</div>
+</div>
+<!-- Table Header Structure -->
+<div class="grid grid-cols-3 py-2 text-[10px] uppercase font-bold tracking-wider text-neutral-400 dark:text-neutral-400 border-b border-neutral-200/50 dark:border-white/10">
+<div>Code</div>
+<div>From → To</div>
+<div class="text-right">Age</div>
+</div>
+</div>
+<!-- Calm Empty State -->
+<div class="h-32 flex flex-col items-center justify-center text-neutral-400 dark:text-neutral-500">
+<svg class="w-8 h-8 stroke-1 text-neutral-400 dark:text-neutral-600 mb-1" fill="none" stroke="currentColor" viewbox="0 0 24 24">
+<rect height="16" rx="2" width="20" x="2" y="4"></rect>
+<path d="M7 15h10"></path>
+</svg>
+<span class="text-xs">Nothing in transit</span>
+</div>
+</div>
+<!-- Returns (0) -->
+<div class="frosted-card rounded-apple p-6 flex flex-col justify-between">
+<div>
+<div class="flex items-center justify-between mb-4">
+<div class="flex items-center gap-2">
+<div class="w-7 h-7 rounded-lg bg-neutral-900/5 dark:bg-white/10 flex items-center justify-center text-neutral-600 dark:text-neutral-300">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<polyline points="1 4 1 10 7 10"></polyline>
+<path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+</svg>
+</div>
+<h3 class="text-sm font-semibold text-neutral-900 dark:text-white">Returns (0)</h3>
+</div>
+</div>
+<!-- Table Header Columns -->
+<div class="grid grid-cols-4 py-2 text-[10px] uppercase font-bold tracking-wider text-neutral-400 dark:text-neutral-400 border-b border-neutral-200/50 dark:border-white/10">
+<div>Code / Item</div>
+<div>Batch</div>
+<div>Origin</div>
+<div class="text-right">Decision</div>
+</div>
+</div>
+<!-- Calm Empty State -->
+<div class="h-32 flex flex-col items-center justify-center text-neutral-400 dark:text-neutral-500">
+<svg class="w-8 h-8 stroke-1 text-neutral-400 dark:text-neutral-600 mb-1" fill="none" stroke="currentColor" viewbox="0 0 24 24">
+<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+</svg>
+<span class="text-xs">Nothing has been taken back</span>
+</div>
+</div>
+</div>
+</section>
+<!-- END: Row4LogisticsAndMovement -->
+</main>
+<!-- END: DashboardBodyContent -->
+</div>
+</div>
+</div>
+<!-- END: ApplicationLayoutWrapper -->
+<!-- BEGIN: InteractiveScripts -->
+<script data-purpose="theme-toggle">
+    /**
+     * Set Application Theme (Light / Dark)
+     * Matches the high-contrast Obsidian dark aesthetic with ambient mesh glows
+     */
+    function setAppTheme(theme) {
+      const htmlEl = document.documentElement;
+      const btnLight = document.getElementById('theme-btn-light');
+      const btnDark = document.getElementById('theme-btn-dark');
+
+      if (theme === 'dark') {
+        htmlEl.classList.add('dark');
+        btnDark.className = "px-2.5 py-1 rounded-md text-xs font-medium bg-neutral-700 text-white shadow-sm transition-all";
+        btnLight.className = "px-2.5 py-1 rounded-md text-xs font-medium text-neutral-400 hover:text-white transition-all";
+      } else {
+        htmlEl.classList.remove('dark');
+        btnLight.className = "px-2.5 py-1 rounded-md text-xs font-medium bg-white text-neutral-900 shadow-sm transition-all";
+        btnDark.className = "px-2.5 py-1 rounded-md text-xs font-medium text-neutral-400 hover:text-white transition-all";
+      }
+    }
+  </script>
+<!-- END: InteractiveScripts -->
+</body></html>

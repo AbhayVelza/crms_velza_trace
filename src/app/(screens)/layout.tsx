@@ -16,14 +16,14 @@ export default function ScreensLayout({ children }: LayoutProps<"/">) {
     <SessionProvider>
       <ShellProvider>
         <div className="flex min-h-screen flex-1">
-          <Suspense fallback={<div className="hidden w-64 shrink-0 border-r border-line bg-surface dark:bg-[#0c0b0b] lg:block lg:sidebar-collapsed:w-[4.75rem] print:hidden" />}>
+          <Suspense fallback={<div className="hidden w-[68px] shrink-0 border-r border-line bg-surface dark:bg-[#161618] md:block lg:w-60 lg:sidebar-collapsed:w-[68px] print:hidden" />}>
             <Sidebar />
           </Suspense>
           <div className="flex min-w-0 flex-1 flex-col">
-            <Suspense fallback={<div className="h-16 border-b border-line bg-background/80 print:hidden" />}>
+            <Suspense fallback={<div className="h-14 border-b border-line bg-background/80 print:hidden" />}>
               <AppHeader />
             </Suspense>
-            <main className="mx-auto w-full max-w-app flex-1 px-4 py-6 sm:px-6 sm:py-8 lg:px-8 xl:px-9">
+            <main className="mx-auto w-full max-w-app flex-1 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
               <Suspense fallback={<Loading />}>
                 <RoleGate>
                   <PageFade>{children}</PageFade>

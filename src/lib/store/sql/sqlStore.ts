@@ -2,6 +2,7 @@
 // (schema.ts): lots and packs are rows of the one `codes` table, movements, scans and reprints are
 // rows of `code_history`. Field names stay the app's; column names are the database's.
 
+import { after } from "next/server";
 import { LOT_NUMBER_MAX } from "@/lib/core/codes";
 import { DEFAULT_SETTINGS, type Container, type ContainerStatus, type ItemStatus, type LotType, type Movement, type Scan, type Settings } from "@/lib/core/types";
 import { IntegrityError, NotFoundError, type AppendOnlyRepo, type DbSnapshot, type NewMovement, type NewScan, type Repo, type Row, type StockSummaryRow, type Store, type StoreTx, type TransactionOptions, type Where } from "../Store";
@@ -651,15 +652,25 @@ export class SqlStore implements Store {
    * transaction or a stock summary read; its own short statement outside every transaction, not awaited by the
    * request. stock_summary_rollup() returns at once if another rollup (another instance, the jobs container) holds
    * its lock. Counts are exact either way, so a failure is only logged.
+   *
+   * Inside a request the run is handed to Next's after(), so a serverless platform (Vercel) keeps the function alive
+   * until it finishes instead of freezing it once the response is sent; the response still doesn't wait for it.
+   * Outside a request (scripts, tests, the jobs container) after() throws and the run simply goes on by itself.
    */
   private maybeRollupStock(d: SqlDriver): void {
     const now = Date.now();
     if (now - this.lastStockRollup < this.stockRollupIntervalMs) return;
     this.lastStockRollup = now;
-    this.stockRollupRun = this.rollupStock(d).then(
+    const run = this.rollupStock(d).then(
       () => undefined,
       (e) => console.error("[velza] Stock summary rollup failed (counts stay exact; it is tried again later):", (e as Error).message),
     );
+    this.stockRollupRun = run;
+    try {
+      after(run);
+    } catch {
+      // Not in a request scope: nothing to keep alive.
+    }
   }
 
   /** Resolves once the last in-app stock rollup started by this store has finished (tests; never rejects). */

@@ -3,6 +3,14 @@
 // or delaying the request. Embedded PostgreSQL (PGlite); the same SQL runs on a real server.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+// next/server's after() throws outside a request scope (as in scripts and these tests); one test plays a request.
+const nextAfter = vi.hoisted(() => ({
+  fn: (() => {
+    throw new Error("`after` was called outside a request scope");
+  }) as (task: unknown) => void,
+}));
+vi.mock("next/server", async (orig) => ({ ...(await orig<typeof import("next/server")>()), after: (task: unknown) => nextAfter.fn(task) }));
 import type { Batch, Lot, Pack, Partner, PrintOrder } from "@/lib/core/types";
 import { buildBaseSeed } from "../seedData";
 import type { DbSnapshot } from "../Store";
@@ -198,6 +206,38 @@ describe("in-app stock rollup", () => {
     // The next transaction works normally too (the failure did not spoil the single embedded connection).
     await expect(store.transaction((tx) => tx.packs.createMany(packsOf(l)))).resolves.toBeUndefined();
     expect(await d.query(current)).toEqual(await d.query(recount));
+  });
+
+  it("inside a request the rollup is handed to after(), and the request still doesn't wait for it", async () => {
+    const { store, d } = await open(Number.POSITIVE_INFINITY);
+    await manyWrites(store, 3);
+    const tasks: unknown[] = [];
+    nextAfter.fn = (task) => void tasks.push(task);
+    // Hold the rollup until the test lets it go: the caller's call must come back before that.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const realAlone = d.alone.bind(d);
+    vi.spyOn(d, "alone").mockImplementation(async (sql, params) => {
+      await gate;
+      return realAlone(sql, params);
+    });
+    try {
+      const reading = new SqlStore(async () => d, null, { stockRollupIntervalMs: 0 });
+      const units = (await reading.stockSummary()).reduce((s, r) => s + r.units, 0);
+      expect(units).toBeGreaterThan(0);
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0]).toBeInstanceOf(Promise);
+      expect(await deltaRows(d)).toBeGreaterThan(0); // not folded yet: the read did not wait
+      release();
+      await tasks[0];
+      await reading.stockRollupIdle();
+      expect(await deltaRows(d)).toBe(0);
+      expect(await d.query(current)).toEqual(await d.query(recount));
+    } finally {
+      nextAfter.fn = () => {
+        throw new Error("`after` was called outside a request scope");
+      };
+    }
   });
 
   it("stock_summary_rollup() never waits for another rollup: it takes the lock with pg_try_advisory_xact_lock", async () => {

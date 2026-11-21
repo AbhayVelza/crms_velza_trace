@@ -16,7 +16,7 @@
 #   app.env      the app: DATABASE_URL (velza_app role), PG_POOL_MAX, ...
 #   jobs.env     the jobs container: DATABASE_URL (velza_app role), its heartbeat
 #   backup.env   the backup container: read-only database URL, bucket and its keys, its heartbeat
-#   migrate.env  the one-off migrate and roles steps only; deleted from the server after a successful deploy
+#   migrate.env  the one-off migrate and roles steps only; deleted from the server whenever the deploy script exits
 
 name: velza
 

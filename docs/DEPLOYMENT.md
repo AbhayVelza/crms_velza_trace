@@ -52,10 +52,10 @@ repo or in GitHub except the SSH deploy key.
 | `migrate.env` | only the one-off migrate and roles steps of `deploy/remote-deploy.sh` | `MIGRATE_DATABASE_URL` (owner), `APP_DB_PASSWORD`, `READONLY_DB_PASSWORD`, `VELZA_ADMIN_PASSWORD` / `VELZA_HQ_PASSWORD` (the first-start seed runs inside `db:migrate`) |
 
 `DEPLOY_HOST` is used by the workflow only and is written to no file. `CLIENT_IP_HEADER` reaches the app through
-`compose.yml`'s `environment:`. Every file is `chmod 600`; `migrate.env` is deleted from the server at the end of a
-successful deploy (each deploy copies it again), and its values reach the one-off containers as `-e NAME` from the
-script's environment, never on a command line. **A new parameter must first be added to `files_for`**: a parameter
-the mapping doesn't know stops the deploy with an error naming it. The CI smoke test checks that `app` and `jobs` see
+`compose.yml`'s `environment:`. Every file is `chmod 600`; `migrate.env` is deleted from the server whenever the
+deploy script exits, after a success or a failure (each deploy copies it again), and its values reach the one-off
+containers as `-e NAME` from the script's environment, never on a command line. **A new parameter must first be
+added to `files_for`**: a parameter the mapping doesn't know stops the deploy with an error naming it. The CI smoke test checks that `app` and `jobs` see
 none of the migrate or bucket secrets.
 
 The managed database is reached over verified TLS: URLs end with
@@ -142,8 +142,8 @@ Do these in order. Nothing in AWS is created until you run `terraform apply`.
   newer schema: the app never moves the schema backwards, and migrations of an older release are skipped
   automatically (since schema v10, triggers keep `container_items` right for a release that doesn't know it).
 - **What a deploy does on the server** (`deploy/remote-deploy.sh`): pull images → (staging) start its database →
-  migrate as the owner → apply roles and grants → start the new containers and wait until healthy → delete
-  `migrate.env`, prune old images.
+  migrate as the owner → apply roles and grants → start the new containers and wait until healthy → prune
+  old images. `migrate.env` is deleted when the script exits, whatever the outcome.
   If any step fails, the running containers keep running. The workflow then checks `https://<domain>/api/health`.
 - **Health check:** `GET /api/health` (no sign-in) answers `{ "ok": true }` when the app reaches its database (a
   `SELECT 1`; the data file for the JSON store), else 503 `{ "ok": false }` within 3 s; nothing else is in the answer,

@@ -79,8 +79,8 @@ variable "ssh_allowed_cidrs" {
     everyone: login is by key only (Lightsail's Ubuntu image disables passwords) and fail2ban bans brute force.
     To narrow it, deploy from a self-hosted runner with a fixed address and list only that and your office/VPN.
   EOT
-  type    = list(string)
-  default = ["0.0.0.0/0"]
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
 }
 
 variable "client_ip_header" {

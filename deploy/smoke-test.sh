@@ -2,7 +2,7 @@
 # CI smoke test of the whole Docker stack, using the same deploy script as the servers (deploy/remote-deploy.sh):
 # builds nothing itself, expects images velza-app:ci, velza-ops:ci and velza-backup:ci, and runs a staging-style
 # stack (database in a container) with Caddy serving https://localhost from its internal certificate authority.
-# Checks: the deploy script completes, HTTPS answers, sign-in works, each container sees only its own secrets
+# Checks: the deploy script completes, HTTPS answers and /api/health reports the database reachable, sign-in works, each container sees only its own secrets
 # (the app has no owner URL or bucket keys) and migrate.env is gone after the deploy, the app connects as the
 # restricted velza_app role, the stock summary matches a recount, and a database dump can be made with the backup image.
 set -euo pipefail
@@ -55,8 +55,9 @@ echo "== deploy (same script as the servers)"
 SKIP_PULL=1 DEPLOY_DIR="$DIR" DEPLOY_TAG=ci bash "$DIR/remote-deploy.sh"
 cd "$DIR"
 
-echo "== HTTPS answers"
-curl -fsS -k -o /dev/null --retry 15 --retry-delay 2 --retry-all-errors https://localhost/login
+echo "== HTTPS answers and the app reaches its database (/api/health)"
+curl -fsS -k --retry 15 --retry-delay 2 --retry-all-errors https://localhost/api/health | grep -q '"ok":true'
+curl -fsS -k -o /dev/null https://localhost/login
 
 echo "== each container sees only its own secrets"
 [ ! -e migrate.env ] || { echo "migrate.env is still on the server after the deploy" >&2; exit 1; }

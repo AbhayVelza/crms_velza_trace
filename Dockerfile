@@ -59,6 +59,7 @@ COPY --from=build --chown=node:node /app/public ./public
 RUN mkdir -p /data/uploads && chown node:node /data/uploads
 USER node
 EXPOSE 3000
+# /api/health answers 200 only when this process reaches its database (503 otherwise), not just when Node is up.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:3000/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 CMD ["node", "server.js"]

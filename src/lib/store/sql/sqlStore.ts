@@ -766,6 +766,10 @@ export class SqlStore implements Store {
     await this.load(d, data, await schemaVersion(d));
   }
 
+  async ping(): Promise<void> {
+    await (await this.driver()).query(`SELECT 1`);
+  }
+
   async snapshot(): Promise<DbSnapshot> {
     // A database with an older schema is read as it is (the chain conversion reads a v1 database,
     // which the v2 schema refuses to upgrade until its data is converted).

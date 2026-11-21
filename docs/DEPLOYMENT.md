@@ -113,7 +113,7 @@ Do these in order. Nothing in AWS is created until you run `terraform apply`.
    - Settings → Branches: protect `main`, require the CI checks and one review.
 8. **Monitoring** (by hand): Lightsail console → each server and the database → *Metrics* → alarms for CPU > 80%,
    status-check failures, database free storage < 20 GB, with email/SMS contacts. Better Stack (free) uptime checks on
-   both `/login` URLs, and two heartbeats whose URLs go into `HEARTBEAT_BACKUP_URL` and `HEARTBEAT_STOCK_CHECK_URL`
+   both `/api/health` URLs (they fail when the database is unreachable, not only when the server is down), and two heartbeats whose URLs go into `HEARTBEAT_BACKUP_URL` and `HEARTBEAT_STOCK_CHECK_URL`
    (`aws ssm put-parameter --overwrite --name /velza/prod/HEARTBEAT_BACKUP_URL --value <url>`).
 9. **Data from Neon** (production, once, in a quiet hour, **before the first production deploy**, while the new
    database is still empty; the database is private, so this runs on the prod server):
@@ -142,7 +142,12 @@ Do these in order. Nothing in AWS is created until you run `terraform apply`.
 - **What a deploy does on the server** (`deploy/remote-deploy.sh`): pull images → (staging) start its database →
   migrate as the owner → apply roles and grants → start the new containers and wait until healthy → delete
   `migrate.env`, prune old images.
-  If any step fails, the running containers keep running. The workflow then checks `https://<domain>/login`.
+  If any step fails, the running containers keep running. The workflow then checks `https://<domain>/api/health`.
+- **Health check:** `GET /api/health` (no sign-in) answers `{ "ok": true }` when the app reaches its database (a
+  `SELECT 1`; the data file for the JSON store), else 503 `{ "ok": false }` within 3 s; nothing else is in the answer,
+  and the reason goes to the app's log. The Docker `HEALTHCHECK`, the deploy workflow's last step and the smoke test use
+  it, so a release that can't reach its database fails the deploy. It counts against the per-client rate limit like any
+  request (1,200 a minute by default); an uptime check every 30 s is far below that.
 - **Schema rule:** migrations run while the previous release is still serving, so every change must work with the
   previous release (add first, remove in a later release). CI's *schema upgrade = fresh install* job checks upgrades.
 - **Schema v10** adds foreign keys (validated during the migration) and the `container_items` table. Before
@@ -186,7 +191,7 @@ Useful commands on a server (`cd /srv/velza`): `docker compose ps`, `docker comp
 | --- | --- |
 | Typecheck, lint, test, build | the app (tests on the JSON store and embedded PostgreSQL) |
 | Schema upgrade = fresh install | a database from the previous commit, upgraded, equals a fresh install; stock summary = recount |
-| Docker images + stack smoke test | builds the three images; runs the real deploy script; HTTPS, sign-in, each container sees only its own secrets and `migrate.env` is gone, the app on the restricted `velza_app` role, stock check, backup dump (`deploy/smoke-test.sh`) |
+| Docker images + stack smoke test | builds the three images; runs the real deploy script; HTTPS and `/api/health`, sign-in, each container sees only its own secrets and `migrate.env` is gone, the app on the restricted `velza_app` role, stock check, backup dump (`deploy/smoke-test.sh`) |
 | Terraform fmt + validate | every Terraform folder is valid (formatting is reported as a warning) |
 
 ## 6. Live stock summary (schema v9)

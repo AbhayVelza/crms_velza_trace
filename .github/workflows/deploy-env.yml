@@ -113,12 +113,13 @@ jobs:
           printf '%s\n' "$GHCR_TOKEN" \
             | ssh target "GHCR_USER='${{ github.actor }}' DEPLOY_TAG='${TAG}' bash /srv/velza/remote-deploy.sh"
 
-      - name: Check the site answers over HTTPS
+      - name: Check the site answers over HTTPS and reaches its database
         env:
           DOMAIN: ${{ steps.env.outputs.domain }}
         run: |
           # The first deploy waits for DNS and the Let's Encrypt certificate, so allow a few minutes.
-          curl -fsS -o /dev/null --retry 20 --retry-delay 10 --retry-all-errors "https://${DOMAIN}/login"
+          # /api/health is 200 { "ok": true } only when the app reaches its database (503 otherwise).
+          curl -fsS --retry 20 --retry-delay 10 --retry-all-errors "https://${DOMAIN}/api/health" | grep -q '"ok":true'
           echo "### Deployed \`${{ inputs.tag }}\` to ${{ inputs.environment }} — https://${DOMAIN}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Remove secrets from the runner

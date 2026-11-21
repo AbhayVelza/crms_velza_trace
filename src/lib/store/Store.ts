@@ -174,6 +174,8 @@ export interface Store extends StoreTx {
   reset(data: DbSnapshot): Promise<void>;
   /** Every row of every table (backups, clear-activity, the JSON → database import). */
   snapshot(): Promise<DbSnapshot>;
+  /** Cheapest proof the storage answers (GET /api/health): `SELECT 1` on the database, or the data file read. Throws if not. */
+  ping(): Promise<void>;
 }
 
 /**

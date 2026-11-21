@@ -7,7 +7,7 @@
 // Two processes sharing one file used to hand out the same lot codes (audit, 4 Nov 2026); production
 // must use PostgreSQL.
 
-import { closeSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync, promises as fs } from "node:fs";
+import { closeSync, constants as fsConstants, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { LOT_NUMBER_MAX } from "@/lib/core/codes";
@@ -514,6 +514,11 @@ export class JsonStore implements Store {
 
   async reset(data: DbSnapshot): Promise<void> {
     await this.mutex.run(() => this.writeDb(normalize(clone(data))));
+  }
+
+  async ping(): Promise<void> {
+    await this.readDb();
+    await fs.access(this.filePath, fsConstants.R_OK);
   }
 
   async snapshot(): Promise<DbSnapshot> {

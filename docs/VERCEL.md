@@ -18,7 +18,8 @@ These steps are done once, by hand, in the Vercel, Neon and GitHub dashboards. N
 | Neon has no Mumbai region; the closest is Singapore (`aws-ap-southeast-1`). Every request makes several database round trips. | The functions run next to the database, in Vercel's Singapore region `sin1` (`vercel.json`). One Mumbai ↔ Singapore hop per request (about 60 ms) is cheaper than one per query. |
 | Damage photos are saved as files (`src/lib/services/damagePhotos.ts`). | On Vercel they go to `/tmp/velza-uploads` (the default when `VERCEL` is set), which is temporary and not shared between function instances. See [Known limits](#known-limits). |
 | The Docker image uses `output: "standalone"`. | `next.config.ts` turns it off when `VERCEL` is set (during Vercel builds); Vercel packages the app itself. |
-| The app falls back to the JSON file when no database is set. | On Vercel it refuses to start instead, with a message pointing here, so a missing Neon connection is obvious. |
+| The app falls back to the JSON file when no database is set. | On Vercel it refuses to start instead, with a message pointing here, so a missing Neon connection is obvious. `STORE=pglite` (embedded PostgreSQL) is refused there too: each instance would have its own empty database. |
+| The live stock summary's `stock_deltas` table only shrinks when the deltas are folded into `stock_summary`. Docker / Lightsail has a `jobs` container for that; Vercel runs nothing between requests. | The app folds them by itself, at most once a minute per instance, after a successful write and when the summary is read, in its own short statement that never delays or fails the request. `stock_summary_rollup()` returns at once if another instance is already folding. No Vercel cron is needed. |
 
 ## 1. Vercel project
 
@@ -117,6 +118,8 @@ If a PR bumps `SCHEMA_VERSION` in `src/lib/store/sql/schema.ts`:
 
 - Its preview upgrades its own Neon branch on the first request (harmless; a request may fail once if two
   functions start at the same moment).
+- An upgrade that adds checks on existing rows (schema v10's foreign keys) stops, naming each table and count, if a
+  row points at a missing row, and changes nothing. Run `npm run db:migrate` on a preview branch first to see it.
 - **Before merging**, run `npm run db:migrate` against the production direct address as in step 4. Upgrades are
   additive, so the old code keeps running on the new schema until the merge deploys the new code. Otherwise
   every new function instance tries the upgrade on its own at the same time.
@@ -154,9 +157,9 @@ These are fine for a test deployment, but each needs fixing before Vercel could 
 - **Rate limits and the sign-in lockout are per function instance.** They are kept in memory
   (`src/lib/security.ts`, `src/lib/services/auth.ts`), so with several instances the effective limits are higher,
   and they reset when an instance stops. Vercel's firewall (WAF) rate limiting can cover this.
-- **Live stock summary upkeep.** Counts are exact without it, but `stock_deltas` grows until it is folded. Now and
-  then run `npm run db:stock -- rollup` (and `-- check`) from a laptop with the direct Neon address in
-  `DATABASE_URL`, as in step 4. Vercel Hobby crons run at most once a day, so there is no per-minute job here.
+- **Live stock summary check.** The app folds `stock_deltas` itself (see the table at the top), so the table stays
+  small. Nothing runs the daily `npm run db:stock -- check` here: run it now and then from a laptop with the direct
+  Neon address in `DATABASE_URL`, as in step 4, and `-- rebuild` if it reports a difference.
 - **Connections.** Each function instance keeps up to `PG_POOL_MAX` (default 3) connections to Neon's pooler, and
   an instance that allocates codes also up to `PG_LOCK_POOL_MAX` (default 2) direct connections. Only the direct ones
   count against the compute's connection limit. If Vercel logs still show `too many connections` /

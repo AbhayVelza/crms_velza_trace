@@ -50,6 +50,12 @@ start only), `BACKUP_BUCKET`, `AWS_DEFAULT_REGION`, `AWS_ACCESS_KEY_ID` / `AWS_S
 The managed database is reached over verified TLS: URLs end with
 `?sslmode=verify-full&sslrootcert=/etc/ssl/aws/rds-global-bundle.pem` (the AWS certificate bundle is in every image).
 
+**Connection pools.** Here the app talks to the database directly, so leave `DATABASE_URL_UNPOOLED` and
+`PG_LOCK_POOL_MAX` unset. Every query, and code allocation for print orders (which holds a session-level advisory
+lock), then uses `DATABASE_URL` through one pool of `PG_POOL_MAX` connections (default 10). The second, small pool on
+`DATABASE_URL_UNPOOLED` exists for Neon on Vercel, where `DATABASE_URL` is a transaction-mode pooler
+(docs/VERCEL.md).
+
 ## 2. One-time setup
 
 Do these in order. Nothing in AWS is created until you run `terraform apply`.
@@ -118,12 +124,18 @@ Do these in order. Nothing in AWS is created until you run `terraform apply`.
   If any step fails, the running containers keep running. The workflow then checks `https://<domain>/login`.
 - **Schema rule:** migrations run while the previous release is still serving, so every change must work with the
   previous release (add first, remove in a later release). CI's *schema upgrade = fresh install* job checks upgrades.
+- **Schema v10** adds foreign keys (validated during the migration) and the `container_items` table. Before
+  validating, the migration counts rows that point at missing rows (print orders or containers with an unknown partner,
+  codes with an unknown print order, pool codes with an unknown device, container lot codes that are not codes). If
+  there are any, it stops with a message naming each table and count and changes nothing; the deploy then fails at the
+  migrate step and the running release keeps serving. Fix or remove those rows, then deploy again. `velza_app` gets
+  the new table through the default privileges in `db/roles.sql`.
 
 ## 4. Scheduled jobs and backups
 
 | Container | What | When |
 | --- | --- | --- |
-| `jobs` | `npm run db:stock -- rollup` | every minute |
+| `jobs` | `npm run db:stock -- rollup` (retries for up to 5 s while another rollup holds the lock) | every minute |
 | `jobs` | `npm run db:stock -- check` (+ heartbeat) | daily 21:00 UTC (02:30 IST) |
 | `backup` | `pg_dump` → `s3://<bucket>/db/daily/`, monthly copy on the 1st; damage photos → `uploads/`; prune (14 days / 12 months); heartbeat | daily 20:00 UTC (01:30 IST) |
 
@@ -148,7 +160,15 @@ Useful commands on a server (`cd /srv/velza`): `docker compose ps`, `docker comp
 ## 6. Live stock summary (schema v9)
 
 Triggers on `codes` append signed counts to `stock_deltas`; `stock_current` (summary + deltas) is always exact and
-reads a few hundred rows whatever the number of codes. Measured on PostgreSQL 16 with 5 lakh codes: 0.3 ms after a
+reads a few hundred rows whatever the number of codes. The HQ dashboard reads it (plus opened lots and their packs,
+units in transit, recalled and damaged units) instead of every code.
+
+**Folding the deltas.** The app folds `stock_deltas` into `stock_summary` by itself, at most once a minute per app
+process, after a successful write and when the summary is read. It runs as its own short statement outside the
+request's transaction and is not awaited, and an error is only logged. `stock_summary_rollup()` takes its lock with
+`pg_try_advisory_xact_lock` and returns 0 at once if another rollup (another process, or the jobs container) holds it,
+so app processes and the jobs container never wait for each other. The jobs container's every-minute rollup stays as
+the backstop and keeps the daily check. Measured on PostgreSQL 16 with 5 lakh codes: 0.3 ms after a
 rollup (1.6 ms with 4,000 deltas waiting) against 171 ms for a full `GROUP BY`; about 10% extra on bulk inserts and
 0.04 ms per single-code scan. `npm run db:stock -- rebuild` recounts it (blocks writes to `codes` while it runs:
 outside shift peaks).

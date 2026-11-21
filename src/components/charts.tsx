@@ -4,7 +4,7 @@
 // comes from the caller's API data. Each chart has a text equivalent (sr-only table / legend) for screen readers.
 
 import { motion } from "motion/react";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { EASE_OUT } from "./motion";
 import { cx } from "./ui";
 
@@ -105,42 +105,68 @@ export function BarChart({ data, height = 256, label }: { data: Datum[]; height?
   );
 }
 
-/** Donut with a centre total and a legend (count and share). Segments draw in when first shown. */
+const DONUT_DEFAULT = "var(--chart-ink)";
+
+/**
+ * Donut with a centre total and a legend (count and share). The ring sweeps in when first shown.
+ *
+ * Each segment is a static dash (its arc) on the circle. The entrance animates a mask ring, never the segments:
+ * Motion's `pathLength` rewrites stroke-dasharray/-offset, which would turn every segment into one full ring.
+ */
 export function DonutChart({ data, label, centerLabel = "Total" }: { data: Datum[]; label: string; centerLabel?: string }) {
   const total = data.reduce((a, d) => a + d.value, 0);
   const r = 42;
   const c = 2 * Math.PI * r;
-  let offset = 0;
+  const maskId = `donut-${useId().replace(/[^\w-]/g, "")}`;
+  const parts = data.filter((d) => d.value > 0).length;
+  // Each segment's arc length and where it starts on the circle.
+  const arcs = data.map((d, i) => ({
+    d,
+    len: total ? (d.value / total) * c : 0,
+    start: total ? (data.slice(0, i).reduce((a, p) => a + p.value, 0) / total) * c : 0,
+  }));
   return (
     <figure className="flex min-w-0 flex-col items-center gap-6">
       <div className="relative mt-2 h-44 w-44 shrink-0">
-        <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90" aria-hidden="true">
+        <motion.svg viewBox="0 0 100 100" className="h-full w-full -rotate-90" aria-hidden="true" initial="hidden" whileInView="show" viewport={{ once: true }}>
+          <defs>
+            <mask id={maskId} maskUnits="userSpaceOnUse" x="0" y="0" width="100" height="100">
+              <motion.circle
+                className="chart-draw"
+                cx="50"
+                cy="50"
+                r={r}
+                fill="none"
+                stroke="#fff"
+                strokeWidth="13"
+                variants={{ hidden: { pathLength: 0 }, show: { pathLength: 1 } }}
+                transition={{ duration: 0.9, delay: 0.1, ease: EASE_OUT }}
+              />
+            </mask>
+          </defs>
           <circle cx="50" cy="50" r={r} fill="none" stroke="var(--chart-track)" strokeWidth="11" />
-          {total > 0 &&
-            data.map((d, i) => {
-              const len = (d.value / total) * c;
-              const seg = (
-                <motion.circle
-                  key={d.label}
-                  cx="50"
-                  cy="50"
-                  r={r}
-                  fill="none"
-                  stroke={d.color ?? "var(--primary)"}
-                  strokeWidth="11"
-                  strokeDasharray={`${len} ${c - len}`}
-                  strokeDashoffset={-offset}
-                  initial={{ opacity: 0, pathLength: 0 }}
-                  whileInView={{ opacity: 1, pathLength: 1 }}
-                  viewport={{ once: true }}
-                  transition={{ duration: 0.8, delay: 0.1 + i * 0.08, ease: EASE_OUT }}
-                  style={{ strokeDasharray: `${Math.max(len - 0.8, 0)} ${c}` }}
-                />
-              );
-              offset += len;
-              return seg;
-            })}
-        </svg>
+          {total > 0 && (
+            <g mask={`url(#${maskId})`}>
+              {arcs.map(({ d, len, start }) => {
+                // A hairline gap between neighbouring segments; a lone segment is a closed ring.
+                const dash = parts > 1 ? Math.max(len - 0.8, 0) : len;
+                return (
+                  <circle
+                    key={d.label}
+                    cx="50"
+                    cy="50"
+                    r={r}
+                    fill="none"
+                    stroke={d.color ?? DONUT_DEFAULT}
+                    strokeWidth="11"
+                    strokeDasharray={`${dash} ${c - dash}`}
+                    strokeDashoffset={-start}
+                  />
+                );
+              })}
+            </g>
+          )}
+        </motion.svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
           <span className="text-2xl font-bold leading-none tracking-[-0.02em] text-foreground tabular">{compact(total)}</span>
           <span className="mt-1.5 text-[0.625rem] font-bold uppercase tracking-[0.08em] text-subtle-foreground">{centerLabel}</span>
@@ -149,7 +175,7 @@ export function DonutChart({ data, label, centerLabel = "Total" }: { data: Datum
       <ul className="w-full min-w-0 divide-y divide-line border-t border-line text-xs">
         {data.map((d) => (
           <li key={d.label} className="flex items-center gap-2.5 py-2.5 first:pt-4">
-            <span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-[3px]" style={{ background: d.color ?? "var(--chart-ink)" }} />
+            <span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-[3px]" style={{ background: d.color ?? DONUT_DEFAULT }} />
             <span className="min-w-0 flex-1 truncate font-medium text-foreground-2">{d.label}</span>
             <span className="font-mono font-medium text-foreground tabular">{fmt(d.value)}</span>
             <span className="w-11 text-right font-mono text-subtle-foreground tabular">{total ? `${Math.round((d.value / total) * 100)}%` : "0%"}</span>

@@ -376,6 +376,10 @@ details[open] > :not(summary) {
   main [style*="transform"] {
     transform: none !important;
   }
+  /* SVG draw-in rings (Motion pathLength writes the dash as an attribute; CSS outranks it). */
+  .chart-draw {
+    stroke-dasharray: none !important;
+  }
 }
 
 /* Paper is always white: print in the light theme whatever is on screen. */

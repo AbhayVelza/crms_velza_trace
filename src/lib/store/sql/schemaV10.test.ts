@@ -1,6 +1,7 @@
 // Schema v10 upgrade on embedded PostgreSQL (the same SQL runs on a real server): a v9 database gains the foreign keys
 // (validated) and container_items (filled from containers.lot_codes); rows pointing at missing rows stop the upgrade
-// with a message naming them and change nothing; data loaded by a reset / import is checked the same way.
+// with a message naming them and change nothing; data loaded by a reset / import is checked the same way; triggers keep
+// container_items equal to lot_codes whoever writes containers (a rolled-back v9 release writes only lot_codes).
 
 import { afterEach, describe, expect, it } from "vitest";
 import type { BatchCodePoolEntry, Container, Device, Lot, Partner, PrintOrder } from "@/lib/core/types";
@@ -121,9 +122,13 @@ const data = (): DbSnapshot => ({
 
 const FKS = ["print_orders_manufacturer_id_fkey", "containers_manufacturer_id_fkey", "containers_to_partner_id_fkey", "codes_print_order_id_fkey", "batch_code_pool_device_id_fkey"];
 
-/** Turn a v10 database back into what v9 had: no container_items, none of the five foreign keys, version 9. */
+/** Turn a v10 database back into what v9 had: no container_items or its triggers, none of the five foreign keys, version 9. */
 async function makeV9(d: SqlDriver) {
   await d.exec(`
+    DROP TRIGGER container_items_follow ON containers;
+    DROP TRIGGER container_items_delete ON containers;
+    DROP FUNCTION container_items_follow_lot_codes();
+    DROP FUNCTION container_items_on_container_delete();
     DROP TABLE container_items;
     ALTER TABLE print_orders DROP CONSTRAINT print_orders_manufacturer_id_fkey;
     ALTER TABLE containers DROP CONSTRAINT containers_manufacturer_id_fkey, DROP CONSTRAINT containers_to_partner_id_fkey;
@@ -221,6 +226,40 @@ describe("schema v10", () => {
     // History is permanent: a device with batch codes issued to it can't be deleted underneath them.
     await expect(store.devices.delete("dev-1")).rejects.toThrow(/batch_code_pool_device_id_fkey/);
     expect(await store.devices.get("dev-1")).not.toBeNull();
+  });
+
+  it("container_items follows containers written with plain SQL, as a rolled-back v9 release would (no app code)", async () => {
+    const { d } = await openWith(data());
+    const items = async () =>
+      (await d.query<{ container_id: string; lot_code: string; fresh: boolean; loaded_by: string | null }>(
+        `SELECT container_id, lot_code, loaded_at > now() - interval '1 hour' AS fresh, loaded_by FROM container_items ORDER BY container_id, lot_code`,
+      )).map((r) => `${r.container_id}|${r.lot_code}|${r.fresh ? "now" : "opened"}|${r.loaded_by}`);
+    const cols = `container_id, container_code, manufacturer_id, status, lot_codes, to_partner_id, created_at, created_by`;
+
+    // A new container: its lots count as loaded when it was opened, by whoever opened it (NULL if not a sign-in).
+    await d.exec(`INSERT INTO containers (${cols}) VALUES ('c-3', 'CONT0003', 'MF0001', 'LOADING', '{}', NULL, '${AT}', 'AD0001')`);
+    await d.exec(`INSERT INTO containers (${cols}) VALUES ('c-4', 'CONT0004', 'MF0001', 'LOADING', ARRAY['${lotCode(1)}'], NULL, '${AT}', 'MF0001-OP')`);
+    expect((await items()).filter((r) => /^c-[34]/.test(r))).toEqual([`c-4|${lotCode(1)}|opened|null`]);
+
+    // Lots loaded later are stamped now; lots taken out go; a write that leaves lot_codes alone changes nothing.
+    await d.exec(`UPDATE containers SET lot_codes = ARRAY['${lotCode(2)}', '${lotCode(3)}'] WHERE container_id = 'c-3'`);
+    await d.exec(`UPDATE containers SET lot_codes = ARRAY['${lotCode(3)}'] WHERE container_id = 'c-3'`);
+    await d.exec(`UPDATE containers SET status = 'IN_TRANSIT', to_partner_id = 'VW0001', dispatched_at = now() WHERE container_id = 'c-3'`);
+    expect((await items()).filter((r) => r.startsWith("c-3"))).toEqual([`c-3|${lotCode(3)}|now|AD0001`]);
+
+    // Every container still matches its array, the old ones too.
+    const pairs = async () => (await d.query<{ p: string }>(`SELECT container_id || '|' || unnest(lot_codes) AS p FROM containers ORDER BY 1`)).map((r) => r.p);
+    expect((await items()).map((r) => r.split("|").slice(0, 2).join("|"))).toEqual(await pairs());
+
+    // Deleting a container takes its items with it (the deferred foreign key would refuse the commit otherwise).
+    await d.exec(`DELETE FROM containers WHERE container_id IN ('c-3', 'c-4')`);
+    expect((await items()).filter((r) => /^c-[34]/.test(r))).toEqual([]);
+    expect((await items()).map((r) => r.split("|").slice(0, 2).join("|"))).toEqual(await pairs());
+
+    // Applying the schema again (db:migrate) keeps one trigger of each.
+    await new SqlStore(async () => d, null, { stockRollupIntervalMs: Number.POSITIVE_INFINITY }).migrate();
+    const triggers = await d.query<{ tgname: string }>(`SELECT tgname FROM pg_trigger WHERE tgrelid = 'containers'::regclass AND NOT tgisinternal ORDER BY tgname`);
+    expect(triggers.map((t) => t.tgname)).toEqual(["container_items_delete", "container_items_follow"]);
   });
 
   it("a reset / JSON import whose data refers to missing rows is refused with a clear message; the old data stays", async () => {

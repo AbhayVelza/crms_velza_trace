@@ -1,6 +1,6 @@
 // Schema v10 keeps what each container carried as rows (container_items) next to containers.lot_codes. The Container
-// type and the services are unchanged: the SQL store makes container_items equal to lot_codes on every container write
-// (create, load, unload, cancel, dispatch, receive, clear, reset). The JSON store keeps only its array.
+// type and the services are unchanged: triggers on containers make container_items equal to lot_codes on every container
+// write (create, load, unload, cancel, dispatch, receive, clear, reset). The JSON store keeps only its array.
 // Runs on the JSON file store and on PostgreSQL (embedded).
 
 import { promises as fs } from "node:fs";

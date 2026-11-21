@@ -487,33 +487,6 @@ function makeTx(q: Query): StoreTx {
   };
   const lots = repo<DbSnapshot["lots"][number]>("lots");
   const movementRows = repo<Movement>("movements");
-  const containers = repo<Container>("containers");
-
-  /**
-   * container_items (v10) mirrors containers.lot_codes: after every container write its rows are made equal to the
-   * container's lot_codes (lots taken out are removed, lots loaded are added). A lot loaded now is stamped with the
-   * transaction time; `opened` = the containers were just created (their lots count as loaded when they were opened,
-   * as the v10 back-fill does). loaded_by = whoever opened the container, if that sign-in exists (the Container type
-   * doesn't record who scanned each lot; only the plant's operator loads).
-   */
-  async function syncContainerItems(ids: string[], opened = false) {
-    if (!ids.length) return;
-    await q(
-      `DELETE FROM container_items i USING containers c
-        WHERE i.container_id = c.container_id AND c.container_id = ANY($1::text[]) AND NOT (i.lot_code = ANY(c.lot_codes))`,
-      [ids],
-    );
-    await q(
-      `INSERT INTO container_items (container_id, lot_code, loaded_at, loaded_by)
-       SELECT c.container_id, l.lot_code, CASE WHEN $2::boolean THEN c.created_at ELSE now() END, u.login_id
-         FROM containers c
-        CROSS JOIN LATERAL unnest(c.lot_codes) AS l(lot_code)
-         LEFT JOIN users u ON u.login_id = c.created_by
-        WHERE c.container_id = ANY($1::text[])
-       ON CONFLICT (container_id, lot_code) DO NOTHING`,
-      [ids, opened],
-    );
-  }
 
   const tx: StoreTx = {
     countries: repo("countries"),
@@ -524,33 +497,8 @@ function makeTx(q: Query): StoreTx {
     batchCodePool: repo("batchCodePool"),
     batches: repo("batches"),
     printOrders: repo("printOrders"),
-    // The Container type keeps its lotCodes array; the database keeps container_items equal to it on every write.
-    containers: {
-      ...containers,
-      async create(row) {
-        const created = await containers.create(row);
-        await syncContainerItems([row.id], true);
-        return created;
-      },
-      async createMany(rows) {
-        await containers.createMany(rows);
-        await syncContainerItems(rows.map((r) => r.id), true);
-      },
-      async update(id, patch) {
-        const updated = await containers.update(id, patch);
-        await syncContainerItems([id]);
-        return updated;
-      },
-      async updateWhere(where, patch) {
-        const ids = await containers.updateWhere(where, patch);
-        await syncContainerItems(ids);
-        return ids;
-      },
-      async delete(id) {
-        await q(`DELETE FROM container_items WHERE container_id = $1`, [id]);
-        await containers.delete(id);
-      },
-    },
+    // The Container type keeps its lotCodes array; triggers on containers (schema v10) keep container_items equal to it.
+    containers: repo<Container>("containers"),
     lots: {
       ...lots,
       // Pack rows carry their lot's sync flag too (every code row shows whether it is synced).

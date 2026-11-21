@@ -601,7 +601,8 @@ itself, and keeps using its data file until then. The schema is at version 10 (e
   message naming each table and count, and changes nothing. `code_history` keeps no foreign keys on purpose (failed
   scans of unknown codes are stored).
 - **`container_items`** (`container_id`, `lot_code`, `loaded_at`, `loaded_by`) holds what each container carried as
-  rows. It is filled once from `containers.lot_codes` and kept equal to it by the app on every container write; "which
+  rows. It is filled once from `containers.lot_codes` and kept equal to it by triggers on `containers` on every write,
+  by any code (so a rolled-back release that writes only `lot_codes` keeps it right); "which
   container carried this lot" (Customs receiving a case) reads it. There is no `UNIQUE (lot_code)`, because the store
   contract allows a lot to be in several containers over its life. `containers.lot_codes` and `print_orders.lot_codes`
   stay in this release.

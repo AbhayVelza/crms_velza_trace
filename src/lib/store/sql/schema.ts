@@ -39,8 +39,9 @@
 // v10 (21 Nov 2026): integrity. Foreign keys the app always kept, now checked by the database: print_orders and
 // containers → their manufacturer, containers → the partner they went to, codes → their print order, batch code pool
 // → its device (deferred, added NOT VALID, then validated after a check for orphans that names them and stops the
-// upgrade). container_items: what each container carried as rows (containers.lot_codes stays, kept equal by the app),
-// filled once from lot_codes. New objects only; existing rows are unchanged.
+// upgrade). container_items: what each container carried as rows (containers.lot_codes stays), filled once from
+// lot_codes and kept equal to it by triggers on containers, so code that only knows lot_codes (a rolled-back release)
+// keeps it right too. New objects only; existing rows are unchanged.
 
 export const SCHEMA_VERSION = 10;
 
@@ -579,7 +580,7 @@ $$;
 -- code_history keeps no foreign keys on purpose: a failed scan of an unknown code is kept too.
 --
 -- container_items: one row per case/tray loaded into a container (containers.lot_codes as rows), kept equal to
--- lot_codes by the app on every container write. No UNIQUE (lot_code): a lot in more than one container over its
+-- lot_codes by the triggers below on every container write, whoever writes it. No UNIQUE (lot_code): a lot in more than one container over its
 -- life is allowed (see latestContainerWithLot, which picks the most recently dispatched one).
 CREATE TABLE IF NOT EXISTS container_items (
   container_id text        NOT NULL REFERENCES containers (container_id) DEFERRABLE INITIALLY DEFERRED,
@@ -642,8 +643,8 @@ BEGIN
 END
 $$;
 
--- What each container carried, copied once from containers.lot_codes when a database first reaches v10 (the app keeps
--- both equal afterwards). Loaded when the container was opened, by whoever opened it (if that sign-in still exists).
+-- What each container carried, copied once from containers.lot_codes when a database first reaches v10 (the triggers
+-- below keep both equal afterwards). Loaded when the container was opened, by whoever opened it (if that sign-in still exists).
 DO $$
 BEGIN
   IF COALESCE((SELECT version FROM schema_info WHERE id = 1), 0) < 10 THEN
@@ -663,6 +664,39 @@ ALTER TABLE containers VALIDATE CONSTRAINT containers_manufacturer_id_fkey;
 ALTER TABLE containers VALIDATE CONSTRAINT containers_to_partner_id_fkey;
 ALTER TABLE codes VALIDATE CONSTRAINT codes_print_order_id_fkey;
 ALTER TABLE batch_code_pool VALIDATE CONSTRAINT batch_code_pool_device_id_fkey;
+
+-- container_items follows containers.lot_codes in the database itself, so any writer (this release, a rolled-back v9
+-- release that has never heard of container_items, a hand-written fix) keeps it right. After a container is created or
+-- its lot_codes change: items whose lot is no longer in lot_codes go, missing ones are added (loaded when the container
+-- was opened if it is new, else now), loaded by whoever opened the container if that sign-in exists. Idempotent.
+CREATE OR REPLACE FUNCTION container_items_follow_lot_codes() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  DELETE FROM container_items i
+   WHERE i.container_id = NEW.container_id AND NOT (i.lot_code = ANY (NEW.lot_codes));
+  INSERT INTO container_items (container_id, lot_code, loaded_at, loaded_by)
+  SELECT NEW.container_id, l.lot_code,
+         CASE WHEN TG_OP = 'INSERT' THEN NEW.created_at ELSE now() END,
+         (SELECT u.login_id FROM users u WHERE u.login_id = NEW.created_by)
+    FROM unnest(NEW.lot_codes) AS l(lot_code)
+   WHERE l.lot_code IS NOT NULL
+  ON CONFLICT (container_id, lot_code) DO NOTHING;
+  RETURN NULL;
+END
+$$;
+DROP TRIGGER IF EXISTS container_items_follow ON containers;
+CREATE TRIGGER container_items_follow AFTER INSERT OR UPDATE OF lot_codes ON containers
+  FOR EACH ROW EXECUTE FUNCTION container_items_follow_lot_codes();
+
+-- A container deleted takes its items with it (the foreign key from container_items would refuse it otherwise).
+CREATE OR REPLACE FUNCTION container_items_on_container_delete() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  DELETE FROM container_items WHERE container_id = OLD.container_id;
+  RETURN OLD;
+END
+$$;
+DROP TRIGGER IF EXISTS container_items_delete ON containers;
+CREATE TRIGGER container_items_delete BEFORE DELETE ON containers
+  FOR EACH ROW EXECUTE FUNCTION container_items_on_container_delete();
 
 INSERT INTO schema_info (id, version) VALUES (1, ${SCHEMA_VERSION})
   ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version, applied_at = now();

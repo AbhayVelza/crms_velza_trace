@@ -224,7 +224,7 @@ The app runs on PostgreSQL as soon as it has a connection string:
 | `codes` | sticker: each case/tray (`LOT`) and each pack (`PACK`) with `country_code`, `batch_code`, `flavour`, `hex_code`, `lot_type`, `pack_size`, `pack_sequence`, `lot_code`, dates, status, location, synced | `code`; the code must equal its parts; → its print order (v10) |
 | `code_history` | movement, scan or reprint, with the full code as scanned | `history_id`; append-only (a trigger refuses changes); no foreign keys, so a failed scan of an unknown code is kept |
 | `containers` | trip of a shipping container from the plant to Customs | `container_id`; → its manufacturer and receiver (v10); `lot_codes` lists what it carried |
-| `container_items` (v10) | case/tray loaded into a container: `lot_codes` as rows, kept equal to it by the app | (`container_id`, `lot_code`); a lot may be in several containers over its life |
+| `container_items` (v10) | case/tray loaded into a container: `lot_codes` as rows, kept equal to it by triggers on `containers` | (`container_id`, `lot_code`); a lot may be in several containers over its life |
 | `stock_summary`, `stock_deltas`, view `stock_current` (v9) | live unit counts per location, status, kind, lot type, flavour and sync flag, kept by triggers on `codes` | the HQ dashboard reads these instead of every code |
 | `batches`, `print_orders`, `batch_code_pool`, `devices`, `countries`, `flavours`, `sessions`, `id_counters`, `settings` | supporting data the screens need | print orders → their manufacturer, pool codes → their device (v10) |
 

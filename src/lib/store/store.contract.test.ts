@@ -5,7 +5,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import type { Batch, Lot, Pack, Partner } from "@/lib/core/types";
+import type { Batch, Lot, Pack, Partner, PrintOrder } from "@/lib/core/types";
 import { JsonStore } from "./jsonStore";
 import { buildBaseSeed } from "./seedData";
 import { createPgliteDriver } from "./sql/driver";
@@ -97,7 +97,24 @@ const packs = (l: Lot): Pack[] =>
     updatedAt: AT,
   }));
 
-const withPartners = (): DbSnapshot => ({ ...structuredClone(seed), partners: [plant, ss] });
+/** The print orders the lots below name (schema v10 checks codes → print_orders). */
+const order = (id: string): PrintOrder => ({
+  id,
+  createdAt: AT,
+  createdBy: "MF0001-OP",
+  deviceId: "dev-1",
+  manufacturerId: "MF0001",
+  batchCodes: ["AAA111"],
+  lotCodes: [],
+  stickerCount: 0,
+  status: "CREATED",
+  printedAt: null,
+  synced: true,
+  kind: "NEW_BATCH",
+  requestFingerprint: null,
+});
+
+const withPartners = (): DbSnapshot => ({ ...structuredClone(seed), partners: [plant, ss], printOrders: [order("po-1"), order("po-2")] });
 
 interface Impl {
   name: string;
@@ -377,6 +394,9 @@ describe.each(IMPLS)("Store contract: $name", (impl) => {
   it("latestContainerWithLot: the latest container to that receiver, in those statuses, that carried the lot", async () => {
     const base = { manufacturerId: "MF0001", invoice: "INV", createdAt: AT, createdBy: "MF0001-OP", dispatchedBy: null, receivedAt: null, receivedBy: null };
     const box = (id: string, code: string, over: Record<string, unknown>) => ({ ...base, id, code, status: "RECEIVED" as const, lotCodes: ["91AAA111OR00001"], toId: "SS0001", dispatchedAt: "2026-11-01T00:00:00.000Z", ...over });
+    // The lots the containers carry (PostgreSQL checks container_items → codes, v10).
+    await store.batches.create(batch("AAA111"));
+    await store.lots.createMany(["91AAA111OR00001", "91AAA111OR00002", "91AAA111OR00009"].map((code) => lot(code)));
     await store.containers.create(box("c-old", "CONT001", { status: "CLEARED", dispatchedAt: "2026-11-01T00:00:00.000Z" }));
     await store.containers.create(box("c-new", "CONT002", { dispatchedAt: "2026-11-05T00:00:00.000Z", lotCodes: ["91AAA111OR00009", "91AAA111OR00001"] }));
     await store.containers.create(box("c-other-receiver", "CONT003", { toId: "MF0001", dispatchedAt: "2026-11-09T00:00:00.000Z" }));
@@ -471,7 +491,7 @@ describe("PostgreSQL only: the schema guards the data", () => {
     expect(names).toEqual(
       expect.arrayContaining(["codes_manufacturer", "codes_device_unsynced", "print_orders_manufacturer", "print_orders_device_unsynced", "batches_manufacturer", "batches_device_unsynced", "batch_code_pool_device"]),
     );
-    expect(await sql(`SELECT version FROM schema_info`)).toEqual([{ version: 9 }]); // v5: Velza Warehouse; v6: returns; v7: self sign-up approval; v8: customs clearance; v9: live read model
+    expect(await sql(`SELECT version FROM schema_info`)).toEqual([{ version: 10 }]); // v5: Velza Warehouse; v6: returns; v7: self sign-up approval; v8: customs clearance; v9: live read model; v10: integrity
   });
 
   it("v9: the stock summary stays exact through inserts, moves, sync, deletes, rollup, rebuild and an upgrade", async () => {
@@ -494,7 +514,8 @@ describe("PostgreSQL only: the schema guards the data", () => {
     await sql(`UPDATE codes SET updated_at = now()`);
     expect(Number((await sql(`SELECT count(*) AS n FROM stock_deltas`))[0].n)).toBe(deltasBefore);
     await same();
-    await sql(`DELETE FROM print_orders`); // codes issued by a print order are protected; free them for the delete test
+    // Codes issued by a print order are protected (and, since v10, keep their print order): free one for the delete test.
+    await sql(`UPDATE codes SET print_order_id = NULL WHERE code = $1`, [`${l2.lotCode}64`]);
     await sql(`DELETE FROM codes WHERE code = $1`, [`${l2.lotCode}64`]);
     await same();
     // Rollup folds every delta into the summary and changes nothing visible.
@@ -512,7 +533,7 @@ describe("PostgreSQL only: the schema guards the data", () => {
     await sql(`UPDATE schema_info SET version = 8`);
     await (await store.driver()).exec(SCHEMA_SQL);
     await same();
-    expect(await sql(`SELECT version FROM schema_info`)).toEqual([{ version: 9 }]);
+    expect(await sql(`SELECT version FROM schema_info`)).toEqual([{ version: 10 }]);
     // A reset (TRUNCATE) empties it too.
     await store.reset(withPartners());
     expect(await sql(current)).toEqual([]);
@@ -529,7 +550,7 @@ describe("PostgreSQL only: the schema guards the data", () => {
     // An older database is still upgraded.
     await sql(`UPDATE schema_info SET version = 8`);
     await older.migrate();
-    expect(await sql(`SELECT version FROM schema_info`)).toEqual([{ version: 9 }]);
+    expect(await sql(`SELECT version FROM schema_info`)).toEqual([{ version: 10 }]);
   });
 
   it("v9: has the read-path indexes", async () => {

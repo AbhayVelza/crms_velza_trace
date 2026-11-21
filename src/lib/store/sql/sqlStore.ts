@@ -487,6 +487,33 @@ function makeTx(q: Query): StoreTx {
   };
   const lots = repo<DbSnapshot["lots"][number]>("lots");
   const movementRows = repo<Movement>("movements");
+  const containers = repo<Container>("containers");
+
+  /**
+   * container_items (v10) mirrors containers.lot_codes: after every container write its rows are made equal to the
+   * container's lot_codes (lots taken out are removed, lots loaded are added). A lot loaded now is stamped with the
+   * transaction time; `opened` = the containers were just created (their lots count as loaded when they were opened,
+   * as the v10 back-fill does). loaded_by = whoever opened the container, if that sign-in exists (the Container type
+   * doesn't record who scanned each lot; only the plant's operator loads).
+   */
+  async function syncContainerItems(ids: string[], opened = false) {
+    if (!ids.length) return;
+    await q(
+      `DELETE FROM container_items i USING containers c
+        WHERE i.container_id = c.container_id AND c.container_id = ANY($1::text[]) AND NOT (i.lot_code = ANY(c.lot_codes))`,
+      [ids],
+    );
+    await q(
+      `INSERT INTO container_items (container_id, lot_code, loaded_at, loaded_by)
+       SELECT c.container_id, l.lot_code, CASE WHEN $2::boolean THEN c.created_at ELSE now() END, u.login_id
+         FROM containers c
+        CROSS JOIN LATERAL unnest(c.lot_codes) AS l(lot_code)
+         LEFT JOIN users u ON u.login_id = c.created_by
+        WHERE c.container_id = ANY($1::text[])
+       ON CONFLICT (container_id, lot_code) DO NOTHING`,
+      [ids, opened],
+    );
+  }
 
   const tx: StoreTx = {
     countries: repo("countries"),
@@ -497,7 +524,33 @@ function makeTx(q: Query): StoreTx {
     batchCodePool: repo("batchCodePool"),
     batches: repo("batches"),
     printOrders: repo("printOrders"),
-    containers: repo("containers"),
+    // The Container type keeps its lotCodes array; the database keeps container_items equal to it on every write.
+    containers: {
+      ...containers,
+      async create(row) {
+        const created = await containers.create(row);
+        await syncContainerItems([row.id], true);
+        return created;
+      },
+      async createMany(rows) {
+        await containers.createMany(rows);
+        await syncContainerItems(rows.map((r) => r.id), true);
+      },
+      async update(id, patch) {
+        const updated = await containers.update(id, patch);
+        await syncContainerItems([id]);
+        return updated;
+      },
+      async updateWhere(where, patch) {
+        const ids = await containers.updateWhere(where, patch);
+        await syncContainerItems(ids);
+        return ids;
+      },
+      async delete(id) {
+        await q(`DELETE FROM container_items WHERE container_id = $1`, [id]);
+        await containers.delete(id);
+      },
+    },
     lots: {
       ...lots,
       // Pack rows carry their lot's sync flag too (every code row shows whether it is synced).
@@ -563,9 +616,11 @@ function makeTx(q: Query): StoreTx {
       return q<Scan>(`${selectOf(SPECS.scans)} WHERE record_type = 'SCAN' ORDER BY event_time DESC, history_id ASC LIMIT $1`, [Math.max(0, Math.floor(limit))]);
     },
     async latestContainerWithLot(toId, lotCode, statuses) {
-      // GIN index containers_lot_codes (v9) answers `lot_codes @> ARRAY[lot]` without reading every container.
+      // container_items (v10), by its index on lot_code: the few containers that ever carried this lot.
       const rows = await q<Container>(
-        `${selectOf(SPECS.containers)} WHERE lot_codes @> ARRAY[$1]::text[] AND to_partner_id = $2 AND status = ANY($3::text[])
+        `${selectOf(SPECS.containers)}
+          WHERE container_id IN (SELECT container_id FROM container_items WHERE lot_code = $1)
+            AND to_partner_id = $2 AND status = ANY($3::text[])
           ORDER BY dispatched_at DESC NULLS LAST, row_no ASC LIMIT 1`,
         [lotCode, toId, [...statuses]],
       );
@@ -728,9 +783,24 @@ export class SqlStore implements Store {
 
   /** Replace all data. `version` = the database's schema version: an older one is upgraded in the same transaction. */
   private async load(d: SqlDriver, data: DbSnapshot, version = SCHEMA_VERSION) {
+    try {
+      await this.loadIn(d, data, version);
+    } catch (e) {
+      // A foreign key (v10) refusing the data being loaded (a JSON import, a converted database): say which link.
+      if ((e as { code?: string }).code === "23503") {
+        const detail = (e as { detail?: string }).detail;
+        throw new Error(`The data refers to rows that are not in it: ${(e as Error).message}${detail ? ` (${detail})` : ""}. Nothing was changed.`, { cause: e });
+      }
+      throw e;
+    }
+  }
+
+  private async loadIn(d: SqlDriver, data: DbSnapshot, version: number) {
     await d.transaction(async (q, exec) => {
       if (!version) await exec(SCHEMA_SQL); // no tables yet
-      await q(`TRUNCATE ${ALL_TABLES.join(", ")} RESTART IDENTITY CASCADE`);
+      // Only the tables this database already has: an older schema gains the newer ones in the upgrade below.
+      const present = (await q<{ t: string }>(`SELECT t FROM unnest($1::text[]) WITH ORDINALITY AS a(t, n) WHERE to_regclass(t) IS NOT NULL ORDER BY n`, [[...ALL_TABLES]])).map((r) => r.t);
+      await q(`TRUNCATE ${present.join(", ")} RESTART IDENTITY CASCADE`);
       // An older schema is upgraded once its rows are gone, so values it no longer allows (a v1
       // database's Suppliers and Outlets) don't stop the upgrade; the new data is then checked by it.
       if (version && version < SCHEMA_VERSION) await exec(SCHEMA_SQL);

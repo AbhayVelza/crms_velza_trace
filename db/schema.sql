@@ -1,4 +1,4 @@
--- Velza Traceability — PostgreSQL schema v9.
+-- Velza Traceability — PostgreSQL schema v10.
 -- Generated from src/lib/store/sql/schema.ts by `npm run db:schema`; do not edit by hand.
 -- The app applies this itself on first use (and `npm run db:migrate` does it on demand); every
 -- statement is safe to run again.
@@ -517,5 +517,97 @@ BEGIN
 END
 $$;
 
-INSERT INTO schema_info (id, version) VALUES (1, 9)
+-- ============================================================ v10: integrity
+-- Links the app always kept, now checked by the database too, and what each container carried as rows.
+-- Foreign keys are DEFERRABLE INITIALLY DEFERRED (rows of one transaction are written in different orders) and added
+-- NOT VALID first, so existing rows are checked once below, after a check for orphans that names what is wrong.
+-- code_history keeps no foreign keys on purpose: a failed scan of an unknown code is kept too.
+--
+-- container_items: one row per case/tray loaded into a container (containers.lot_codes as rows), kept equal to
+-- lot_codes by the app on every container write. No UNIQUE (lot_code): a lot in more than one container over its
+-- life is allowed (see latestContainerWithLot, which picks the most recently dispatched one).
+CREATE TABLE IF NOT EXISTS container_items (
+  container_id text        NOT NULL REFERENCES containers (container_id) DEFERRABLE INITIALLY DEFERRED,
+  lot_code     text        NOT NULL REFERENCES codes (code)              DEFERRABLE INITIALLY DEFERRED,
+  loaded_at    timestamptz NOT NULL,
+  loaded_by    text        REFERENCES users (login_id)                   DEFERRABLE INITIALLY DEFERRED,
+  PRIMARY KEY (container_id, lot_code)
+);
+CREATE INDEX IF NOT EXISTS container_items_lot ON container_items (lot_code);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'print_orders_manufacturer_id_fkey' AND conrelid = 'print_orders'::regclass) THEN
+    ALTER TABLE print_orders ADD CONSTRAINT print_orders_manufacturer_id_fkey
+      FOREIGN KEY (manufacturer_id) REFERENCES partners (partner_id) DEFERRABLE INITIALLY DEFERRED NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'containers_manufacturer_id_fkey' AND conrelid = 'containers'::regclass) THEN
+    ALTER TABLE containers ADD CONSTRAINT containers_manufacturer_id_fkey
+      FOREIGN KEY (manufacturer_id) REFERENCES partners (partner_id) DEFERRABLE INITIALLY DEFERRED NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'containers_to_partner_id_fkey' AND conrelid = 'containers'::regclass) THEN
+    ALTER TABLE containers ADD CONSTRAINT containers_to_partner_id_fkey
+      FOREIGN KEY (to_partner_id) REFERENCES partners (partner_id) DEFERRABLE INITIALLY DEFERRED NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'codes_print_order_id_fkey' AND conrelid = 'codes'::regclass) THEN
+    ALTER TABLE codes ADD CONSTRAINT codes_print_order_id_fkey
+      FOREIGN KEY (print_order_id) REFERENCES print_orders (print_order_id) DEFERRABLE INITIALLY DEFERRED NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'batch_code_pool_device_id_fkey' AND conrelid = 'batch_code_pool'::regclass) THEN
+    ALTER TABLE batch_code_pool ADD CONSTRAINT batch_code_pool_device_id_fkey
+      FOREIGN KEY (device_id) REFERENCES devices (device_id) DEFERRABLE INITIALLY DEFERRED NOT VALID;
+  END IF;
+END
+$$;
+
+-- Rows pointing at rows that don't exist stop the upgrade here, named, before anything is validated or copied.
+-- Nothing is deleted or changed to make it pass: fix or remove those rows, then start again.
+DO $$
+DECLARE
+  n_orders     bigint;
+  n_from       bigint;
+  n_to         bigint;
+  n_codes      bigint;
+  n_pool       bigint;
+  n_carried    bigint;
+BEGIN
+  SELECT count(*) INTO n_orders FROM print_orders o WHERE NOT EXISTS (SELECT 1 FROM partners p WHERE p.partner_id = o.manufacturer_id);
+  SELECT count(*) INTO n_from FROM containers c WHERE NOT EXISTS (SELECT 1 FROM partners p WHERE p.partner_id = c.manufacturer_id);
+  SELECT count(*) INTO n_to FROM containers c
+   WHERE c.to_partner_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM partners p WHERE p.partner_id = c.to_partner_id);
+  SELECT count(*) INTO n_codes FROM codes c
+   WHERE c.print_order_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM print_orders o WHERE o.print_order_id = c.print_order_id);
+  SELECT count(*) INTO n_pool FROM batch_code_pool b WHERE NOT EXISTS (SELECT 1 FROM devices d WHERE d.device_id = b.device_id);
+  SELECT count(*) INTO n_carried FROM containers c CROSS JOIN LATERAL unnest(c.lot_codes) AS l(lot_code)
+   WHERE NOT EXISTS (SELECT 1 FROM codes k WHERE k.code = l.lot_code);
+  IF n_orders + n_from + n_to + n_codes + n_pool + n_carried > 0 THEN
+    RAISE EXCEPTION 'Schema v10 found rows that point at rows which do not exist: print_orders with an unknown manufacturer_id: %; containers with an unknown manufacturer_id: %; containers with an unknown to_partner_id: %; codes with an unknown print_order_id: %; batch_code_pool rows with an unknown device_id: %; containers.lot_codes entries that are not codes: %. Nothing was changed. Fix or remove those rows, then start again.',
+      n_orders, n_from, n_to, n_codes, n_pool, n_carried;
+  END IF;
+END
+$$;
+
+-- What each container carried, copied once from containers.lot_codes when a database first reaches v10 (the app keeps
+-- both equal afterwards). Loaded when the container was opened, by whoever opened it (if that sign-in still exists).
+DO $$
+BEGIN
+  IF COALESCE((SELECT version FROM schema_info WHERE id = 1), 0) < 10 THEN
+    INSERT INTO container_items (container_id, lot_code, loaded_at, loaded_by)
+    SELECT c.container_id, l.lot_code, c.created_at, u.login_id
+      FROM containers c
+     CROSS JOIN LATERAL unnest(c.lot_codes) AS l(lot_code)
+      LEFT JOIN users u ON u.login_id = c.created_by
+    ON CONFLICT (container_id, lot_code) DO NOTHING;
+  END IF;
+END
+$$;
+
+-- Check the existing rows (nothing happens for a constraint that is already valid).
+ALTER TABLE print_orders VALIDATE CONSTRAINT print_orders_manufacturer_id_fkey;
+ALTER TABLE containers VALIDATE CONSTRAINT containers_manufacturer_id_fkey;
+ALTER TABLE containers VALIDATE CONSTRAINT containers_to_partner_id_fkey;
+ALTER TABLE codes VALIDATE CONSTRAINT codes_print_order_id_fkey;
+ALTER TABLE batch_code_pool VALIDATE CONSTRAINT batch_code_pool_device_id_fkey;
+
+INSERT INTO schema_info (id, version) VALUES (1, 10)
   ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version, applied_at = now();

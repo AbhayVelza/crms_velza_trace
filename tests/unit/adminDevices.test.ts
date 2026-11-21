@@ -71,16 +71,29 @@ describe("device names", () => {
 });
 
 describe("deleting a device", () => {
-  it("returns its unused (RESERVED) pool codes; nothing is orphaned or reassigned", async () => {
+  it("a device with batch codes issued to it cannot be deleted, even if none was used: the pool keeps its device", async () => {
     const d = await addDevice(MF2, "Spare PC");
     expect(await poolOf(d.id)).toEqual(Array(10).fill("RESERVED"));
     const otherDevices = await store().devices.list({ manufacturerId: MF2 });
     const otherBefore = await Promise.all(otherDevices.filter((x) => x.id !== d.id).map((x) => poolOf(x.id)));
-    expect(await deleteEntity(ADMIN, "devices", d.id)).toMatchObject({ ok: true, message: "Deleted Spare PC" });
-    expect(await store().devices.get(d.id)).toBeNull();
-    expect(await poolOf(d.id)).toEqual(Array(10).fill("RETURNED"));
+    await expect(deleteEntity(ADMIN, "devices", d.id)).rejects.toMatchObject({
+      status: 400,
+      code: "IN_USE",
+      message: "Cannot delete: still used by 10 batch code(s) issued to it from the pool",
+    });
+    expect(await store().devices.get(d.id)).not.toBeNull();
+    expect(await poolOf(d.id)).toEqual(Array(10).fill("RESERVED")); // nothing changed
     const otherAfter = await Promise.all(otherDevices.filter((x) => x.id !== d.id).map((x) => poolOf(x.id)));
     expect(otherAfter).toEqual(otherBefore);
+  });
+
+  it("a device no batch code was ever issued to can still be deleted", async () => {
+    // Written straight to the store (Add device issues pool codes at once).
+    const id = crypto.randomUUID();
+    await store().devices.create({ id, manufacturerId: MF2, name: "Never Used PC", offline: false, lastSyncAt: null });
+    expect(await poolOf(id)).toEqual([]);
+    expect(await deleteEntity(ADMIN, "devices", id)).toMatchObject({ ok: true, message: "Deleted Never Used PC" });
+    expect(await store().devices.get(id)).toBeNull();
   });
 
   it("a device with batches cannot be deleted, and its pool is left exactly as it was (all-or-nothing)", async () => {

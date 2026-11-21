@@ -33,7 +33,7 @@ Every deploy runs `db/roles.sql` (idempotent) with passwords from Parameter Stor
 | Role | Used by | Can |
 | --- | --- | --- |
 | owner (`velza_owner` on prod, `velza` on staging) | migrations only (`MIGRATE_DATABASE_URL`) | everything |
-| `velza_app` | the app and the jobs container (`DATABASE_URL`) | read and write rows; **no** schema changes |
+| `velza_app` | the app and the jobs container (`DATABASE_URL`) | read and write rows; **no** schema changes; `code_history` only read and appended (no update, delete or truncate) |
 | `velza_readonly` | the backup container, reports (`BACKUP_DATABASE_URL`) | read only |
 
 ### Settings (Parameter Store → one file per container)

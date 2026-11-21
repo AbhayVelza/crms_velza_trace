@@ -34,6 +34,12 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO ve
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO velza_readonly;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON SEQUENCES TO velza_readonly;
 
+-- Scan and movement history is permanent: the app adds rows and reads them, never changes or removes them (the
+-- code_history_no_change trigger refuses UPDATE / DELETE too; this also holds if a trigger is ever dropped). Only the
+-- owner can reset it (seed, JSON import, clear-activity outside production). After the grants above, so a re-run
+-- keeps it revoked.
+REVOKE UPDATE, DELETE, TRUNCATE ON code_history FROM velza_app;
+
 -- Reports run on a read replica when there is one; keep heavy ad-hoc queries from holding locks for long.
 ALTER ROLE velza_readonly SET statement_timeout = '120s';
 ALTER ROLE velza_app SET statement_timeout = '30s';

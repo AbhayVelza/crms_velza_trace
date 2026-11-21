@@ -38,11 +38,14 @@
   --card-shadow: 0 1px 3px rgb(0 0 0 / 0.04), 0 4px 12px rgb(0 0 0 / 0.03);
   --pop-shadow: 0 4px 16px rgb(0 0 0 / 0.06), 0 1px 2px rgb(0 0 0 / 0.04);
   --hover-shadow: 0 2px 8px -2px rgb(0 0 0 / 0.06), 0 12px 24px -6px rgb(0 0 0 / 0.07);
-  /* A faint warm light from the corners (screen.png); the canvas stays essentially neutral. */
+  /* Velza red light behind the page: a soft rose wash from the top, fading to the neutral canvas. */
   --page-glow:
-    radial-gradient(64rem 34rem at 108% -12%, rgb(223 37 49 / 0.07), transparent 62%),
-    radial-gradient(48rem 30rem at -12% 112%, rgb(255 138 148 / 0.07), transparent 62%);
+    radial-gradient(80rem 48rem at 34% -14%, rgb(223 37 49 / 0.24), transparent 72%),
+    radial-gradient(64rem 44rem at 104% 34%, rgb(255 138 148 / 0.2), transparent 72%),
+    radial-gradient(56rem 40rem at -6% 104%, rgb(223 37 49 / 0.12), transparent 72%);
   --card-fill: linear-gradient(transparent, transparent);
+  /* Cards let a touch of the glow through; popovers and menus stay on solid --surface. */
+  --card-bg: rgb(255 255 255 / 0.84);
   /* Charts: calm charcoal series (DESIGN.md "Apple slate"). */
   --chart-bar: linear-gradient(0deg, #262626 0%, #525252 100%);
   --chart-track: #e5e5ea;
@@ -91,10 +94,13 @@
   --card-shadow: inset 0 1px 0 rgb(255 255 255 / 0.04), 0 8px 24px -12px rgb(0 0 0 / 0.5);
   --pop-shadow: 0 8px 24px rgb(0 0 0 / 0.45);
   --hover-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06), 0 12px 32px -10px rgb(0 0 0 / 0.6);
+  /* Deep Velza red glow behind the page, brightest at the top, settling into obsidian lower down. */
   --page-glow:
-    radial-gradient(60rem 32rem at 108% -14%, rgb(223 37 49 / 0.1), transparent 62%),
-    radial-gradient(46rem 28rem at -12% 112%, rgb(138 21 32 / 0.1), transparent 62%);
+    radial-gradient(84rem 52rem at 38% -16%, rgb(205 30 44 / 0.78), transparent 74%),
+    radial-gradient(64rem 46rem at 104% 30%, rgb(150 20 32 / 0.5), transparent 74%),
+    radial-gradient(58rem 44rem at -6% 104%, rgb(120 16 26 / 0.42), transparent 74%);
   --card-fill: linear-gradient(transparent, transparent);
+  --card-bg: rgb(24 22 24 / 0.78);
   --chart-bar: linear-gradient(0deg, #404040 0%, #a3a3a3 100%);
   --chart-track: #2c2c2e;
   --chart-ink: #d4d4d8;
@@ -120,8 +126,9 @@
   --surface: #161618;
 }
 
-/* Cards: no sheen in this design (kept as a hook so card markup stays the same). */
+/* Cards: slightly translucent over the page glow (unlayered, so it wins over the bg-surface utility). */
 .card-surface {
+  background-color: var(--card-bg, var(--surface));
   background-image: var(--card-fill);
 }
 
@@ -265,7 +272,13 @@ dialog[open]::backdrop {
 }
 
 body {
-  background: var(--page-glow) no-repeat fixed, var(--background);
+  /* Longhands, so no-repeat and fixed apply to every glow layer (the shorthand only gave them to the last one,
+     and the others repeated each screen height, leaving a hard band down the page). */
+  background-color: var(--background);
+  background-image: var(--page-glow);
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+  background-size: 100% 100%;
   color: var(--foreground);
   font-family: var(--font-sans);
   /* Inter alternates used by the Stitch design (open digits, single-storey a off). */
@@ -389,6 +402,7 @@ details[open] > :not(summary) {
     color-scheme: light;
     --page-glow: linear-gradient(transparent, transparent);
     --card-fill: linear-gradient(transparent, transparent);
+    --card-bg: #ffffff;
     --background: #ffffff;
     --surface: #ffffff;
     --foreground: #000000;

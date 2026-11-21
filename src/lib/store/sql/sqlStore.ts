@@ -615,9 +615,20 @@ async function schemaVersion(d: SqlDriver): Promise<number> {
 const COLLECTION_REPOS = ["countries", "flavours", "partners", "users", "sessions", "devices", "batchCodePool", "batches", "printOrders", "containers", "lots", "packs"] as const;
 const LEDGERS = ["movements", "scans", "reprints"] as const;
 
+/** How often (at most) one process folds stock_deltas into stock_summary by itself. */
+export const STOCK_ROLLUP_INTERVAL_MS = 60_000;
+
+export interface SqlStoreOptions {
+  /** Least time between two in-app stock rollups of this store (default STOCK_ROLLUP_INTERVAL_MS; Infinity = never). */
+  stockRollupIntervalMs?: number;
+}
+
 export class SqlStore implements Store {
   private conn: Promise<SqlDriver> | null = null;
   private ready: Promise<SqlDriver> | null = null;
+  private lastStockRollup = Number.NEGATIVE_INFINITY;
+  private stockRollupRun: Promise<void> = Promise.resolve();
+  private readonly stockRollupIntervalMs: number;
 
   /**
    * @param connect opens the connection (once, on first use).
@@ -626,7 +637,38 @@ export class SqlStore implements Store {
   constructor(
     private readonly connect: () => Promise<SqlDriver>,
     private readonly firstRun: ((label: string) => DbSnapshot) | null = null,
-  ) {}
+    opts: SqlStoreOptions = {},
+  ) {
+    this.stockRollupIntervalMs = opts.stockRollupIntervalMs ?? STOCK_ROLLUP_INTERVAL_MS;
+  }
+
+  /**
+   * Fold stock_deltas into stock_summary now and then, so the deltas table stays small where nothing runs
+   * `npm run db:stock -- rollup` on a schedule (Vercel). At most once per interval per process, after a successful
+   * transaction or a stock summary read; its own short statement outside every transaction, not awaited by the
+   * request. stock_summary_rollup() returns at once if another rollup (another instance, the jobs container) holds
+   * its lock. Counts are exact either way, so a failure is only logged.
+   */
+  private maybeRollupStock(d: SqlDriver): void {
+    const now = Date.now();
+    if (now - this.lastStockRollup < this.stockRollupIntervalMs) return;
+    this.lastStockRollup = now;
+    this.stockRollupRun = this.rollupStock(d).then(
+      () => undefined,
+      (e) => console.error("[velza] Stock summary rollup failed (counts stay exact; it is tried again later):", (e as Error).message),
+    );
+  }
+
+  /** Resolves once the last in-app stock rollup started by this store has finished (tests; never rejects). */
+  stockRollupIdle(): Promise<void> {
+    return this.stockRollupRun;
+  }
+
+  /** One rollup run: the delta rows folded in (0 when there were none or another rollup was running). */
+  private async rollupStock(d: SqlDriver): Promise<number> {
+    const [row] = await d.alone<{ n: string | number }>(`SELECT stock_summary_rollup() AS n`);
+    return Number(row?.n ?? 0);
+  }
 
   /** The connection as it is, schema not checked (shared by everything below). */
   private connection(): Promise<SqlDriver> {
@@ -672,7 +714,9 @@ export class SqlStore implements Store {
   async transaction<R>(fn: (tx: StoreTx) => Promise<R>, opts?: TransactionOptions): Promise<R> {
     const d = await this.driver();
     try {
-      return await d.transaction((q) => fn(makeTx(q)), opts);
+      const result = await d.transaction((q) => fn(makeTx(q)), opts);
+      this.maybeRollupStock(d);
+      return result;
     } catch (e) {
       // The integrity triggers (schema v3) raise these; callers see the same error as on the JSON store.
       const code = (e as { code?: string }).code;
@@ -795,7 +839,10 @@ export class SqlStore implements Store {
     return makeTx((await this.driver()).query).latestContainerWithLot(toId, lotCode, statuses);
   }
   async stockSummary() {
-    return makeTx((await this.driver()).query).stockSummary();
+    const d = await this.driver();
+    const rows = await makeTx(d.query).stockSummary();
+    this.maybeRollupStock(d);
+    return rows;
   }
   updateSettings(patch: Partial<Omit<Settings, "id">>) {
     return this.transaction((tx) => tx.updateSettings(patch));

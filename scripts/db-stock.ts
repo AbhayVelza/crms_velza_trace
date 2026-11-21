@@ -1,7 +1,9 @@
 // npm run db:stock -- <command> → look after the live stock summary (schema v9) in the database (DATABASE_URL).
 //
 //   rollup   fold stock_deltas into stock_summary. Safe any time; schedule it every minute (cron / systemd timer)
-//            so stock_deltas stays small. Live counts are exact with or without it.
+//            so stock_deltas stays small. Live counts are exact with or without it. The app also folds them by
+//            itself (at most once a minute per process); stock_summary_rollup() never waits for another rollup, so
+//            when one is running this command tries again for a few seconds instead of reporting 0.
 //   check    recount every code and compare with the live summary. Exit code 1 if anything differs (alert on it).
 //   rebuild  recount the summary from codes. Writes to codes wait until it finishes (seconds at 2 crore codes):
 //            run outside shift peaks, after a failed check or a bulk change made with triggers switched off.
@@ -12,6 +14,9 @@ import { closeStores, describeStore, getStore, storeKind } from "@/lib/store";
 import { SqlStore } from "@/lib/store/sql/sqlStore";
 
 const KEY = "location_id, status, code_type, lot_type, flavour, synced";
+/** rollup: how often and how long to try again while another rollup holds the lock (20 × 250 ms = 5 s). */
+const ROLLUP_ATTEMPTS = 20;
+const ROLLUP_RETRY_MS = 250;
 
 async function main() {
   const command = process.argv[2];
@@ -28,8 +33,22 @@ async function main() {
   const d = await (getStore() as SqlStore).driver();
 
   if (command === "rollup") {
-    const [r] = await d.query<{ n: string }>(`SELECT stock_summary_rollup() AS n`);
-    console.log(`Folded ${r.n} delta rows into stock_summary (${describeStore()})`);
+    // 0 means "nothing to fold" or "another rollup holds the lock". In the second case deltas are still there
+    // (that rollup has not committed yet): wait a moment and try again, so a scheduled run doesn't silently skip.
+    let folded = 0;
+    for (let attempt = 1; ; attempt++) {
+      const [r] = await d.query<{ n: string }>(`SELECT stock_summary_rollup() AS n`);
+      folded = Number(r.n);
+      if (folded > 0) break;
+      const [left] = await d.query<{ any: boolean }>(`SELECT EXISTS (SELECT 1 FROM stock_deltas) AS any`);
+      if (!left.any) break;
+      if (attempt >= ROLLUP_ATTEMPTS) {
+        console.log(`Another stock rollup kept the lock for ${(ROLLUP_ATTEMPTS * ROLLUP_RETRY_MS) / 1000} s; it folds the deltas (${describeStore()})`);
+        return;
+      }
+      await new Promise((r) => setTimeout(r, ROLLUP_RETRY_MS));
+    }
+    console.log(`Folded ${folded} delta rows into stock_summary (${describeStore()})`);
     return;
   }
 

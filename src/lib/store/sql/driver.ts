@@ -11,6 +11,12 @@ export interface SqlDriver {
   /** Where the data lives, for log lines ("PostgreSQL db.example.com/velza"). Never includes a password. */
   readonly label: string;
   query: Query;
+  /**
+   * One statement on its own, never inside a transaction of the app (housekeeping such as the stock rollup). On
+   * PostgreSQL that is a plain pooled query; the embedded database, which has one connection, waits for the open
+   * transaction to finish first, so a failure can't spoil it.
+   */
+  alone: Query;
   /** Several statements at once (the schema). */
   exec(sql: string): Promise<void>;
   /**
@@ -104,6 +110,7 @@ export async function createPgDriver(url: string, opts: PgDriverOptions = {}): P
   return {
     label: describeDatabaseUrl(url),
     query,
+    alone: query,
     async exec(sql) {
       await pool.query(sql);
     },
@@ -170,6 +177,7 @@ export async function createPgliteDriver(dir?: string): Promise<SqlDriver> {
   return {
     label: dir ? `PostgreSQL (embedded) in ${dir}` : "PostgreSQL (embedded, in memory)",
     query,
+    alone: (sql, params) => lock.run(() => query(sql, params)),
     async exec(sql) {
       await db.exec(sql);
     },

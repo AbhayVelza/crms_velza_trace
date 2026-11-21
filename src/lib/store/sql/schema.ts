@@ -30,7 +30,8 @@
 //
 // v9 (17 Nov 2026): live read model and read-path indexes. stock_summary + stock_deltas, kept by statement-level
 // triggers on codes, give live unit counts without reading every code (view stock_current); stock_summary_rollup()
-// folds the deltas in and stock_summary_rebuild() recounts from codes (`npm run db:stock`). Indexes: newest scans
+// folds the deltas in (without waiting: it returns 0 if another rollup is running; the app runs it by itself at most
+// once a minute per process) and stock_summary_rebuild() recounts from codes (`npm run db:stock`). Indexes: newest scans
 // (HQ scan log), lots in containers (Customs lot receive), units in transit by dispatch time (NOT_RECEIVED).
 // New objects only; existing rows are unchanged and the summary is filled from the codes already there.
 
@@ -519,12 +520,16 @@ DROP TRIGGER IF EXISTS stock_codes_truncate ON codes;
 CREATE TRIGGER stock_codes_truncate AFTER TRUNCATE ON codes
   FOR EACH STATEMENT EXECUTE FUNCTION stock_on_codes_truncate();
 
--- Fold the deltas into the summary (run every minute or so; any time is safe). Returns the delta rows folded in.
+-- Fold the deltas into the summary (any time is safe). Returns the delta rows folded in. Never waits: if another
+-- rollup or a rebuild holds the lock it returns 0 at once (the app calls this by itself now and then, from every
+-- instance, next to the jobs container's schedule; \`npm run db:stock -- rollup\` retries).
 CREATE OR REPLACE FUNCTION stock_summary_rollup() RETURNS bigint LANGUAGE plpgsql AS $$
 DECLARE
   folded bigint;
 BEGIN
-  PERFORM pg_advisory_xact_lock(hashtext('velza_stock_summary'));
+  IF NOT pg_try_advisory_xact_lock(hashtext('velza_stock_summary')) THEN
+    RETURN 0;
+  END IF;
   WITH moved AS (DELETE FROM stock_deltas RETURNING location_id, status, code_type, lot_type, flavour, synced, units),
        counted AS (SELECT count(*) AS n FROM moved),
        merged AS (

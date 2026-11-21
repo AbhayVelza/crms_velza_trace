@@ -4,8 +4,9 @@
 --   psql "$OWNER_DATABASE_URL" -v app_password='…' -v readonly_password='…' -f db/roles.sql
 --
 -- Afterwards:
---   - the owner role is the MIGRATOR: only deploys use it (DATABASE_URL in /srv/velza/shared/migrate.env);
---   - velza_app is what the app and the cron jobs use (DATABASE_URL in /srv/velza/shared/.env.local). It reads and
+--   - the owner role is the MIGRATOR: only deploys use it (MIGRATE_DATABASE_URL in /srv/velza/migrate.env, present
+--     only during a deploy; deploy/remote-deploy.sh runs this file with it);
+--   - velza_app is what the app and the jobs container use (DATABASE_URL in /srv/velza/app.env and jobs.env). It reads and
 --     writes rows but cannot create, change or drop tables, so a bug or a leaked password can't alter the schema;
 --   - velza_readonly is for reports, BI tools and people querying by hand.
 -- Safe to run again (it re-applies the grants; passwords are set again).

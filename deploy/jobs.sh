@@ -1,5 +1,5 @@
 #!/bin/sh
-# Scheduled jobs, run by the `jobs` container (ops image). Replaces deploy/crontab.example in the Docker setup.
+# Scheduled jobs, run by the `jobs` container (ops image).
 #   every minute        npm run db:stock -- rollup   (fold stock deltas into the summary)
 #   once a day          npm run db:stock -- check    (recount; a difference means investigate, then rebuild)
 # STOCK_CHECK_HOUR_UTC picks the hour (default 21 UTC = 02:30 IST). HEARTBEAT_STOCK_CHECK_URL, if set, is called

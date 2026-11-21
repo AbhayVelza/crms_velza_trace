@@ -137,8 +137,10 @@ Do these in order. Nothing in AWS is created until you run `terraform apply`.
 - **Normal release:** merge to `main`. CI runs; when it passes, *Deploy* builds the three images (tagged with the
   commit SHA), deploys to staging, then waits for a reviewer to approve production.
 - **Rollback:** Actions → *Deploy* → *Run workflow*, `image_tag` = the commit SHA of the release to go back to. No
-  build; staging and then production get that release. Older code runs on the newer schema: the app never moves the
-  schema backwards, and migrations of an older release are skipped automatically.
+  build; staging and then production get that release. This is the only rollback: Docker Compose through the deploy
+  workflow is the one deployment method (the old PM2 scripts were removed on 21 Nov 2026). Older code runs on the
+  newer schema: the app never moves the schema backwards, and migrations of an older release are skipped
+  automatically (since schema v10, triggers keep `container_items` right for a release that doesn't know it).
 - **What a deploy does on the server** (`deploy/remote-deploy.sh`): pull images → (staging) start its database →
   migrate as the owner → apply roles and grants → start the new containers and wait until healthy → delete
   `migrate.env`, prune old images.
@@ -209,9 +211,3 @@ the backstop and keeps the daily check. Measured on PostgreSQL 16 with 5 lakh co
 rollup (1.6 ms with 4,000 deltas waiting) against 171 ms for a full `GROUP BY`; about 10% extra on bulk inserts and
 0.04 ms per single-code scan. `npm run db:stock -- rebuild` recounts it (blocks writes to `codes` while it runs:
 outside shift peaks).
-
-## 7. Without Docker (fallback)
-
-`deploy/deploy.sh`, `deploy/rollback.sh`, `deploy/ecosystem.config.cjs` and `deploy/crontab.example` deploy the same
-app with PM2 on a plain VPS (Node 24, Nginx or Caddy in front). Kept for emergencies; the Docker path above is the
-supported one.

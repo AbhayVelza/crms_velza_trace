@@ -12,7 +12,7 @@ import { createPgDriver, createPgliteDriver, describeDatabaseUrl } from "./sql/d
 import { SqlStore } from "./sql/sqlStore";
 import type { Store } from "./Store";
 
-export type { Store, StoreTx, DbSnapshot } from "./Store";
+export type { Store, StoreTx, DbSnapshot, StockSummaryRow } from "./Store";
 export { ConcurrentWriteError, IntegrityError, NotFoundError, type TransactionOptions } from "./Store";
 export { JsonStoreLockedError } from "./jsonStore";
 

@@ -93,8 +93,16 @@ Do these in order. Nothing in AWS is created until you run `terraform apply`.
    terraform -chdir=infra/terraform/envs/prod init
    terraform -chdir=infra/terraform/envs/prod apply -var "deploy_ssh_public_key=$(cat velza-prod-deploy.pub)"
    ```
-   Note the outputs: `deploy_role_arns` (global), `static_ip` (each environment). The prod database has
-   `prevent_destroy`; removing it needs a deliberate code change.
+   Note the outputs: `deploy_role_arns` (global), `static_ip` and `backup_bucket` (each environment). The prod
+   database has `prevent_destroy`; removing it needs a deliberate code change.
+   **Then turn on versioning for each backup bucket, once** (the Terraform AWS provider has no setting for it on
+   `aws_lightsail_bucket`, checked up to v6.73):
+   ```bash
+   aws lightsail update-bucket --bucket-name "$(terraform -chdir=infra/terraform/envs/staging output -raw backup_bucket)" --versioning Enabled --region ap-south-1
+   aws lightsail update-bucket --bucket-name "$(terraform -chdir=infra/terraform/envs/prod output -raw backup_bucket)" --versioning Enabled --region ap-south-1
+   aws lightsail get-buckets --region ap-south-1 --query 'buckets[].[name,objectVersioning]' --output table   # both: Enabled
+   ```
+   See *Backups: what versioning protects* in section 4.
 6. **DNS**: A records `staging.velzaglobal.com` and `app.velzaglobal.com` → the two static IPs. Caddy gets the HTTPS
    certificates on the first deploy once these resolve.
 7. **GitHub** → Settings → Environments: create `staging` and `production`.
@@ -153,6 +161,17 @@ Do these in order. Nothing in AWS is created until you run `terraform apply`.
 | `backup` | `pg_dump` → `s3://<bucket>/db/daily/`, monthly copy on the 1st; damage photos → `uploads/`; prune (14 days / 12 months); heartbeat | daily 20:00 UTC (01:30 IST) |
 
 - One-off backup: `docker compose run --rm backup now`.
+- **Backups: what versioning protects.** With versioning on (one-time step in section 2), a delete or overwrite in
+  the bucket, including `backup.sh`'s own pruning of old dumps, only hides the object behind a delete marker; the
+  older version stays and can be restored (`aws s3api list-object-versions --bucket <name> --prefix db/`, then
+  `aws s3api get-object --version-id <id>`, with the bucket's key or an admin login). The pruning logic is unchanged,
+  so pruned dumps now stay as older versions and the bucket grows by one dump a day. Look at its size in the Lightsail
+  console now and then, and remove old versions by hand from an admin login when needed.
+  **Limits, honestly:** a Lightsail bucket access key can't be made write-only; the key on the server can read, and
+  with a version ID even permanently delete, everything in the bucket. Versioning protects against mistakes and
+  careless scripts, not against someone who has taken over the server and knows to delete versions. Lightsail's own
+  automatic database backups (production) are out of that key's reach. The full fix, S3 with Object Lock and
+  lifecycle rules and a put-only role, comes with the move to ECS + RDS.
 - **Restore test, monthly:** download the latest dump from the bucket, restore it into staging's database
   (`pg_restore --clean --no-owner`), redeploy staging, run the stock check, sign in and look around.
 - Production also has Lightsail's own automatic backups and point-in-time restore (Lightsail console → database →

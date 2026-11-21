@@ -36,16 +36,27 @@ Every deploy runs `db/roles.sql` (idempotent) with passwords from Parameter Stor
 | `velza_app` | the app and the jobs container (`DATABASE_URL`) | read and write rows; **no** schema changes |
 | `velza_readonly` | the backup container, reports (`BACKUP_DATABASE_URL`) | read only |
 
-### Settings (Parameter Store → the server's `.env`)
+### Settings (Parameter Store → one file per container)
 
-Terraform writes all of these; the deploy workflow copies every parameter under `/velza/<env>/` into `/srv/velza/.env`
-(`-` means "not set" and is skipped). Nothing secret lives in the repo or in GitHub except the SSH deploy key.
+Terraform writes these under `/velza/<env>/`. The deploy workflow (`.github/workflows/deploy-env.yml`, `files_for`)
+writes each parameter only to the files of the containers that need it (`-` means "not set" and is skipped), so the
+internet-facing app never holds the owner password, the bucket keys or the seed passwords. Nothing secret lives in the
+repo or in GitHub except the SSH deploy key.
 
-`NODE_ENV`, `DOMAIN`, `ACME_EMAIL`, `CLIENT_IP_HEADER`, `PG_POOL_MAX`, `DATABASE_URL`, `MIGRATE_DATABASE_URL`,
-`BACKUP_DATABASE_URL`, `APP_DB_PASSWORD`, `READONLY_DB_PASSWORD`, `VELZA_ADMIN_PASSWORD`, `VELZA_HQ_PASSWORD` (first
-start only), `BACKUP_BUCKET`, `AWS_DEFAULT_REGION`, `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (bucket only),
-`COMPOSE_PROFILES` (`localdb` on staging), `DEPLOY_HOST`, `LOCAL_DB_PASSWORD` (staging), and the optional
-`HEARTBEAT_BACKUP_URL` / `HEARTBEAT_STOCK_CHECK_URL` (fill in by hand).
+| File in `/srv/velza` | Read by | Keys |
+| --- | --- | --- |
+| `.env` | Compose itself (substituted into `compose.yml`; no container gets it) | `DOMAIN`, `ACME_EMAIL`, `COMPOSE_PROFILES` (`localdb` on staging), `CLIENT_IP_HEADER`, `LOCAL_DB_PASSWORD` (staging's own `db` container), and the image tags the workflow adds |
+| `app.env` | `app` | `NODE_ENV`, `DATABASE_URL` (`velza_app`), `PG_POOL_MAX`; optional `PG_LOCK_POOL_MAX`, `DATABASE_URL_UNPOOLED`, `VELZA_ALLOCATION_LOCK_WAIT_MS`, `RATE_LIMIT_*_PER_MIN` |
+| `jobs.env` | `jobs` | `DATABASE_URL` (`velza_app`), optional `HEARTBEAT_STOCK_CHECK_URL`, `STOCK_CHECK_HOUR_UTC` |
+| `backup.env` | `backup` | `BACKUP_DATABASE_URL` (`velza_readonly`), `BACKUP_BUCKET`, `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (this bucket only), `AWS_DEFAULT_REGION`; optional `HEARTBEAT_BACKUP_URL`, `BACKUP_HOUR_UTC`, `BACKUP_KEEP_DAYS`, `BACKUP_KEEP_MONTHS` |
+| `migrate.env` | only the one-off migrate and roles steps of `deploy/remote-deploy.sh` | `MIGRATE_DATABASE_URL` (owner), `APP_DB_PASSWORD`, `READONLY_DB_PASSWORD`, `VELZA_ADMIN_PASSWORD` / `VELZA_HQ_PASSWORD` (the first-start seed runs inside `db:migrate`) |
+
+`DEPLOY_HOST` is used by the workflow only and is written to no file. `CLIENT_IP_HEADER` reaches the app through
+`compose.yml`'s `environment:`. Every file is `chmod 600`; `migrate.env` is deleted from the server at the end of a
+successful deploy (each deploy copies it again), and its values reach the one-off containers as `-e NAME` from the
+script's environment, never on a command line. **A new parameter must first be added to `files_for`**: a parameter
+the mapping doesn't know stops the deploy with an error naming it. The CI smoke test checks that `app` and `jobs` see
+none of the migrate or bucket secrets.
 
 The managed database is reached over verified TLS: URLs end with
 `?sslmode=verify-full&sslrootcert=/etc/ssl/aws/rds-global-bundle.pem` (the AWS certificate bundle is in every image).
@@ -102,7 +113,8 @@ Do these in order. Nothing in AWS is created until you run `terraform apply`.
    # anywhere with pg_dump 16+: pause scanning first
    pg_dump --format=custom --no-owner --no-privileges "$NEON_DIRECT_URL" > neon.dump
    scp neon.dump ubuntu@<prod static ip>:/srv/velza/
-   # on the prod server; MIGRATE_DATABASE_URL from Parameter Store /velza/prod/MIGRATE_DATABASE_URL
+   # on the prod server; MIGRATE_DATABASE_URL from Parameter Store /velza/prod/MIGRATE_DATABASE_URL (not kept on the
+   # server: migrate.env is deleted after each deploy)
    docker run --rm -v /srv/velza/neon.dump:/tmp/neon.dump:ro \
      -v /srv/velza/rds-global-bundle.pem:/etc/ssl/aws/rds-global-bundle.pem:ro postgres:16 \
      pg_restore --no-owner --no-privileges --dbname="$MIGRATE_DATABASE_URL" /tmp/neon.dump
@@ -120,7 +132,8 @@ Do these in order. Nothing in AWS is created until you run `terraform apply`.
   build; staging and then production get that release. Older code runs on the newer schema: the app never moves the
   schema backwards, and migrations of an older release are skipped automatically.
 - **What a deploy does on the server** (`deploy/remote-deploy.sh`): pull images → (staging) start its database →
-  migrate as the owner → apply roles and grants → start the new containers and wait until healthy → prune old images.
+  migrate as the owner → apply roles and grants → start the new containers and wait until healthy → delete
+  `migrate.env`, prune old images.
   If any step fails, the running containers keep running. The workflow then checks `https://<domain>/login`.
 - **Schema rule:** migrations run while the previous release is still serving, so every change must work with the
   previous release (add first, remove in a later release). CI's *schema upgrade = fresh install* job checks upgrades.
@@ -154,7 +167,7 @@ Useful commands on a server (`cd /srv/velza`): `docker compose ps`, `docker comp
 | --- | --- |
 | Typecheck, lint, test, build | the app (tests on the JSON store and embedded PostgreSQL) |
 | Schema upgrade = fresh install | a database from the previous commit, upgraded, equals a fresh install; stock summary = recount |
-| Docker images + stack smoke test | builds the three images; runs the real deploy script; HTTPS, sign-in, the app on the restricted `velza_app` role, stock check, backup dump (`deploy/smoke-test.sh`) |
+| Docker images + stack smoke test | builds the three images; runs the real deploy script; HTTPS, sign-in, each container sees only its own secrets and `migrate.env` is gone, the app on the restricted `velza_app` role, stock check, backup dump (`deploy/smoke-test.sh`) |
 | Terraform fmt + validate | every Terraform folder is valid (formatting is reported as a warning) |
 
 ## 6. Live stock summary (schema v9)

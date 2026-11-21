@@ -1,6 +1,6 @@
 # One Velza environment on AWS Lightsail: server + static IP + firewall, managed PostgreSQL (prod) or a database
 # container (staging), a backup bucket, and every runtime setting in Parameter Store under /velza/<env>/.
-# The deploy workflow turns those parameters into the server's .env (docs/DEPLOYMENT.md).
+# The deploy workflow writes each parameter into the env file of the containers that need it (docs/DEPLOYMENT.md).
 
 terraform {
   required_version = ">= 1.10"
@@ -157,7 +157,8 @@ resource "aws_lightsail_bucket_access_key" "backups" {
 data "aws_caller_identity" "current" {}
 
 # ---------------------------------------------------------------- runtime settings (Parameter Store)
-# Every key below becomes a line of the server's .env (KEY=value). SecureString for anything secret.
+# Every key below becomes a KEY=value line in the server's env files; a new key must also be added to files_for in
+# .github/workflows/deploy-env.yml, or the deploy stops. SecureString for anything secret.
 
 locals {
   settings = merge(

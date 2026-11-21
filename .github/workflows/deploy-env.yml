@@ -35,7 +35,7 @@ jobs:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ap-south-1
 
-      - name: Settings from Parameter Store → .env
+      - name: Settings from Parameter Store → one environment file per container
         id: env
         env:
           PARAM_ENV: ${{ inputs.param_env }}
@@ -45,12 +45,31 @@ jobs:
           umask 077
           aws ssm get-parameters-by-path --path "/velza/${PARAM_ENV}/" --recursive --with-decryption \
             --query 'Parameters[].[Name,Value]' --output text > params.tsv
-          : > .env
+          # Every parameter goes only to the files listed for it (docs/DEPLOYMENT.md, "Settings"). A parameter not
+          # listed here stops the deploy: add it to this mapping first, so nothing secret lands in the wrong file.
+          files_for() {
+            case "$1" in
+              DOMAIN | ACME_EMAIL | COMPOSE_PROFILES | CLIENT_IP_HEADER | LOCAL_DB_PASSWORD) echo ".env" ;;
+              DEPLOY_HOST) echo "" ;; # used by this workflow only
+              NODE_ENV | PG_POOL_MAX | PG_LOCK_POOL_MAX | DATABASE_URL_UNPOOLED | VELZA_ALLOCATION_LOCK_WAIT_MS) echo "app.env" ;;
+              RATE_LIMIT_PER_MIN | RATE_LIMIT_WRITES_PER_MIN | RATE_LIMIT_PUBLIC_PER_MIN | RATE_LIMIT_GLOBAL_PER_MIN) echo "app.env" ;;
+              DATABASE_URL) echo "app.env jobs.env" ;;
+              HEARTBEAT_STOCK_CHECK_URL | STOCK_CHECK_HOUR_UTC) echo "jobs.env" ;;
+              BACKUP_DATABASE_URL | BACKUP_BUCKET | AWS_ACCESS_KEY_ID | AWS_SECRET_ACCESS_KEY | AWS_DEFAULT_REGION) echo "backup.env" ;;
+              HEARTBEAT_BACKUP_URL | BACKUP_HOUR_UTC | BACKUP_KEEP_DAYS | BACKUP_KEEP_MONTHS) echo "backup.env" ;;
+              MIGRATE_DATABASE_URL | APP_DB_PASSWORD | READONLY_DB_PASSWORD | VELZA_ADMIN_PASSWORD | VELZA_HQ_PASSWORD) echo "migrate.env" ;;
+              *) return 1 ;;
+            esac
+          }
+          : > .env; : > app.env; : > jobs.env; : > backup.env; : > migrate.env
+          host=""; domain=""
           while IFS=$'\t' read -r name value; do
             key="${name##*/}"
+            files="$(files_for "$key")" || { echo "::error::Unknown setting /velza/${PARAM_ENV}/${key}: add it to files_for in deploy-env.yml (which container needs it?)"; exit 1; }
             [ "$value" = "-" ] && continue # placeholder for "not set"
             echo "::add-mask::${value}"
-            printf '%s=%s\n' "$key" "$value" >> .env
+            case "$key" in DEPLOY_HOST) host="$value" ;; DOMAIN) domain="$value" ;; esac
+            for f in $files; do printf '%s=%s\n' "$key" "$value" >> "$f"; done
           done < params.tsv
           rm -f params.tsv
           owner="${GITHUB_REPOSITORY_OWNER,,}"
@@ -59,8 +78,6 @@ jobs:
             echo "OPS_IMAGE=ghcr.io/${owner}/velza-ops:${TAG}"
             echo "BACKUP_IMAGE=ghcr.io/${owner}/velza-backup:${TAG}"
           } >> .env
-          host="$(grep -m1 '^DEPLOY_HOST=' .env | cut -d= -f2-)"
-          domain="$(grep -m1 '^DOMAIN=' .env | cut -d= -f2-)"
           [ -n "$host" ] && [ -n "$domain" ] || { echo "::error::DEPLOY_HOST or DOMAIN missing under /velza/${PARAM_ENV}/"; exit 1; }
           echo "host=${host}" >> "$GITHUB_OUTPUT"
           echo "domain=${domain}" >> "$GITHUB_OUTPUT"
@@ -83,7 +100,9 @@ jobs:
           printf 'Host target\n  HostName %s\n  User ubuntu\n  IdentityFile ~/.ssh/id_deploy\n  IdentitiesOnly yes\n  StrictHostKeyChecking yes\n  ServerAliveInterval 30\n' "$HOST" > ~/.ssh/config
 
       - name: Copy the stack definition and settings
-        run: scp -q deploy/compose.yml deploy/Caddyfile deploy/remote-deploy.sh db/roles.sql .env target:/srv/velza/
+        run: |
+          scp -q deploy/compose.yml deploy/Caddyfile deploy/remote-deploy.sh db/roles.sql \
+            .env app.env jobs.env backup.env migrate.env target:/srv/velza/
 
       - name: Deploy on the server
         env:
@@ -104,4 +123,4 @@ jobs:
 
       - name: Remove secrets from the runner
         if: always()
-        run: rm -f .env ~/.ssh/id_deploy
+        run: rm -f .env app.env jobs.env backup.env migrate.env params.tsv ~/.ssh/id_deploy

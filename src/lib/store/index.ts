@@ -34,11 +34,14 @@ export function databaseUrl(env: Record<string, string | undefined> = process.en
   return env.DATABASE_URL_UNPOOLED || env.DATABASE_URL || undefined;
 }
 
-export function storeKind(): StoreKind {
-  const kind = process.env.STORE || (databaseUrl() ? "postgres" : "json");
+export function storeKind(env: Record<string, string | undefined> = process.env): StoreKind {
+  const kind = env.STORE || (databaseUrl(env) ? "postgres" : "json");
   if (kind !== "json" && kind !== "postgres" && kind !== "pglite") throw new Error(`Unsupported STORE "${kind}" (use json, postgres or pglite)`);
   // Vercel functions have a read-only disk and many short-lived copies: a JSON file there would be lost or split.
-  if (kind === "json" && process.env.VERCEL) throw new Error("On Vercel connect a PostgreSQL database (DATABASE_URL_UNPOOLED or DATABASE_URL, docs/VERCEL.md); the JSON store needs a real disk");
+  if (kind === "json" && env.VERCEL) throw new Error("On Vercel connect a PostgreSQL database (DATABASE_URL_UNPOOLED or DATABASE_URL, docs/VERCEL.md); the JSON store needs a real disk");
+  // Embedded PostgreSQL lives inside one process: every Vercel instance would get its own empty database, so data
+  // written by one request would be missing from the next.
+  if (kind === "pglite" && env.VERCEL) throw new Error("On Vercel connect a PostgreSQL database (DATABASE_URL_UNPOOLED or DATABASE_URL, docs/VERCEL.md); embedded PostgreSQL (STORE=pglite) keeps its data inside one instance");
   return kind;
 }
 

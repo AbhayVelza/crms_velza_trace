@@ -41,7 +41,7 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: postgres:17
+        image: postgres:16 # same major version as Lightsail and the backup image
         env:
           POSTGRES_PASSWORD: postgres
         ports: ["5432:5432"]

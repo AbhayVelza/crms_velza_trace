@@ -630,7 +630,9 @@ test.describe.serial("Velza demo script (9.1)", () => {
     await as(page, "DB", "DB-1", "/dispatch");
     await expect(page.getByLabel("Destination").locator("option", { hasText: "Camp Kirana" })).toHaveCount(0);
 
-    // The approved distributor signs in with the password it chose.
+    // The approved distributor signs in with the password it chose. Leave /dispatch first: its own data requests,
+    // still in flight, would come back 401 once the cookies are gone and send the page to /login, cancelling the goto.
+    await page.goto("about:blank");
     await page.context().clearCookies();
     await page.goto("/dispatch");
     await expect(page).toHaveURL(/\/login\?next=%2Fdispatch$/);

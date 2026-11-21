@@ -13,7 +13,8 @@ These steps are done once, by hand, in the Vercel, Neon and GitHub dashboards. N
 | Fact | Consequence |
 |---|---|
 | Vercel's disk is read-only and is not kept between requests. | The JSON store (`data/db.json`) cannot work: production and previews must use PostgreSQL. |
-| The app holds a **session-level advisory lock** across a transaction when it allocates codes (`src/lib/store/sql/driver.ts`). Neon's pooled address runs PgBouncer in transaction mode, which does not support session-level locks. | The app must use Neon's **direct** (non-pooled) address. It reads `DATABASE_URL_UNPOOLED` first, which the Neon integration sets to the direct address, and falls back to `DATABASE_URL`. |
+| Vercel runs many short-lived function instances, each with its own connection pool. Neon's direct address accepts only a limited number of connections (about 100 on the smallest compute); its pooled address (PgBouncer in transaction mode) shares a few server connections between thousands of clients. | Ordinary queries and transactions use the **pooled** `DATABASE_URL`, with a small pool per instance (`PG_POOL_MAX`, default **3** on Vercel). |
+| The app holds a **session-level advisory lock** across a transaction when it allocates codes for a print order (`src/lib/store/sql/driver.ts`). A transaction-mode pooler can't keep a session-level lock. | Only those code-allocation transactions use Neon's **direct** address, `DATABASE_URL_UNPOOLED`, through a second, tiny pool (`PG_LOCK_POOL_MAX`, default **2**) that an instance opens only when it allocates codes. Without `DATABASE_URL_UNPOOLED` everything uses `DATABASE_URL` and one pool (Docker, Lightsail, a laptop). |
 | Neon has no Mumbai region; the closest is Singapore (`aws-ap-southeast-1`). Every request makes several database round trips. | The functions run next to the database, in Vercel's Singapore region `sin1` (`vercel.json`). One Mumbai ↔ Singapore hop per request (about 60 ms) is cheaper than one per query. |
 | Damage photos are saved as files (`src/lib/services/damagePhotos.ts`). | On Vercel they go to `/tmp/velza-uploads` (the default when `VERCEL` is set), which is temporary and not shared between function instances. See [Known limits](#known-limits). |
 | The Docker image uses `output: "standalone"`. | `next.config.ts` turns it off when `VERCEL` is set (during Vercel builds); Vercel packages the app itself. |
@@ -46,7 +47,8 @@ Vercel region closest to that database.
    - **Preview deployments: create a database branch for each preview deployment** (Neon names it after the Git
      branch, e.g. `preview/feature-abhay-customs-export`).
    - Environment variable prefix: **leave it empty**, so the variables are named `DATABASE_URL`,
-     `DATABASE_URL_UNPOOLED`, `PGHOST`, … exactly. The app reads `DATABASE_URL_UNPOOLED`.
+     `DATABASE_URL_UNPOOLED`, `PGHOST`, … exactly. The app reads both: `DATABASE_URL` (pooled) for everything except
+     code allocation, which uses `DATABASE_URL_UNPOOLED` (direct).
 4. In the Neon console for this project: turn on **automatic deletion of preview branches** when their Git branch
    is deleted (or delete old `preview/*` branches by hand). Check your Neon plan's branch limit: one branch per
    open PR adds up.
@@ -57,9 +59,10 @@ Vercel → Project → **Settings → Environment Variables**. Mark passwords **
 
 | Variable | Production | Preview | Notes |
 |---|---|---|---|
-| `DATABASE_URL` | set by the Neon integration | set by the Neon integration (per preview branch) | Pooled address. Don't edit; the app uses it only if `DATABASE_URL_UNPOOLED` is missing. |
-| `DATABASE_URL_UNPOOLED` | set by the Neon integration | set by the Neon integration (per preview branch) | Direct address. **This is the one the app uses.** Don't edit. |
-| `PG_POOL_MAX` | `5` | `3` | Connections per function instance. Instances × `PG_POOL_MAX` must stay under the Neon compute's limit (about 100 on the smallest, 0.25 CU). Idle connections close after 10 s. |
+| `DATABASE_URL` | set by the Neon integration | set by the Neon integration (per preview branch) | Pooled address (host ends in `-pooler`). Every query and transaction except code allocation. Don't edit. |
+| `DATABASE_URL_UNPOOLED` | set by the Neon integration | set by the Neon integration (per preview branch) | Direct address. Only code allocation for print orders (it holds a session-level lock). Don't edit. |
+| `PG_POOL_MAX` | optional (default `3` on Vercel) | optional (default `3`) | Connections per function instance to the pooled address. They are cheap (PgBouncer multiplexes them), but keep it small: one request uses one connection at a time. Idle connections close after 10 s. |
+| `PG_LOCK_POOL_MAX` | optional (default `2`) | optional (default `2`) | Connections per function instance to the direct address, opened only by instances that allocate codes. Instances printing at the same time × `PG_LOCK_POOL_MAX` must stay under the Neon compute's direct-connection limit (about 100 on the smallest, 0.25 CU). |
 | `VELZA_ADMIN_PASSWORD` | a strong, unique password | a different strong password | Used only when the database is empty (first start). Change it in the app after the first sign-in. |
 | `VELZA_HQ_PASSWORD` | a strong, unique password | a different strong password | As above. |
 | `HTTPS_ONLY` | `1` | `1` | Vercel serves HTTPS only: turns on HSTS and `upgrade-insecure-requests`. |
@@ -154,6 +157,7 @@ These are fine for a test deployment, but each needs fixing before Vercel could 
 - **Live stock summary upkeep.** Counts are exact without it, but `stock_deltas` grows until it is folded. Now and
   then run `npm run db:stock -- rollup` (and `-- check`) from a laptop with the direct Neon address in
   `DATABASE_URL`, as in step 4. Vercel Hobby crons run at most once a day, so there is no per-minute job here.
-- **Connections.** Each function instance keeps up to `PG_POOL_MAX` direct connections. If Vercel logs show
-  `too many connections` / `remaining connection slots are reserved`, lower `PG_POOL_MAX` or give the Neon
-  compute more CU.
+- **Connections.** Each function instance keeps up to `PG_POOL_MAX` (default 3) connections to Neon's pooler, and
+  an instance that allocates codes also up to `PG_LOCK_POOL_MAX` (default 2) direct connections. Only the direct ones
+  count against the compute's connection limit. If Vercel logs still show `too many connections` /
+  `remaining connection slots are reserved`, lower `PG_LOCK_POOL_MAX` to 1 or give the Neon compute more CU.

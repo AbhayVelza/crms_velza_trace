@@ -113,10 +113,15 @@ describe("opening a lot: location before status", () => {
     expect(await openLot("RT0001", { lotCode: lots[0] })).toMatchObject({ ok: false, code: "WRONG_STATUS", message: expect.stringContaining("already opened") });
   });
 
-  it("a different retailer's unopened lot, an unknown code, and a non-retailer", async () => {
+  it("a different retailer's unopened lot, an unknown code, and partners that may not open it", async () => {
     expect(await openLot("RT0001", { lotCode: lots[1] })).toMatchObject({ ok: false, code: "NOT_AT_LOCATION" });
     expect(await openLot("RT0001", { lotCode: NEVER })).toMatchObject({ ok: false, code: "UNKNOWN_CODE" });
-    await expect(openLot("SS0001", { lotCode: lots[1] })).rejects.toMatchObject({ status: 403 });
+    // A Super Stockist may open lots, but only of its own stock: about another partner's lot it learns nothing more.
+    expect(await openLot("SS0001", { lotCode: lots[1] })).toMatchObject({ ok: false, code: "NOT_AT_LOCATION", message: expect.not.stringMatching(/AT_RETAILER|opened/i) });
+    expect(await openLot("SS0001", { lotCode: lots[0] })).toMatchObject({ ok: false, code: "NOT_AT_LOCATION", message: expect.not.stringContaining("opened") });
+    // Customs and the plant can't open lots at all.
+    await expect(openLot("VW0001", { lotCode: lots[1] })).rejects.toMatchObject({ status: 403 });
+    await expect(openLot(ids.op, { lotCode: lots[1] })).rejects.toMatchObject({ status: 403 });
   });
 
   it("a recalled lot is still reported as blocked wherever it is scanned (recall alert kept)", async () => {

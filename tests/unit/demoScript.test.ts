@@ -149,9 +149,10 @@ describe("demo script 9.1", () => {
     expect(await dispatch(ids.ss1, { action: "confirm", toPartnerId: ids.DB1, invoice: "INV-002", codes: [c] })).toMatchObject({ ok: true });
     expect(await receive(ids.db1, { code: c })).toMatchObject({ ok: true, status: "AT_DB" });
 
-    // Sealed: a pack can't move on its own, and only a Retailer opens a case
+    // Sealed: a pack can't move on its own. DB-1 may open a case of its own stock (splitAtDistributor.test.ts) but not
+    // one held elsewhere (the other case is still at SS-1); here it ships the case on sealed.
     expect(await dispatch(ids.db1, { action: "check", toPartnerId: ids.RT1, invoice: "INV-003", code: pack62 })).toMatchObject({ ok: false, code: "LOT_SEALED" });
-    await expect(openLot(ids.db1, { lotCode: c })).rejects.toMatchObject({ status: 403 });
+    expect(await openLot(ids.db1, { lotCode: lots[1] })).toMatchObject({ ok: false, code: "NOT_AT_LOCATION" });
     expect(await dispatch(ids.db1, { action: "check", toPartnerId: ids.RT4, invoice: "INV-003", code: c })).toMatchObject({ ok: false, code: "WRONG_DESTINATION" }); // SS-1's retailer
     expect(await dispatch(ids.db1, { action: "confirm", toPartnerId: ids.RT1, invoice: "INV-003", codes: [c] })).toMatchObject({ ok: true });
     expect(await receive(ids.rt1, { code: c })).toMatchObject({ ok: true, status: "AT_RETAILER" });

@@ -33,7 +33,8 @@ export const PERMISSIONS: Record<Action, Role[]> = {
   verify: ["QC"],
   dispatch: ["OPERATOR", "WAREHOUSE", "SS", "DB"],
   receive: ["WAREHOUSE", "SS", "DB", "RETAILER"],
-  openLot: ["RETAILER"],
+  /** Open (split) a case or tray in your own stock so its packs move one by one (rules.ts LOT_OPENER_TYPES). */
+  openLot: ["SS", "DB", "RETAILER"],
   reprint: ["OPERATOR"],
   void: ["OPERATOR"],
   device: ["OPERATOR", "ADMIN"],

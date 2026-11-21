@@ -40,8 +40,9 @@ export const MENU: Record<Role, MenuItem[]> = {
   QC: [{ href: "/qc/verify", label: "Verify", description: "Scan a lot and each of its packs, then confirm" }, stock, details],
   // Customs (partner type WAREHOUSE) receives the plant's containers, clears them and supplies Super Stockists; it never opens lots.
   WAREHOUSE: [receive, { ...containers, description: "Containers from the plant: receive by scanning the number on Receive, then Mark cleared" }, dispatch, stock, details, damaged],
-  SS: [receive, dispatch, stock, details, damaged, { href: "/my-partners", label: "My partners", description: "The distributors and retailers assigned to you and their stock" }],
-  DB: [receive, dispatch, stock, details, damaged, { href: "/my-partners", label: "My retailers", description: "The retailers assigned to you and their stock" }],
+  // A Super Stockist or Distributor may open a case or tray to dispatch its packs one by one to its Retailers.
+  SS: [receive, dispatch, openLot, stock, details, damaged, { href: "/my-partners", label: "My partners", description: "The distributors and retailers assigned to you and their stock" }],
+  DB: [receive, dispatch, openLot, stock, details, damaged, { href: "/my-partners", label: "My retailers", description: "The retailers assigned to you and their stock" }],
   RETAILER: [receive, openLot, stock, details, damaged],
   TRACE_OWNER: [
     { href: "/hq", label: "Dashboard", description: "Status counts, stock by location, in transit, alerts" },

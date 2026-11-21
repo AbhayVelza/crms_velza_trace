@@ -1,7 +1,7 @@
 // Dev-only demo helper: click-to-scan codes relevant to each screen, so the demo runs without a scanner.
 
 import type { Action } from "@/lib/core/permissions";
-import { DESTINATION_TYPES } from "@/lib/core/rules";
+import { AT_STATUS, DESTINATION_TYPES } from "@/lib/core/rules";
 import type { Lot, Pack } from "@/lib/core/types";
 import { getStore } from "@/lib/store";
 import { isVisible, loadActor, partnerName, requireAction } from "./common";
@@ -72,8 +72,11 @@ export async function demoCodes(userId: string | null, screen: DemoScreen, lotCo
       const forOthers = lots.filter((l) => l.status === "IN_TRANSIT" && l.inTransitToId !== me).slice(0, 3).map((l) => ({ code: l.lotCode, label: `in transit to ${name(l.inTransitToId)}` }));
       return [...forMe, ...packsForMe, ...forOthers, FAKE];
     }
-    case "open":
-      return lots.filter((l) => l.locationId === me && l.status === "AT_RETAILER").map((l) => ({ code: l.lotCode, label: lotLabel(l) }));
+    case "open": {
+      // Sealed cases and trays in stock here (an SS, Distributor or Retailer).
+      const held = actor.partner ? AT_STATUS[actor.partner.type] : null;
+      return lots.filter((l) => l.locationId === me && l.status === held).map((l) => ({ code: l.lotCode, label: lotLabel(l) }));
+    }
     case "damage": {
       // Lots in stock here (sealed, or opened with packs left here), and loose packs in stock here.
       const inStock = new Set(["PACKED", "AT_WAREHOUSE", "AT_SS", "AT_DB", "AT_RETAILER"]);

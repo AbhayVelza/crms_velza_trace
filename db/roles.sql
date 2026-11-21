@@ -27,9 +27,12 @@ GRANT USAGE ON SCHEMA public TO velza_app, velza_readonly;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO velza_app;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO velza_app;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO velza_readonly;
+-- pg_dump reads each sequence's current value, so backups need SELECT on sequences too.
+GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO velza_readonly;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO velza_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO velza_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO velza_readonly;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON SEQUENCES TO velza_readonly;
 
 -- Reports run on a read replica when there is one; keep heavy ad-hoc queries from holding locks for long.
 ALTER ROLE velza_readonly SET statement_timeout = '120s';

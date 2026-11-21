@@ -21,7 +21,7 @@ in the *Cloud Infrastructure & Cost Plan*.
 | Database | PostgreSQL 16 container on the server | Lightsail managed PostgreSQL 16, 4 GB / 120 GB (`medium_2_0`) |
 | Backups | bucket 5 GB | bucket 100 GB + Lightsail's automatic backups / point-in-time restore |
 | Settings | Parameter Store `/velza/staging/*` | Parameter Store `/velza/prod/*` |
-| Deploys | automatically after CI passes on `main` | same release, after a reviewer approves |
+| Deploys | Actions → Deploy → Run workflow (automatic after CI on `main` once AWS is set up, see deploy.yml) | same release, after a reviewer approves |
 
 **Developers never use the production database.** Use `STORE=pglite`, a local PostgreSQL, or a Neon dev branch in
 `.env.local`. Under `npm run dev` sign-in is off and every request acts as Velza Admin.

@@ -31,6 +31,8 @@ RUN npm run build
 #   ?sslmode=verify-full&sslrootcert=/etc/ssl/aws/rds-global-bundle.pem
 FROM ${NODE_IMAGE} AS certs
 ADD https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /etc/ssl/aws/rds-global-bundle.pem
+# ADD saves downloads as root-only (0600); the app and jobs run as `node` and must be able to read it.
+RUN chmod 644 /etc/ssl/aws/rds-global-bundle.pem
 
 # ---------------------------------------------------------------- ops image
 FROM ${NODE_IMAGE} AS ops

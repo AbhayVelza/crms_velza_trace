@@ -1,0 +1,32 @@
+# Keeps the Render free web service awake: it sleeps after 15 minutes without visitors, so visit it every 10.
+# GitHub may start scheduled runs late (sometimes 15+ minutes), so the app can still fall asleep now and then; a
+# free uptime monitor (UptimeRobot, cron-job.org) on the same URL makes that rarer. See docs/RENDER.md.
+#
+# Set the repository variable RENDER_APP_URL (Settings → Secrets and variables → Actions → Variables), e.g.
+# https://velza-trace.onrender.com. Scheduled workflows run only from the default branch (main), and GitHub turns
+# them off after 60 days without commits to the repository.
+name: Keep Render awake
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Visit the app
+        env:
+          URL: ${{ vars.RENDER_APP_URL }}
+        run: |
+          if [ -z "$URL" ]; then
+            echo "::warning::Repository variable RENDER_APP_URL is not set; nothing to ping."
+            exit 0
+          fi
+          # A sleeping instance takes about a minute to wake up: allow for it, and retry once more after that.
+          curl -fsSL -o /dev/null --retry 2 --retry-delay 30 --retry-all-errors --max-time 120 \
+            -w "HTTP %{http_code} in %{time_total}s\n" "${URL%/}/login"

@@ -36,6 +36,13 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // Self-contained server in .next/standalone (only the files it needs): the production Docker image runs it
+  // with `node server.js`. `next start` keeps working for non-Docker deploys. Vercel (VERCEL=1 during its builds)
+  // packages the app its own way, so it gets the default output (docs/VERCEL.md).
+  output: process.env.VERCEL ? undefined : "standalone",
+  // The upload folder and the JSON data file are found at run time from process.cwd(), so the file tracer would copy
+  // whatever sits in data/ (local photos, db.json) into the bundle. Keep data, tests and sources out of it.
+  outputFileTracingExcludes: { "*": ["data/**", "tests/**", "src/**", "scripts/**", "docs/**"] },
   cacheComponents: true,
   partialPrefetching: true,
   // Don't advertise the framework (X-Powered-By: Next.js).

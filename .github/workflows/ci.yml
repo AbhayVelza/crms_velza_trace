@@ -1,0 +1,137 @@
+# Runs on every pull request and every push to main. Make both jobs required checks in
+# GitHub → Settings → Branches → main (branch protection), together with one approving review.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Typecheck, lint, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      # Every test on the JSON store and the business logic again on embedded PostgreSQL (vitest.config.mts).
+      - run: npm test
+      - run: npm run build
+
+  schema-upgrade:
+    # An upgrade must leave exactly the schema a new install gets. Upgrades a database made by the previous commit
+    # (the PR's base, or the commit before this push) with this commit's code, and compares it with a fresh database.
+    # Catches a CREATE TABLE edited without an upgrade step, which `npm test` cannot see.
+    name: Schema upgrade = fresh install
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      # Throwaway databases: fixed passwords so the first-start seed prints nothing random.
+      VELZA_ADMIN_PASSWORD: CiAdmin2026pass
+      VELZA_HQ_PASSWORD: CiHq2026pass
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Create the two databases
+        run: |
+          psql -c "CREATE DATABASE upgraded" -c "CREATE DATABASE fresh"
+      - name: Schema of the previous commit
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then BASE_SHA=$(git rev-parse HEAD~1); fi
+          echo "Previous commit: $BASE_SHA"
+          git worktree add ../base "$BASE_SHA"
+          cd ../base
+          npm ci
+          DATABASE_URL=postgres://postgres:postgres@localhost:5432/upgraded npm run db:migrate
+      - run: npm ci
+      - name: Upgrade it with this commit, and install fresh
+        run: |
+          DATABASE_URL=postgres://postgres:postgres@localhost:5432/upgraded npm run db:fingerprint -- upgraded.txt
+          DATABASE_URL=postgres://postgres:postgres@localhost:5432/fresh npm run db:fingerprint -- fresh.txt
+      - name: Compare
+        run: |
+          if diff -u fresh.txt upgraded.txt; then
+            echo "Upgraded schema matches a fresh install."
+          else
+            echo "::error::The upgraded schema differs from a fresh install (lines with - are only in a fresh install, + only in the upgraded one). Add the missing step to the upgrade section of src/lib/store/sql/schema.ts and bump SCHEMA_VERSION."
+            exit 1
+          fi
+      - name: Live stock summary matches a recount
+        run: DATABASE_URL=postgres://postgres:postgres@localhost:5432/upgraded npm run db:stock -- check
+
+  docker:
+    # Builds the three production images and runs the whole stack with the same deploy script the servers use
+    # (deploy/smoke-test.sh): HTTPS, sign-in, the restricted database role, the stock check and a backup dump.
+    name: Docker images + stack smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build app image
+        uses: docker/build-push-action@v6
+        with: { context: ., target: app, load: true, tags: "velza-app:ci", cache-from: "type=gha,scope=velza-app", cache-to: "type=gha,mode=max,scope=velza-app" }
+      - name: Build ops image
+        uses: docker/build-push-action@v6
+        with: { context: ., target: ops, load: true, tags: "velza-ops:ci", cache-from: "type=gha,scope=velza-ops", cache-to: "type=gha,mode=max,scope=velza-ops" }
+      - name: Build backup image
+        uses: docker/build-push-action@v6
+        with: { context: deploy/backup, load: true, tags: "velza-backup:ci", cache-from: "type=gha,scope=velza-backup", cache-to: "type=gha,mode=max,scope=velza-backup" }
+      - name: Validate the Caddyfile
+        run: docker run --rm -e DOMAIN=localhost -e ACME_EMAIL=ci@example.com -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+      - name: Stack smoke test
+        run: bash deploy/smoke-test.sh
+
+  terraform:
+    name: Terraform fmt + validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.10"
+      - name: Formatting (warning only; fix with `terraform fmt -recursive infra/terraform`)
+        continue-on-error: true
+        run: terraform fmt -check -recursive -diff infra/terraform
+      - name: Validate every root and module
+        run: |
+          set -euo pipefail
+          for dir in infra/terraform/global infra/terraform/envs/staging infra/terraform/envs/prod infra/terraform/modules/velza_env; do
+            echo "::group::$dir"
+            terraform -chdir="$dir" init -backend=false -input=false >/dev/null
+            terraform -chdir="$dir" validate
+            echo "::endgroup::"
+          done

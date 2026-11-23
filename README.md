@@ -2,9 +2,10 @@
 
 Web prototype of Velza's code generation and lot traceability system for beverage lots:
 the manufacturer prints barcode/QR stickers through a guided wizard, QC verifies the pasted stickers,
-and every lot is scanned OUT and IN along **Manufacturer → Super Stockist → Distributor → Retailer**
-(some retailers are supplied by their Super Stockist directly: **Manufacturer → Super Stockist → Retailer**),
-while Velza HQ sees status, location, history, alerts and recalls.
+and every lot is scanned OUT and IN along **Manufacturer → Customs (Velza Warehouse) → Super Stockist → Distributor →
+Retailer** (some retailers are supplied by their Super Stockist directly: **… → Super Stockist → Retailer**). The plant
+ships to Customs only in shipping containers; Customs holds them until cleared, then supplies Super Stockists.
+Velza HQ sees status, location, history, alerts and recalls.
 
 Everyone **signs in** with the sign-in ID and password Velza Admin gave them, and sees **only their own portal**.
 **While the app is being developed, sign-in is switched off** under `npm run dev`: you pick a role and a person
@@ -51,6 +52,7 @@ printed once in the server log.
 | Velza Admin | `AD0001`, `AD0002` … | seed; more on *Sign-ins & passwords* |
 | Velza HQ | `HQ0001`, `HQ0002` … | seed; more on *Sign-ins & passwords* |
 | Manufacturer (plant) | `MF0001-OP` (Operator), `MF0001-QC` (QC) | the registration form |
+| Customs (Velza Warehouse) | `VW0001` … | the registration form |
 | Super Stockist | `SS0001` … | the registration form |
 | Distributor | `DB0001` … | the registration form |
 | Retailer | `RT0001` … | the registration form |
@@ -97,8 +99,13 @@ Then each person signs in and works in their portal:
 - **Assignment chain**: a Super Stockist's dispatch list and **My partners** page contain only its assigned
   distributors and the retailers assigned directly to it (not its distributors' retailers); a Distributor sees
   only its assigned retailers (**My retailers**): a DB with 50 retailers sees exactly those 50. Dispatching to
-  anyone else is refused. The manufacturer can supply any Super Stockist. A Retailer receives, opens cases and
-  trays, and has **My stock** and **Damaged**; it dispatches to nobody.
+  anyone else is refused. Customs can supply any Super Stockist. A Retailer receives, opens cases and trays, and has
+  **My stock** and **Damaged**; it dispatches to nobody.
+- **Opening (splitting) a case or tray**: a **Super Stockist**, a **Distributor** or a **Retailer** may open a case or
+  tray held in its own stock (**Open lot**). Its packs then count one by one in that stock, and an SS or DB can
+  dispatch them singly to its own assigned partners (e.g. a Retailer ordering a few packs, or a large order going
+  through the SS). A sealed pack still can't be dispatched alone, and the plant and Customs never open a lot. Receipt
+  at a Retailer is still the end of tracking.
 - **Generated codes**: after **Create & print**, and from **Print orders → Codes**, every generated code is listed
   with every field saved for it (country, batch, flavour, hex lot number, case/tray, pack size, pack sequence,
   lot, dates, status, location, synced, generated at/by), with the sticker total and how many are synced.
@@ -108,9 +115,10 @@ Then each person signs in and works in their portal:
   can't move any more, is listed in that location's Damaged section, and Velza HQ gets a `DAMAGED` alert (also
   counted per location on the HQ dashboard as cases, trays and single packs). Scanning the lot code reports a whole
   case or tray, sealed or opened (an opened one takes the packs of it still at that location); single packs can be
-  reported once a Retailer has opened the lot.
+  reported once the lot has been opened (by an SS, Distributor or Retailer).
 - Admin can **delete** partners, sign-ins, devices, countries and flavours that have no history; anything already
-  in the ledger can only be deactivated (history is permanent).
+  in the ledger can only be deactivated (history is permanent). A device that has been issued batch codes from the
+  pool can't be deleted (Add device issues them at once), since the pool records which device each code went to.
 
 ## Scanning
 
@@ -126,9 +134,9 @@ to the address phones should open when they scan a sticker's QR code.
 ## Demo script (spec 9.1)
 
 These steps use the test sample network (`tests/fixtures/sampleNetwork.ts`: Demo Manufacturer `MF0001`,
-SS-1 `SS0001` (Maharashtra), SS-2 `SS0002` (Karnataka), DB-1/DB-2 `DB0001/DB0002`, Retailer-1/2/3
-`RT0001–RT0003` (Retailer-1/2 under DB-1, Retailer-3 under DB-2) and Retailer-4 `RT0004`, supplied by SS-1
-directly; every sign-in's password is `Sample2026pass`) that `npm run test:e2e` loads.
+Customs VW-1 `VW0001`, SS-1 `SS0001` (Maharashtra), SS-2 `SS0002` (Karnataka), DB-1/DB-2 `DB0001/DB0002`,
+Retailer-1/2/3 `RT0001–RT0003` (Retailer-1/2 under DB-1, Retailer-3 under DB-2) and Retailer-4 `RT0004`, supplied by
+SS-1 directly; every sign-in's password is `Sample2026pass`) that `npm run test:e2e` loads.
 Sign in as the person named in each step.
 
 1. **`MF0001-OP` → New print order.** 2 batches → Batch 1 *Original*, Batch 2 *Green Apple* →
@@ -139,8 +147,13 @@ Sign in as the person named in each step.
    Once the stickers have printed correctly, press **Mark as printed** — only then do the lots become `PRINTED`.
 2. **`MF0001-QC` → Verify.** Scan a lot, then its packs (ticks appear). Scan *pack of another lot*
    from the demo helper → red "does not belong". **Confirm → PACKED**. Repeat for all 4 lots.
-3. **`MF0001-OP` → Dispatch.** Destination *SS-1*, invoice `INV-001`, scan the two Original
-   cases (`…OR00001`, `…OR00002`) → **Confirm dispatch**.
+3. **`MF0001-OP` → Containers** (the plant has no loose Dispatch: cases and trays leave only in a shipping container
+   to Customs). Enter container number `MSCU0000001` → **Open container**, scan the two Original cases (`…OR00001`,
+   `…OR00002`), invoice `INV-001` → **Dispatch container** to *VW-1*.
+   **`VW0001` → Receive:** scan the container number `MSCU0000001` → both cases *At customs, awaiting clearance*.
+   **Dispatch** to *SS-1* now → red `NOT_CLEARED` (Customs supplies only Super Stockists, and only cleared stock).
+   **Containers → Mark cleared** with Bill of Entry `BE-0000001`; then **Dispatch** both cases to *SS-1*, invoice
+   `VW-001`.
 4. **`SS0002` → Receive.** Scan `…OR00001` → red `WRONG_RECEIVER` (also on the HQ alerts). Sign in as
    **`SS0001`** → receive both cases → `AT_SS`.
 5. **SS0001 → Dispatch** (its destinations: *DB-1* and its direct retailer *Retailer-4*) case `…OR00001` to
@@ -148,20 +161,24 @@ Sign in as the person named in each step.
    *Retailer-1* (`INV-003`); **RT0001 → Receive** → `AT_RETAILER`; **RT0001 → Open lot** (scan the case): its packs
    now count as loose packs in RT0001's stock. Then **SS0001 → Dispatch** case `…OR00002` straight to its direct
    retailer *Retailer-4* (`INV-004`); **RT0004 → Receive** → `AT_RETAILER`.
+   (DB0001 could instead have opened the case itself and sent single packs to Retailer-1 and Retailer-2; an SS can do
+   the same for its direct retailers. `tests/unit/splitAtDistributor.test.ts` covers that.)
 6. **`HQ0001` → Search code.** The case code shows every step with user, device and invoice;
    pack `…OR0000162` is `AT_RETAILER` at Retailer-1, with its parent lot.
 7. Scan the *made-up code* on any scan screen → `UNKNOWN_CODE`. **Batches & recall → Report** on the
    Green Apple batch → reason → **Recall**. Its lot shows `RECALLED`; open `/t/<that lot code>`
    (what the QR opens) → "Recalled — do not consume".
 8. **`MF0001-OP`:** click **● Online** in the header to go **Offline**. Create a 1-case batch,
-   print, verify it as QC. Dispatch it → red `UNSYNCED`; HQ search → `UNKNOWN_CODE`. Click **● Offline** to go
-   back Online, press **Sync** → the dispatch now works.
+   print, verify it as QC. HQ search → `UNKNOWN_CODE`. **Containers:** open `MSCU0000009` and scan the case → red
+   `UNSYNCED` (it can't even be loaded). Click **● Offline** to go back Online, press **Sync** → the case loads, and
+   the container goes to *VW-1* (`INV-009`).
 9. **`MF0001-OP` → Reprint.** Pick a code still at the factory (e.g. a pack of the Original
    tray), give a reason → **Log reprint** → print view shows the same code; the reprint log keeps the reason.
 
 `npm run test:e2e` runs exactly these steps in Edge and decodes all 24 printed stickers; a first step checks
-portal isolation and the assignments, a step 10 reports a damaged case, and a step 11 registers a distributor
-through the form, signs in as it (`DB0003`) and changes its password.
+portal isolation and the assignments, a step 10 reports a damaged case, a step 11 has shops sign themselves up
+(a distributor waits for Admin approval, a retailer works at once) and a step 12 ships a tray in a container that
+Customs receives by its number and clears.
 
 ## How it is built
 
@@ -204,13 +221,30 @@ The app runs on PostgreSQL as soon as it has a connection string:
 |---|---|---|
 | `partners` | site from the registration form | `partner_id` (`DB0001`); one Super Stockist per state; ID prefix must match the tier |
 | `users` | sign-in | `login_id` (`DB0001`, `MF0001-OP`, `AD0001`) → `partner_id` |
-| `codes` | sticker: each case/tray (`LOT`) and each pack (`PACK`) with `country_code`, `batch_code`, `flavour`, `hex_code`, `lot_type`, `pack_size`, `pack_sequence`, `lot_code`, dates, status, location, synced | `code`; the code must equal its parts |
-| `code_history` | movement, scan or reprint, with the full code as scanned | `history_id`; append-only (a trigger refuses changes) |
-| `batches`, `print_orders`, `batch_code_pool`, `devices`, `countries`, `flavours`, `sessions`, `id_counters`, `settings` | supporting data the screens need | |
+| `codes` | sticker: each case/tray (`LOT`) and each pack (`PACK`) with `country_code`, `batch_code`, `flavour`, `hex_code`, `lot_type`, `pack_size`, `pack_sequence`, `lot_code`, dates, status, location, synced | `code`; the code must equal its parts; → its print order (v10) |
+| `code_history` | movement, scan or reprint, with the full code as scanned | `history_id`; append-only (a trigger refuses changes); no foreign keys, so a failed scan of an unknown code is kept |
+| `containers` | trip of a shipping container from the plant to Customs | `container_id`; → its manufacturer and receiver (v10); `lot_codes` lists what it carried |
+| `container_items` (v10) | case/tray loaded into a container: `lot_codes` as rows, kept equal to it by the app | (`container_id`, `lot_code`); a lot may be in several containers over its life |
+| `stock_summary`, `stock_deltas`, view `stock_current` (v9) | live unit counts per location, status, kind, lot type, flavour and sync flag, kept by triggers on `codes` | the HQ dashboard reads these instead of every code |
+| `batches`, `print_orders`, `batch_code_pool`, `devices`, `countries`, `flavours`, `sessions`, `id_counters`, `settings` | supporting data the screens need | print orders → their manufacturer, pool codes → their device (v10) |
 
 Every write runs in a serializable transaction (retried automatically on a conflict), so two people scanning the
 same case at the same moment can't both succeed. Print orders of one manufacturer also take an advisory lock, so
 concurrent orders, also from several app servers, wait their turn instead of failing.
+
+**Connections** (details in [docs/VERCEL.md](docs/VERCEL.md)):
+
+| Setting | Meaning |
+|---|---|
+| `DATABASE_URL` | Every query and transaction. On Vercel the Neon integration sets it to Neon's **pooled** address. |
+| `DATABASE_URL_UNPOOLED` | Optional **direct** address, used **only** for code allocation (print orders hold a session-level advisory lock that a transaction-mode pooler can't keep). Leave it unset on Docker, Lightsail and laptops: then everything uses `DATABASE_URL` and one pool. |
+| `PG_POOL_MAX` | Connections per app process to `DATABASE_URL`: default 10, or 3 on Vercel. |
+| `PG_LOCK_POOL_MAX` | Connections per process to `DATABASE_URL_UNPOOLED` when it is set: default 2, opened only by a process that allocates codes. |
+
+**Live stock summary.** Triggers on `codes` append counts to `stock_deltas`, and the app folds them into
+`stock_summary` itself, at most once a minute per process, in its own short statement that never delays or fails a
+request. `stock_summary_rollup()` returns at once when another rollup is running. The production `jobs` container
+still runs `npm run db:stock -- rollup` every minute, and `-- check` once a day to compare against a full recount.
 
 **Production uses PostgreSQL.** The JSON file is for single-process trials. One process owns it through
 `data/db.json.lock`, and a second server or script on the same file is refused (503 `STORE_LOCKED`). Stop the server
@@ -241,8 +275,9 @@ It converts the data the app uses (`data/db.json`, or the database when `DATABAS
 - every Supplier and its sign-ins are removed;
 - it refuses, changing nothing, if a Supplier holds stock or has history, because history is permanent.
 
-The PostgreSQL schema is now v3. v2 brought tiers `MANUFACTURER`, `SS`, `DB` and `RETAILER`, ID prefixes `MF`, `SS`,
-`DB` and `RT`, and status `AT_RETAILER`; a v1 database is upgraded in place once its data has been converted.
+The PostgreSQL schema is now v10; each version is described at the top of `src/lib/store/sql/schema.ts`.
+v2 brought tiers `MANUFACTURER`, `SS`, `DB` and `RETAILER`, ID prefixes `MF`, `SS`, `DB` and `RT`, and status
+`AT_RETAILER`; a v1 database is upgraded in place once its data has been converted.
 
 v3 (4 Nov 2026) adds:
 - `print_orders.order_kind` and `request_fingerprint`;
@@ -252,6 +287,18 @@ v3 (4 Nov 2026) adds:
 A v2 database is upgraded in place, with no data change, on the app's first start or with `npm run db:migrate`.
 Columns are only added and existing rows keep NULL. Back up first, as for any migration.
 
+v10 (21 Nov 2026) adds:
+- foreign keys the app always kept, now checked by the database: `print_orders.manufacturer_id`,
+  `containers.manufacturer_id` and `containers.to_partner_id` → `partners`; `codes.print_order_id` → `print_orders`;
+  `batch_code_pool.device_id` → `devices` (deferred to the end of each transaction);
+- `container_items`, filled once from `containers.lot_codes` (`lot_codes` and `print_orders.lot_codes` stay).
+
+Before validating the keys, the upgrade counts rows that point at missing rows. If any exist it stops with a message
+naming each table and count, and changes nothing; fix or remove those rows, then start again.
+
 Decisions made where the spec was silent are listed in [ASSUMPTIONS.md](ASSUMPTIONS.md).
 
 Security layers built into the app, and what to set up around it on a server, are in [SECURITY.md](SECURITY.md).
+
+The test deployment (Vercel + Neon) is set up as in [docs/VERCEL.md](docs/VERCEL.md); how the team branches, reviews
+and merges is in [CONTRIBUTING.md](CONTRIBUTING.md).

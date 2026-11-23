@@ -1,0 +1,4 @@
+# Code owners: GitHub asks these people to review every pull request.
+# TODO: replace the three placeholders with the team's real GitHub usernames (keep the leading @).
+# Until then GitHub shows an error for this file and requests no reviews; nothing else breaks.
+* @REPLACE-WITH-GITHUB-USER-1 @REPLACE-WITH-GITHUB-USER-2 @REPLACE-WITH-GITHUB-USER-3

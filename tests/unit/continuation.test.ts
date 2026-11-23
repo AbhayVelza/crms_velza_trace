@@ -411,7 +411,8 @@ describe("rollback", () => {
     const lot = (await store().lots.list({ batchCode: b.code }))[0];
     // a stray row holding the next lot code makes the allocation fail after nextLotNumber ran
     const strayCode = `${lot.lotCode.slice(0, 10)}00002`;
-    const stray: Lot = { ...lot, id: strayCode, lotCode: strayCode, lotNumber: 2, printOrderId: "stray" };
+    // Not issued by any print order (none named, so it can be deleted again below; v10 checks a named one exists).
+    const stray: Lot = { ...lot, id: strayCode, lotCode: strayCode, lotNumber: 2, printOrderId: null as unknown as string };
     await store().lots.create(stray);
     const k = key();
     const before = await counts(b.code);

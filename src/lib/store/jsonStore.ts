@@ -11,7 +11,7 @@ import { closeSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, w
 import os from "node:os";
 import path from "node:path";
 import { LOT_NUMBER_MAX } from "@/lib/core/codes";
-import { DEFAULT_SETTINGS, type Batch, type Lot, type Movement, type Pack, type Settings } from "@/lib/core/types";
+import { DEFAULT_SETTINGS, type Batch, type ContainerStatus, type Lot, type Movement, type Pack, type Settings } from "@/lib/core/types";
 import { conversionNeeded } from "./convertChain";
 import {
   COLLECTIONS,
@@ -24,6 +24,7 @@ import {
   type NewScan,
   type Repo,
   type Row,
+  type StockSummaryRow,
   type Store,
   type StoreTx,
   type Where,
@@ -387,6 +388,34 @@ function makeTx(db: DbSnapshot): StoreTx {
       else db.settings[i] = next;
       return clone(next);
     },
+
+    async recentScans(limit) {
+      // Newest first; equal times keep the order they were recorded in (as PostgreSQL's history_id does).
+      const rows = db.scans.map((s, i) => ({ s, i })).sort((a, b) => b.s.at.localeCompare(a.s.at) || a.i - b.i);
+      return rows.slice(0, Math.max(0, limit)).map((r) => clone(r.s));
+    },
+    async latestContainerWithLot(toId, lotCode, statuses) {
+      const sent = db.containers.filter((c) => c.toId === toId && statuses.includes(c.status) && c.lotCodes.includes(lotCode));
+      const latest = sent.map((c, i) => ({ c, i })).sort((a, b) => (b.c.dispatchedAt ?? "").localeCompare(a.c.dispatchedAt ?? "") || a.i - b.i)[0];
+      return latest ? clone(latest.c) : null;
+    },
+    async stockSummary() {
+      // The development store is small: count its rows. A pack carries its lot's sync flag (as on PostgreSQL).
+      const lotByCode = new Map(db.lots.map((l) => [l.lotCode, l]));
+      const counts = new Map<string, StockSummaryRow>();
+      const add = (row: Omit<StockSummaryRow, "units">) => {
+        const key = [row.locationId, row.status, row.kind, row.lotType, row.flavour, row.synced].join("|");
+        const hit = counts.get(key);
+        if (hit) hit.units += 1;
+        else counts.set(key, { ...row, units: 1 });
+      };
+      for (const l of db.lots) add({ locationId: l.locationId, status: l.status, kind: "LOT", lotType: l.lotType, flavour: l.flavour, synced: l.synced });
+      for (const p of db.packs) {
+        const lot = lotByCode.get(p.lotCode);
+        add({ locationId: p.locationId, status: p.status, kind: "PACK", lotType: p.packSize === 6 ? "CASE" : "TRAY", flavour: p.packCode.slice(8, 10), synced: lot?.synced ?? true });
+      }
+      return [...counts.values()];
+    },
   };
   return tx;
 }
@@ -547,6 +576,15 @@ export class JsonStore implements Store {
   }
   async getSettings() {
     return makeTx(await this.readDb()).getSettings();
+  }
+  async recentScans(limit: number) {
+    return makeTx(await this.readDb()).recentScans(limit);
+  }
+  async latestContainerWithLot(toId: string, lotCode: string, statuses: readonly ContainerStatus[]) {
+    return makeTx(await this.readDb()).latestContainerWithLot(toId, lotCode, statuses);
+  }
+  async stockSummary() {
+    return makeTx(await this.readDb()).stockSummary();
   }
   updateSettings(patch: Partial<Omit<Settings, "id">>) {
     return this.transaction((tx) => tx.updateSettings(patch));

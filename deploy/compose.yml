@@ -1,0 +1,84 @@
+# Production and staging stack on one server (copied to /srv/velza/ by the deploy workflow, with Caddyfile and .env).
+#
+#   caddy   HTTPS for $DOMAIN (automatic Let's Encrypt certificates), forwards to the app
+#   app     the web app (image target `app`)
+#   jobs    scheduled jobs: stock summary rollup every minute, daily recount check (image target `ops`)
+#   backup  nightly pg_dump + photo copy to the object-storage bucket (deploy/backup)
+#   db      staging only (COMPOSE_PROFILES=localdb): PostgreSQL in a container instead of a managed database
+#
+# Migrations are a one-off run of the ops image before the new app starts:
+#   docker compose run --rm --no-deps -e DATABASE_URL="$MIGRATE_DATABASE_URL" jobs npm run db:migrate
+# Every value comes from .env (written by the deploy workflow from AWS Parameter Store; see docs/DEPLOYMENT.md).
+
+name: velza
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?DOMAIN is required}
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL is required}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    logging: &logging
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+  app:
+    image: ${APP_IMAGE:?APP_IMAGE is required}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Caddy puts the real client address in X-Real-IP; per-client rate limits and sign-in lockout use it.
+      # Behind Cloudflare's proxy use cf-connecting-ip instead (set CLIENT_IP_HEADER in Parameter Store).
+      CLIENT_IP_HEADER: ${CLIENT_IP_HEADER:-x-real-ip}
+    volumes:
+      - uploads:/data/uploads
+    expose:
+      - "3000"
+    logging: *logging
+
+  jobs:
+    image: ${OPS_IMAGE:?OPS_IMAGE is required}
+    restart: unless-stopped
+    env_file: .env
+    logging: *logging
+
+  backup:
+    image: ${BACKUP_IMAGE:?BACKUP_IMAGE is required}
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - uploads:/data/uploads:ro
+    logging: *logging
+
+  db:
+    image: postgres:16
+    profiles: ["localdb"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: velza
+      POSTGRES_USER: velza
+      POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD:-}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U velza -d velza"]
+      interval: 5s
+      retries: 20
+    logging: *logging
+
+volumes:
+  caddy_data:
+  caddy_config:
+  uploads:
+  pgdata:

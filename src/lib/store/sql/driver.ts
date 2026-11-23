@@ -1,5 +1,6 @@
 // Database connections behind one small interface, so the SQL store doesn't care which it talks to:
-// - postgres: a real PostgreSQL server (DATABASE_URL), through the `pg` connection pool;
+// - postgres: a real PostgreSQL server (DATABASE_URL), through the `pg` connection pool (plus a small second pool on
+//             the direct address for code allocation when that address is separate, see store/index.ts databaseUrls);
 // - pglite:   PostgreSQL compiled to WebAssembly, running inside this process (tests, or a local
 //             trial with PGLITE_DIR) — same SQL, no server to install.
 
@@ -10,6 +11,12 @@ export interface SqlDriver {
   /** Where the data lives, for log lines ("PostgreSQL db.example.com/velza"). Never includes a password. */
   readonly label: string;
   query: Query;
+  /**
+   * One statement on its own, never inside a transaction of the app (housekeeping such as the stock rollup). On
+   * PostgreSQL that is a plain pooled query; the embedded database, which has one connection, waits for the open
+   * transaction to finish first, so a failure can't spoil it.
+   */
+  alone: Query;
   /** Several statements at once (the schema). */
   exec(sql: string): Promise<void>;
   /**
@@ -69,21 +76,48 @@ export function describeDatabaseUrl(url: string): string {
 const RETRYABLE = new Set(["40001", "40P01"]);
 const MAX_ATTEMPTS = 5;
 
-export async function createPgDriver(url: string): Promise<SqlDriver> {
+export interface PgDriverOptions {
+  /** Connections in the main pool (default 10). */
+  max?: number;
+  /**
+   * Address for transactions with a lockKey (code allocation). When it differs from the main address (Neon on
+   * Vercel: the main one is the transaction-mode pooler, this one the direct address), those transactions use a
+   * second pool of `lockMax` connections, opened on first use. Otherwise they share the main pool.
+   */
+  lockUrl?: string;
+  /** Connections in the code-allocation pool when `lockUrl` is a separate address (default 2). */
+  lockMax?: number;
+}
+
+export async function createPgDriver(url: string, opts: PgDriverOptions = {}): Promise<SqlDriver> {
   const { default: pg } = await import("pg");
-  const pool = new pg.Pool({ connectionString: url, max: Number(process.env.PG_POOL_MAX ?? 10) });
-  // An idle connection dropped by the server must not crash the app; the pool replaces it.
-  pool.on("error", (e) => console.error("[velza] PostgreSQL connection error:", e.message));
+  const open = (connectionString: string, max: number) => {
+    const p = new pg.Pool({ connectionString, max });
+    // An idle connection dropped by the server must not crash the app; the pool replaces it.
+    p.on("error", (e) => console.error("[velza] PostgreSQL connection error:", e.message));
+    return p;
+  };
+  const pool = open(url, opts.max ?? Number(process.env.PG_POOL_MAX ?? 10));
+  const separateLock = !!opts.lockUrl && opts.lockUrl !== url;
+  let lockPool: InstanceType<typeof pg.Pool> | null = null;
+  /** The pool a transaction runs on: only lock-key transactions ever use the direct address. */
+  const poolFor = (lockKey: string | undefined) => {
+    if (!lockKey || !separateLock) return pool;
+    lockPool ??= open(opts.lockUrl!, opts.lockMax ?? 2);
+    return lockPool;
+  };
   const query: Query = async (sql, params) => (await pool.query(sql, params as unknown[])).rows;
   return {
     label: describeDatabaseUrl(url),
     query,
+    alone: query,
     async exec(sql) {
       await pool.query(sql);
     },
     async transaction(fn, opts) {
+      const txPool = poolFor(opts?.lockKey);
       for (let attempt = 1; ; attempt++) {
-        const client = await pool.connect();
+        const client = await txPool.connect();
         let locked = false;
         let broken = false;
         try {
@@ -126,7 +160,9 @@ export async function createPgDriver(url: string): Promise<SqlDriver> {
         }
       }
     },
-    close: () => pool.end(),
+    async close() {
+      await Promise.all([pool.end(), lockPool?.end()]);
+    },
   };
 }
 
@@ -141,6 +177,7 @@ export async function createPgliteDriver(dir?: string): Promise<SqlDriver> {
   return {
     label: dir ? `PostgreSQL (embedded) in ${dir}` : "PostgreSQL (embedded, in memory)",
     query,
+    alone: (sql, params) => lock.run(() => query(sql, params)),
     async exec(sql) {
       await db.exec(sql);
     },

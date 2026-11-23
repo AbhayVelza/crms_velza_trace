@@ -37,6 +37,8 @@ const photoError = (code: string, message: string) => new ServiceError(400, code
 export function uploadDir(): string {
   if (process.env.VELZA_UPLOAD_DIR) return process.env.VELZA_UPLOAD_DIR;
   if (storeKind() === "json") return path.join(path.dirname(dbFilePath()), "uploads");
+  // Vercel: only /tmp is writable, and it is per function copy and temporary (testing only, docs/VERCEL.md).
+  if (process.env.VERCEL) return path.join("/tmp", "velza-uploads");
   return path.join(process.cwd(), "data", "uploads");
 }
 

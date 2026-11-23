@@ -5,10 +5,13 @@ import type {
   Batch,
   BatchCodePoolEntry,
   Container,
+  ContainerStatus,
   Country,
   Device,
   Flavour,
+  ItemStatus,
   Lot,
+  LotType,
   Movement,
   Pack,
   Partner,
@@ -87,6 +90,31 @@ export interface StoreTx {
   nextSequence(name: string): Promise<number>;
   getSettings(): Promise<Settings>;
   updateSettings(patch: Partial<Omit<Settings, "id">>): Promise<Settings>;
+
+  /** The newest `limit` scans, newest first (ties: oldest recorded first). Reads only those rows, never the whole ledger. */
+  recentScans(limit: number): Promise<Scan[]>;
+  /**
+   * The container sent to `toId` with one of `statuses` that carried `lotCode`; the most recently dispatched one if
+   * several did (never dispatched last). An indexed lookup, never every container.
+   */
+  latestContainerWithLot(toId: string, lotCode: string, statuses: readonly ContainerStatus[]): Promise<Container | null>;
+  /**
+   * Live unit counts per location, status, kind, lot type, flavour and sync flag, without reading every code. On
+   * PostgreSQL these come from the stock_summary / stock_deltas tables kept by triggers on `codes` (schema v9); the
+   * JSON store counts its rows. Keys with no units are left out.
+   */
+  stockSummary(): Promise<StockSummaryRow[]>;
+}
+
+/** One line of the live stock summary: how many lot or pack codes share these attributes right now. */
+export interface StockSummaryRow {
+  locationId: string;
+  status: ItemStatus;
+  kind: "LOT" | "PACK";
+  lotType: LotType;
+  flavour: string;
+  synced: boolean;
+  units: number;
 }
 
 export interface DbSnapshot {

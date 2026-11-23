@@ -198,7 +198,7 @@ describe("canDispatch", () => {
   });
 
   it("packs move alone only after their lot is opened; opened lots don't move", () => {
-    // Only Retailers open lots, but the rule itself is generic.
+    // An SS, Distributor or Retailer may open a lot; the rule itself is generic.
     const pack: MovableItem = { ...lot({ status: "AT_DB", locationId: "db1" }), kind: "PACK", code: "91ABC123OR0000162" };
     const db = { ...base, sender: DB1, receiver: RT1 };
     expect(canDispatch({ ...db, item: pack, parentLotStatus: "AT_DB" })).toMatchObject({ code: "LOT_SEALED" });
@@ -290,15 +290,34 @@ describe("verification", () => {
 });
 
 describe("open, void, reprint, recall", () => {
-  it("open lot: Retailers only, at their location", () => {
+  it("open lot: a Super Stockist, Distributor or Retailer, at its own location", () => {
     const atRT = lot({ status: "AT_RETAILER", locationId: "rt1" });
     expect(canOpenLot(atRT, RT1)).toEqual({ ok: true });
     expect(canOpenLot(lot({ status: "AT_RETAILER", locationId: "rt3" }), RT3)).toEqual({ ok: true }); // supplied by its SS directly
     expect(canOpenLot(atRT, RT2)).toMatchObject({ code: "NOT_AT_LOCATION" });
     expect(canOpenLot({ ...atRT, status: "OPENED" }, RT1)).toMatchObject({ code: "WRONG_STATUS" });
-    expect(canOpenLot(lot({ status: "AT_SS", locationId: "ss1" }), SS1)).toMatchObject({ code: "NOT_ALLOWED", message: "Only a Retailer can open a lot" });
-    expect(canOpenLot(lot({ status: "AT_DB", locationId: "db1" }), DB1)).toMatchObject({ code: "NOT_ALLOWED" });
-    expect(canOpenLot(lot(), MFG)).toMatchObject({ code: "NOT_ALLOWED" });
+    // A Super Stockist or Distributor splits a case/tray of its own stock to send single packs to its Retailers.
+    expect(canOpenLot(lot({ status: "AT_SS", locationId: "ss1" }), SS1)).toEqual({ ok: true });
+    expect(canOpenLot(lot({ status: "AT_DB", locationId: "db1" }), DB1)).toEqual({ ok: true });
+    // ... never one held elsewhere (location before status), nor one on its way.
+    expect(canOpenLot(lot({ status: "AT_DB", locationId: "db1" }), SS1)).toMatchObject({ code: "NOT_AT_LOCATION", message: expect.not.stringMatching(/AT_DB/) });
+    expect(canOpenLot(lot({ status: "AT_SS", locationId: "ss1" }), SS2)).toMatchObject({ code: "NOT_AT_LOCATION" });
+    expect(canOpenLot(lot({ status: "IN_TRANSIT", locationId: "ss1", inTransitToId: "db1" }), SS1)).toMatchObject({ code: "NOT_AT_LOCATION" });
+    expect(canOpenLot(lot({ status: "IN_TRANSIT", locationId: "ss1", inTransitToId: "db1" }), DB1)).toMatchObject({ code: "NOT_AT_LOCATION" });
+    expect(canOpenLot(lot({ status: "OPENED", locationId: "db1" }), DB1)).toMatchObject({ code: "WRONG_STATUS", message: expect.stringMatching(/already opened/) });
+    // The plant and Customs never open a lot.
+    const notAllowed = { code: "NOT_ALLOWED", message: "Only a Super Stockist, Distributor or Retailer can open a lot" };
+    expect(canOpenLot(lot(), MFG)).toMatchObject(notAllowed);
+    expect(canOpenLot(lot({ status: "AT_WAREHOUSE", locationId: "vw" }), VW)).toMatchObject(notAllowed);
+    expect(canOpenLot(lot({ status: "AT_CUSTOMS", locationId: "vw" }), VW)).toMatchObject(notAllowed);
+  });
+
+  it("open lot at an SS or Distributor: blocked statuses first, then location, as for a Retailer", () => {
+    for (const status of ["RECALLED", "VOID", "QUARANTINED"] as const) {
+      expect(canOpenLot(lot({ status, locationId: "db1" }), DB1), status).toMatchObject({ ok: false, code: "BLOCKED_CODE" });
+      expect(canOpenLot(lot({ status, locationId: "elsewhere" }), SS1), status).toMatchObject({ ok: false, code: "BLOCKED_CODE" });
+    }
+    expect(canOpenLot(lot({ status: "DAMAGED", locationId: "db1" }), DB1)).toMatchObject({ ok: false, code: "WRONG_STATUS" });
   });
 
   it("open lot: recalled, void and quarantined lots are blocked; a damaged lot cannot be opened", () => {
@@ -364,8 +383,11 @@ describe("damaged", () => {
   });
 
   it("a pack is reported alone only once its lot is opened", () => {
-    expect(dmg(pack(), SS1, "AT_SS")).toMatchObject({ code: "LOT_SEALED", message: expect.not.stringMatching(/open the lot/) });
-    expect(dmg(pack({ status: "AT_DB", locationId: "db1" }), DB1, "AT_DB")).toMatchObject({ code: "LOT_SEALED", message: expect.not.stringMatching(/open the lot/) });
+    // Partners that may open the lot are told so; the plant and Customs report the whole lot.
+    expect(dmg(pack(), SS1, "AT_SS")).toMatchObject({ code: "LOT_SEALED", message: expect.stringMatching(/open the lot first/) });
+    expect(dmg(pack({ status: "AT_DB", locationId: "db1" }), DB1, "AT_DB")).toMatchObject({ code: "LOT_SEALED", message: expect.stringMatching(/open the lot first/) });
+    expect(dmg(pack({ status: "PACKED", locationId: "mfg" }), MFG, "PACKED")).toMatchObject({ code: "LOT_SEALED", message: expect.not.stringMatching(/open the lot/) });
+    expect(dmg(pack({ status: "AT_WAREHOUSE", locationId: "vw" }), VW, "AT_WAREHOUSE")).toMatchObject({ code: "LOT_SEALED", message: expect.not.stringMatching(/open the lot/) });
     expect(dmg(pack({ status: "AT_RETAILER", locationId: "rt1" }), RT1, "AT_RETAILER")).toMatchObject({ code: "LOT_SEALED", message: expect.stringMatching(/open the lot/) });
     expect(dmg(pack({ status: "AT_RETAILER", locationId: "rt1" }), RT1, "OPENED")).toEqual({ ok: true });
   });

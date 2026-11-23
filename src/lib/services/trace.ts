@@ -23,7 +23,7 @@ import { batchCounter } from "@/lib/core/codes";
 import { recallPatch } from "@/lib/core/rules";
 import { ITEM_STATUSES, PARTNER_TYPE_LABELS, type ItemStatus, type Lot, type Movement, type Pack, type Partner, type Scan, type Settings } from "@/lib/core/types";
 import { MAX_SCAN_INPUT, normalizeScannedCode } from "@/lib/scan/normalize";
-import { getStore, type StoreTx } from "@/lib/store";
+import { getStore, type StockSummaryRow, type StoreTx } from "@/lib/store";
 import { damagedCounts, damagedUnits, wasOpened } from "./damage";
 import { damagePhotoUrls } from "./damagePhotos";
 import { badRequest, findItem, isVisible, loadActor, logScan, notFound, nowIso, partnerName, requireAction, requirePartner } from "./common";
@@ -183,13 +183,6 @@ export async function publicLookup(rawCode: string, opts: { clientKey?: string |
 }
 
 // ---------------------------------------------------------------- dashboard & alerts
-
-async function visibleItems(tx: StoreTx) {
-  const lots = (await tx.lots.list()).filter((l) => isVisible(l, null));
-  const lotByCode = new Map(lots.map((l) => [l.lotCode, l]));
-  const packs = (await tx.packs.list()).filter((p) => lotByCode.has(p.lotCode));
-  return { lots, packs, lotByCode };
-}
 
 /** Units moving on their own: lots, and packs of opened lots. */
 function inTransitUnits(lots: Lot[], packs: Pack[], lotByCode: Map<string, Lot>): InTransitUnit[] {
@@ -379,47 +372,97 @@ export function pendingCounts(partnerId: string, lots: Lot[]) {
   };
 }
 
+/**
+ * The HQ dashboard, without reading every lot and pack (HQ opens and polls it). Exact counts come from the live stock
+ * summary (store.stockSummary: units per location, status, kind, lot type and sync flag): status counts, totals,
+ * unsynced lots, sealed sellable cases and trays per partner, and lots awaiting print / QC or quarantined. Everything
+ * that needs single rows is read by filter: opened lots and their packs (loose packs, opened cases and trays), units
+ * in transit, recalled units, damaged units and the lots their reports name. Only synced lots are shown (isVisible
+ * with no viewer); a pack row carries its lot's sync flag. The alerts are computed exactly as on GET /api/alerts.
+ * tests/unit/dashboardEquivalence.test.ts holds the previous, read-everything implementation and checks both agree.
+ */
 export async function dashboard(userId: string | null) {
   const store = getStore();
   const actor = await loadActor(store, userId);
   requireAction(actor, "dashboard");
-  const { lots, packs, lotByCode } = await visibleItems(store);
-  const [settings, damageReports, [failedScans, publicOkScans]] = await Promise.all([store.getSettings(), store.movements.list({ type: "DAMAGED" }), alertScans(store)]);
+  const [summary, openedLots, transitLots, recalledLots, damagedLots, damagedPacks, recalledDamagedPacks, settings, damageReports, [failedScans, publicOkScans]] = await Promise.all([
+    store.stockSummary(),
+    store.lots.list({ status: "OPENED", synced: true }),
+    store.lots.list({ status: "IN_TRANSIT", synced: true }),
+    store.lots.list({ status: "RECALLED", synced: true }),
+    store.lots.list({ status: "DAMAGED", synced: true }),
+    store.packs.list({ status: "DAMAGED" }),
+    store.packs.list({ status: "RECALLED", statusBeforeRecall: "DAMAGED" }),
+    store.getSettings(),
+    store.movements.list({ type: "DAMAGED" }),
+    alertScans(store),
+  ]);
+  // Packs that move on their own: those of opened lots (loose packs, also the ones in transit), and those of lots
+  // recalled after opening (recalled loose packs). Then the visible lots that damaged packs and damage reports name.
+  const [openedPacks, recalledOpenedPacks, related] = await Promise.all([
+    store.packs.list({ lotCode: openedLots.map((l) => l.lotCode) }),
+    store.packs.list({ lotCode: recalledLots.filter((l) => l.statusBeforeRecall === "OPENED").map((l) => l.lotCode), status: "RECALLED" }),
+    store.lots.list({ lotCode: uniqueIds([...damagedPacks, ...recalledDamagedPacks].map((p) => p.lotCode).concat(damageReports.map((m) => m.itemCode.slice(0, 15)))), synced: true }),
+  ]);
+  // Every visible lot read here, once each (all are synced: the visible ones).
+  const lotByCode = new Map([...openedLots, ...transitLots, ...recalledLots, ...damagedLots, ...related].map((l) => [l.lotCode, l]));
+  const visible = (ps: Pack[]) => ps.filter((p) => lotByCode.has(p.lotCode));
   const n = await names(store);
   const now = new Date();
-  const damaged = damagedUnits(lots, packs, damageReports);
+  // Damaged units: every visible damaged lot is among the lots read (DAMAGED, or RECALLED keeping DAMAGED), and every
+  // lot a damage report or a damaged pack names is in `related`.
+  const damaged = damagedUnits([...lotByCode.values()], visible([...damagedPacks, ...recalledDamagedPacks]), damageReports);
 
-  const countBy = (rows: { status: ItemStatus }[]) => {
+  // Live counts of visible (synced) codes.
+  const shown = summary.filter((r) => r.synced);
+  const countBy = (kind: StockSummaryRow["kind"]) => {
     const counts = new Map<ItemStatus, number>();
-    for (const r of rows) counts.set(r.status, (counts.get(r.status) ?? 0) + 1);
+    for (const r of shown) if (r.kind === kind) counts.set(r.status, (counts.get(r.status) ?? 0) + r.units);
     return Object.fromEntries(ITEM_STATUSES.filter((s) => counts.has(s)).map((s) => [s, counts.get(s)!])) as Record<string, number>;
   };
+  const lotCounts = countBy("LOT");
+  const packCounts = countBy("PACK");
+  const total = (kind: StockSummaryRow["kind"]) => shown.filter((r) => r.kind === kind).reduce((a, r) => a + r.units, 0);
+  /** Visible lots at a partner by status and lot type, from the summary. */
+  const lotsHereBy = Map.groupBy(
+    shown.filter((r) => r.kind === "LOT"),
+    (r) => r.locationId,
+  );
+  const lotUnits = (partnerId: string, statuses: readonly ItemStatus[], lotType?: Lot["lotType"]) =>
+    (lotsHereBy.get(partnerId) ?? []).filter((r) => statuses.includes(r.status) && (!lotType || r.lotType === lotType)).reduce((a, r) => a + r.units, 0);
 
   // Grouped by location once: scanning every lot and pack for each partner grew with partners × codes.
-  const lotsAt = Map.groupBy(lots, (l) => l.locationId);
-  const packsAt = Map.groupBy(packs, (p) => p.locationId);
+  const openedAt = Map.groupBy(openedLots, (l) => l.locationId);
+  const openedPacksAt = Map.groupBy(openedPacks, (p) => p.locationId);
   const damagedAt = Map.groupBy(damaged, (u) => u.partnerId);
   // Recalled units by who holds them: one recalled in transit is at its receiver.
-  const recalledLotsAt = Map.groupBy(
-    lots.filter((l) => l.status === "RECALLED"),
-    attributedTo,
-  );
-  const recalledPacksAt = Map.groupBy(
-    packs.filter((p) => p.status === "RECALLED"),
-    attributedTo,
-  );
+  const recalledLotsAt = Map.groupBy(recalledLots, attributedTo);
+  // Only packs of lots recalled after opening count (recalledLoose); a sealed lot's recalled packs never do.
+  const recalledPacksAt = Map.groupBy(recalledOpenedPacks, attributedTo);
   const stock = n.partners
     .map((p) => {
       // Sellable cases and trays, opened or not; damaged, recalled and not-yet-released units are counted apart.
-      const c = stockCounts(p.id, lotsAt.get(p.id) ?? [], packsAt.get(p.id) ?? [], lotByCode);
+      // Opened ones and loose packs as stockCounts counts them (from the opened lots and their packs); sealed ones from
+      // the summary (the same SELLABLE_STATUSES).
+      const o = stockCounts(p.id, openedAt.get(p.id) ?? [], openedPacksAt.get(p.id) ?? [], lotByCode);
+      const c = {
+        cases: lotUnits(p.id, SELLABLE_STATUSES, "CASE") + o.openedCases,
+        trays: lotUnits(p.id, SELLABLE_STATUSES, "TRAY") + o.openedTrays,
+        openedCases: o.openedCases,
+        openedTrays: o.openedTrays,
+        loosePacks: o.loosePacks,
+      };
       const d = damagedCounts(damagedAt.get(p.id) ?? []);
       const r = recalledCounts(p.id, recalledLotsAt.get(p.id) ?? [], recalledPacksAt.get(p.id) ?? [], lotByCode);
-      return { partnerId: p.id, partner: p.name, tier: p.type, tierLabel: PARTNER_TYPE_LABELS[p.type], ...c, damaged: d, recalled: r, ...pendingCounts(p.id, lotsAt.get(p.id) ?? []) };
+      // Not finished stock yet at the plant (pendingCounts): unprinted, awaiting QC, quarantined.
+      const pending = { awaitingPrint: lotUnits(p.id, ["GENERATED"]), awaitingQc: lotUnits(p.id, ["PRINTED"]), quarantined: lotUnits(p.id, ["QUARANTINED"]) };
+      return { partnerId: p.id, partner: p.name, tier: p.type, tierLabel: PARTNER_TYPE_LABELS[p.type], ...c, damaged: d, recalled: r, ...pending };
     })
     .filter((s) => s.cases || s.trays || s.loosePacks || s.damaged.cases || s.damaged.trays || s.damaged.packs || s.recalled.cases || s.recalled.trays || s.recalled.packs || s.awaitingPrint || s.awaitingQc || s.quarantined);
 
   const threshold = notReceivedThresholdMs(settings);
-  const units = inTransitUnits(lots, packs, lotByCode);
+  // A pack in transit on its own belongs to an opened lot, so it is among openedPacks (inTransitUnits checks that too).
+  const units = inTransitUnits(transitLots, openedPacks, lotByCode);
   const inTransit = units
     .map((u) => ({ ...u, from: n.partner(u.fromId), to: n.partner(u.toId), age: formatAge(ageMs(u.dispatchedAt, now)), overdue: ageMs(u.dispatchedAt, now) > threshold }))
     .sort((a, b) => a.dispatchedAt.localeCompare(b.dispatchedAt));
@@ -429,12 +472,12 @@ export async function dashboard(userId: string | null) {
   const allAlerts = await namedAlerts(store, { scans: failedScans, publicOkScans, inTransit: units, damageReports: visibleDamage(damageReports, lotByCode), settings });
   const openAlerts = allAlerts.filter((a) => a.state === "OPEN");
   const alertCounts = openAlerts.reduce<Record<string, number>>((acc, a) => ((acc[a.type] = (acc[a.type] ?? 0) + 1), acc), {});
-  const unsyncedLots = (await store.lots.list({ synced: false })).length;
+  const unsyncedLots = summary.filter((r) => r.kind === "LOT" && !r.synced).reduce((a, r) => a + r.units, 0);
 
   return {
-    lotCounts: countBy(lots),
-    packCounts: countBy(packs),
-    totals: { lots: lots.length, packs: packs.length, batches: (await store.batches.list({ synced: true })).length, unsyncedLots },
+    lotCounts,
+    packCounts,
+    totals: { lots: total("LOT"), packs: total("PACK"), batches: (await store.batches.list({ synced: true })).length, unsyncedLots },
     stock,
     inTransit,
     alertCounts,
@@ -649,9 +692,8 @@ export async function listScans(userId: string | null, limit = 300) {
   const store = getStore();
   const actor = await loadActor(store, userId);
   requireAction(actor, "dashboard");
-  const n = await names(store);
-  return (await store.scans.list())
-    .sort((a, b) => b.at.localeCompare(a.at))
-    .slice(0, limit)
-    .map((s) => ({ ...s, user: n.user(s.userId), partner: n.partner(s.partnerId) }));
+  // Only the newest `limit` scans are read (indexed), and only the names they refer to.
+  const scans = await store.recentScans(limit);
+  const n = await names(store, { partners: scans.map((s) => s.partnerId), users: scans.map((s) => s.userId), devices: [] });
+  return scans.map((s) => ({ ...s, user: n.user(s.userId), partner: n.partner(s.partnerId) }));
 }

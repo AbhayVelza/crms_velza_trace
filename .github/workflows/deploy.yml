@@ -1,0 +1,105 @@
+# Build once, deploy to staging, then to production after an approval.
+#   - Manual only for now (Actions → Deploy → Run workflow): AWS isn't set up yet, so an automatic run after every
+#     merge would only fail. When AWS exists, add back under `on:`
+#       workflow_run: { workflows: [CI], types: [completed], branches: [main] }
+#   - Run it by hand (Actions → Deploy → Run workflow) with an existing commit SHA in image_tag to redeploy that
+#     release without building: this is the rollback. Older code runs safely on a newer schema.
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Commit SHA of an already-built release to redeploy (rollback). Empty = build the current main."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false # never stop a deploy halfway
+
+jobs:
+  build:
+    name: Build and push images
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Pick the release
+        id: tag
+        env:
+          INPUT_TAG: ${{ inputs.image_tag }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          echo "tag=${INPUT_TAG:-$SHA}" >> "$GITHUB_OUTPUT"
+          echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+          echo "build=$([ -z "$INPUT_TAG" ] && echo yes || echo no)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: steps.tag.outputs.build == 'yes'
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+      - uses: docker/setup-buildx-action@v3
+        if: steps.tag.outputs.build == 'yes'
+      - uses: docker/login-action@v3
+        if: steps.tag.outputs.build == 'yes'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: App image
+        if: steps.tag.outputs.build == 'yes'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: app
+          push: true
+          tags: ghcr.io/${{ steps.tag.outputs.owner }}/velza-app:${{ steps.tag.outputs.tag }}
+          cache-from: type=gha,scope=velza-app
+          cache-to: type=gha,mode=max,scope=velza-app
+      - name: Ops image (migrations, jobs)
+        if: steps.tag.outputs.build == 'yes'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: ops
+          push: true
+          tags: ghcr.io/${{ steps.tag.outputs.owner }}/velza-ops:${{ steps.tag.outputs.tag }}
+          cache-from: type=gha,scope=velza-ops
+          cache-to: type=gha,mode=max,scope=velza-ops
+      - name: Backup image
+        if: steps.tag.outputs.build == 'yes'
+        uses: docker/build-push-action@v6
+        with:
+          context: deploy/backup
+          push: true
+          tags: ghcr.io/${{ steps.tag.outputs.owner }}/velza-backup:${{ steps.tag.outputs.tag }}
+          cache-from: type=gha,scope=velza-backup
+          cache-to: type=gha,mode=max,scope=velza-backup
+
+  staging:
+    needs: build
+    uses: ./.github/workflows/deploy-env.yml
+    with:
+      environment: staging
+      param_env: staging
+      tag: ${{ needs.build.outputs.tag }}
+    secrets: inherit
+
+  production:
+    needs: [build, staging]
+    uses: ./.github/workflows/deploy-env.yml
+    with:
+      environment: production
+      param_env: prod
+      tag: ${{ needs.build.outputs.tag }}
+    secrets: inherit

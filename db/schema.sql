@@ -1,4 +1,4 @@
--- Velza Traceability — PostgreSQL schema v8.
+-- Velza Traceability — PostgreSQL schema v10.
 -- Generated from src/lib/store/sql/schema.ts by `npm run db:schema`; do not edit by hand.
 -- The app applies this itself on first use (and `npm run db:migrate` does it on demand); every
 -- statement is safe to run again.
@@ -386,5 +386,228 @@ DROP INDEX IF EXISTS containers_one_active_per_code;
 CREATE UNIQUE INDEX containers_one_active_per_code ON containers (container_code) WHERE status IN ('LOADING', 'IN_TRANSIT');
 CREATE INDEX IF NOT EXISTS containers_by_receiver ON containers (to_partner_id);
 
-INSERT INTO schema_info (id, version) VALUES (1, 8)
+-- ============================================================ v9: live read model + read-path indexes
+-- Read paths that must not grow with the whole ledger: the HQ scan log (newest scans), Customs receiving one case
+-- (which container carried it), and NOT_RECEIVED (units in transit, oldest first).
+CREATE INDEX IF NOT EXISTS code_history_scans_recent ON code_history (event_time DESC) WHERE record_type = 'SCAN';
+CREATE INDEX IF NOT EXISTS containers_lot_codes ON containers USING gin (lot_codes);
+CREATE INDEX IF NOT EXISTS codes_in_transit_since ON codes (dispatched_at) WHERE status = 'IN_TRANSIT';
+
+-- Live stock counts. Every change to codes appends signed counts to stock_deltas (inserts only, so concurrent scans
+-- never wait for each other or conflict); stock_summary_rollup() folds them into stock_summary. stock_current is
+-- always exact: summary + deltas not yet folded in. A pack carries its lot's sync flag (lots.update keeps them equal).
+CREATE TABLE IF NOT EXISTS stock_summary (
+  location_id  text    NOT NULL,
+  status       text    NOT NULL,
+  code_type    text    NOT NULL,
+  lot_type     text    NOT NULL,
+  flavour      text    NOT NULL,
+  synced       boolean NOT NULL,
+  units        bigint  NOT NULL,
+  PRIMARY KEY (location_id, status, code_type, lot_type, flavour, synced)
+);
+CREATE TABLE IF NOT EXISTS stock_deltas (
+  delta_id     bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  location_id  text    NOT NULL,
+  status       text    NOT NULL,
+  code_type    text    NOT NULL,
+  lot_type     text    NOT NULL,
+  flavour      text    NOT NULL,
+  synced       boolean NOT NULL,
+  units        bigint  NOT NULL
+);
+CREATE OR REPLACE VIEW stock_current AS
+  SELECT location_id, status, code_type, lot_type, flavour, synced, sum(units)::bigint AS units
+    FROM (SELECT location_id, status, code_type, lot_type, flavour, synced, units FROM stock_summary
+          UNION ALL
+          SELECT location_id, status, code_type, lot_type, flavour, synced, units FROM stock_deltas) AS s
+   GROUP BY location_id, status, code_type, lot_type, flavour, synced
+  HAVING sum(units) <> 0;
+
+CREATE OR REPLACE FUNCTION stock_on_codes_insert() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  INSERT INTO stock_deltas (location_id, status, code_type, lot_type, flavour, synced, units)
+  SELECT location_id, status, code_type, lot_type, flavour, synced, count(*)
+    FROM stock_new GROUP BY location_id, status, code_type, lot_type, flavour, synced;
+  RETURN NULL;
+END
+$$;
+CREATE OR REPLACE FUNCTION stock_on_codes_delete() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  INSERT INTO stock_deltas (location_id, status, code_type, lot_type, flavour, synced, units)
+  SELECT location_id, status, code_type, lot_type, flavour, synced, -count(*)
+    FROM stock_old GROUP BY location_id, status, code_type, lot_type, flavour, synced;
+  RETURN NULL;
+END
+$$;
+CREATE OR REPLACE FUNCTION stock_on_codes_update() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  -- Only keys that actually changed get a row (a dispatch moves units; an updated_at change moves nothing).
+  INSERT INTO stock_deltas (location_id, status, code_type, lot_type, flavour, synced, units)
+  SELECT location_id, status, code_type, lot_type, flavour, synced, sum(d)
+    FROM (SELECT location_id, status, code_type, lot_type, flavour, synced, -1 AS d FROM stock_old
+          UNION ALL
+          SELECT location_id, status, code_type, lot_type, flavour, synced, 1 FROM stock_new) AS c
+   GROUP BY location_id, status, code_type, lot_type, flavour, synced
+  HAVING sum(d) <> 0;
+  RETURN NULL;
+END
+$$;
+CREATE OR REPLACE FUNCTION stock_on_codes_truncate() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  TRUNCATE stock_summary, stock_deltas;
+  RETURN NULL;
+END
+$$;
+DROP TRIGGER IF EXISTS stock_codes_insert ON codes;
+CREATE TRIGGER stock_codes_insert AFTER INSERT ON codes REFERENCING NEW TABLE AS stock_new
+  FOR EACH STATEMENT EXECUTE FUNCTION stock_on_codes_insert();
+DROP TRIGGER IF EXISTS stock_codes_delete ON codes;
+CREATE TRIGGER stock_codes_delete AFTER DELETE ON codes REFERENCING OLD TABLE AS stock_old
+  FOR EACH STATEMENT EXECUTE FUNCTION stock_on_codes_delete();
+DROP TRIGGER IF EXISTS stock_codes_update ON codes;
+CREATE TRIGGER stock_codes_update AFTER UPDATE ON codes REFERENCING OLD TABLE AS stock_old NEW TABLE AS stock_new
+  FOR EACH STATEMENT EXECUTE FUNCTION stock_on_codes_update();
+DROP TRIGGER IF EXISTS stock_codes_truncate ON codes;
+CREATE TRIGGER stock_codes_truncate AFTER TRUNCATE ON codes
+  FOR EACH STATEMENT EXECUTE FUNCTION stock_on_codes_truncate();
+
+-- Fold the deltas into the summary (any time is safe). Returns the delta rows folded in. Never waits: if another
+-- rollup or a rebuild holds the lock it returns 0 at once (the app calls this by itself now and then, from every
+-- instance, next to the jobs container's schedule; `npm run db:stock -- rollup` retries).
+CREATE OR REPLACE FUNCTION stock_summary_rollup() RETURNS bigint LANGUAGE plpgsql AS $$
+DECLARE
+  folded bigint;
+BEGIN
+  IF NOT pg_try_advisory_xact_lock(hashtext('velza_stock_summary')) THEN
+    RETURN 0;
+  END IF;
+  WITH moved AS (DELETE FROM stock_deltas RETURNING location_id, status, code_type, lot_type, flavour, synced, units),
+       counted AS (SELECT count(*) AS n FROM moved),
+       merged AS (
+         INSERT INTO stock_summary AS s (location_id, status, code_type, lot_type, flavour, synced, units)
+         SELECT location_id, status, code_type, lot_type, flavour, synced, sum(units)
+           FROM moved GROUP BY location_id, status, code_type, lot_type, flavour, synced
+         ON CONFLICT (location_id, status, code_type, lot_type, flavour, synced) DO UPDATE SET units = s.units + EXCLUDED.units
+         RETURNING 1)
+  SELECT n INTO folded FROM counted, (SELECT count(*) FROM merged) AS m;
+  DELETE FROM stock_summary WHERE units = 0;
+  RETURN folded;
+END
+$$;
+-- Recount the summary from codes (recovery, or after a bulk change made with triggers off). Writes to codes wait
+-- until it finishes; at 2 crore codes expect seconds, so run it outside shift peaks.
+CREATE OR REPLACE FUNCTION stock_summary_rebuild() RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('velza_stock_summary'));
+  LOCK TABLE codes IN SHARE MODE;
+  DELETE FROM stock_deltas;
+  DELETE FROM stock_summary;
+  INSERT INTO stock_summary (location_id, status, code_type, lot_type, flavour, synced, units)
+  SELECT location_id, status, code_type, lot_type, flavour, synced, count(*)
+    FROM codes GROUP BY location_id, status, code_type, lot_type, flavour, synced;
+END
+$$;
+-- A database upgraded to v9 already holds codes: count them once (a new or empty database gets nothing to count).
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM stock_summary) AND NOT EXISTS (SELECT 1 FROM stock_deltas) AND EXISTS (SELECT 1 FROM codes) THEN
+    PERFORM stock_summary_rebuild();
+  END IF;
+END
+$$;
+
+-- ============================================================ v10: integrity
+-- Links the app always kept, now checked by the database too, and what each container carried as rows.
+-- Foreign keys are DEFERRABLE INITIALLY DEFERRED (rows of one transaction are written in different orders) and added
+-- NOT VALID first, so existing rows are checked once below, after a check for orphans that names what is wrong.
+-- code_history keeps no foreign keys on purpose: a failed scan of an unknown code is kept too.
+--
+-- container_items: one row per case/tray loaded into a container (containers.lot_codes as rows), kept equal to
+-- lot_codes by the app on every container write. No UNIQUE (lot_code): a lot in more than one container over its
+-- life is allowed (see latestContainerWithLot, which picks the most recently dispatched one).
+CREATE TABLE IF NOT EXISTS container_items (
+  container_id text        NOT NULL REFERENCES containers (container_id) DEFERRABLE INITIALLY DEFERRED,
+  lot_code     text        NOT NULL REFERENCES codes (code)              DEFERRABLE INITIALLY DEFERRED,
+  loaded_at    timestamptz NOT NULL,
+  loaded_by    text        REFERENCES users (login_id)                   DEFERRABLE INITIALLY DEFERRED,
+  PRIMARY KEY (container_id, lot_code)
+);
+CREATE INDEX IF NOT EXISTS container_items_lot ON container_items (lot_code);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'print_orders_manufacturer_id_fkey' AND conrelid = 'print_orders'::regclass) THEN
+    ALTER TABLE print_orders ADD CONSTRAINT print_orders_manufacturer_id_fkey
+      FOREIGN KEY (manufacturer_id) REFERENCES partners (partner_id) DEFERRABLE INITIALLY DEFERRED NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'containers_manufacturer_id_fkey' AND conrelid = 'containers'::regclass) THEN
+    ALTER TABLE containers ADD CONSTRAINT containers_manufacturer_id_fkey
+      FOREIGN KEY (manufacturer_id) REFERENCES partners (partner_id) DEFERRABLE INITIALLY DEFERRED NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'containers_to_partner_id_fkey' AND conrelid = 'containers'::regclass) THEN
+    ALTER TABLE containers ADD CONSTRAINT containers_to_partner_id_fkey
+      FOREIGN KEY (to_partner_id) REFERENCES partners (partner_id) DEFERRABLE INITIALLY DEFERRED NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'codes_print_order_id_fkey' AND conrelid = 'codes'::regclass) THEN
+    ALTER TABLE codes ADD CONSTRAINT codes_print_order_id_fkey
+      FOREIGN KEY (print_order_id) REFERENCES print_orders (print_order_id) DEFERRABLE INITIALLY DEFERRED NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'batch_code_pool_device_id_fkey' AND conrelid = 'batch_code_pool'::regclass) THEN
+    ALTER TABLE batch_code_pool ADD CONSTRAINT batch_code_pool_device_id_fkey
+      FOREIGN KEY (device_id) REFERENCES devices (device_id) DEFERRABLE INITIALLY DEFERRED NOT VALID;
+  END IF;
+END
+$$;
+
+-- Rows pointing at rows that don't exist stop the upgrade here, named, before anything is validated or copied.
+-- Nothing is deleted or changed to make it pass: fix or remove those rows, then start again.
+DO $$
+DECLARE
+  n_orders     bigint;
+  n_from       bigint;
+  n_to         bigint;
+  n_codes      bigint;
+  n_pool       bigint;
+  n_carried    bigint;
+BEGIN
+  SELECT count(*) INTO n_orders FROM print_orders o WHERE NOT EXISTS (SELECT 1 FROM partners p WHERE p.partner_id = o.manufacturer_id);
+  SELECT count(*) INTO n_from FROM containers c WHERE NOT EXISTS (SELECT 1 FROM partners p WHERE p.partner_id = c.manufacturer_id);
+  SELECT count(*) INTO n_to FROM containers c
+   WHERE c.to_partner_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM partners p WHERE p.partner_id = c.to_partner_id);
+  SELECT count(*) INTO n_codes FROM codes c
+   WHERE c.print_order_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM print_orders o WHERE o.print_order_id = c.print_order_id);
+  SELECT count(*) INTO n_pool FROM batch_code_pool b WHERE NOT EXISTS (SELECT 1 FROM devices d WHERE d.device_id = b.device_id);
+  SELECT count(*) INTO n_carried FROM containers c CROSS JOIN LATERAL unnest(c.lot_codes) AS l(lot_code)
+   WHERE NOT EXISTS (SELECT 1 FROM codes k WHERE k.code = l.lot_code);
+  IF n_orders + n_from + n_to + n_codes + n_pool + n_carried > 0 THEN
+    RAISE EXCEPTION 'Schema v10 found rows that point at rows which do not exist: print_orders with an unknown manufacturer_id: %; containers with an unknown manufacturer_id: %; containers with an unknown to_partner_id: %; codes with an unknown print_order_id: %; batch_code_pool rows with an unknown device_id: %; containers.lot_codes entries that are not codes: %. Nothing was changed. Fix or remove those rows, then start again.',
+      n_orders, n_from, n_to, n_codes, n_pool, n_carried;
+  END IF;
+END
+$$;
+
+-- What each container carried, copied once from containers.lot_codes when a database first reaches v10 (the app keeps
+-- both equal afterwards). Loaded when the container was opened, by whoever opened it (if that sign-in still exists).
+DO $$
+BEGIN
+  IF COALESCE((SELECT version FROM schema_info WHERE id = 1), 0) < 10 THEN
+    INSERT INTO container_items (container_id, lot_code, loaded_at, loaded_by)
+    SELECT c.container_id, l.lot_code, c.created_at, u.login_id
+      FROM containers c
+     CROSS JOIN LATERAL unnest(c.lot_codes) AS l(lot_code)
+      LEFT JOIN users u ON u.login_id = c.created_by
+    ON CONFLICT (container_id, lot_code) DO NOTHING;
+  END IF;
+END
+$$;
+
+-- Check the existing rows (nothing happens for a constraint that is already valid).
+ALTER TABLE print_orders VALIDATE CONSTRAINT print_orders_manufacturer_id_fkey;
+ALTER TABLE containers VALIDATE CONSTRAINT containers_manufacturer_id_fkey;
+ALTER TABLE containers VALIDATE CONSTRAINT containers_to_partner_id_fkey;
+ALTER TABLE codes VALIDATE CONSTRAINT codes_print_order_id_fkey;
+ALTER TABLE batch_code_pool VALIDATE CONSTRAINT batch_code_pool_device_id_fkey;
+
+INSERT INTO schema_info (id, version) VALUES (1, 10)
   ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version, applied_at = now();

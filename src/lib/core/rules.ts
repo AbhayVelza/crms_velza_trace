@@ -266,9 +266,16 @@ export function evaluateVerification(lot: VerifiableLot, packCodes: string[]): {
 
 // ---------------------------------------------------------------- open, void, reprint, recall
 
+/**
+ * Who may open (split) a case or tray held in its own stock, so its packs move one by one: a Super Stockist or
+ * Distributor (to dispatch single packs to its Retailers, e.g. a Retailer's order of a few packs) and a Retailer.
+ * Never the plant or Customs. Receipt at a Retailer stays the end of tracking.
+ */
+export const LOT_OPENER_TYPES: readonly PartnerType[] = ["SS", "DB", "RETAILER"];
+
 export function canOpenLot(lot: MovableItem, actor: Partner): RuleResult {
-  if (actor.type !== "RETAILER") {
-    return reject("NOT_ALLOWED", "Only a Retailer can open a lot");
+  if (!LOT_OPENER_TYPES.includes(actor.type)) {
+    return reject("NOT_ALLOWED", "Only a Super Stockist, Distributor or Retailer can open a lot");
   }
   // Blocked first: a recalled/void code raises an alert wherever it is scanned (and recall is public anyway).
   const blocked = blockedResult(lot);
@@ -301,7 +308,7 @@ export function canReportDamaged({ item, parentLotStatus, partner, reason, packs
   const blocked = blockedResult(item);
   if (blocked) return blocked;
   if (item.kind === "PACK" && parentLotStatus !== "OPENED") {
-    const open = partner.type === "RETAILER" ? ", or open the lot first" : "";
+    const open = LOT_OPENER_TYPES.includes(partner.type) ? ", or open the lot first" : "";
     return reject("LOT_SEALED", `Pack ${item.code} is inside a sealed case or tray — report the whole lot by its lot code${open}`);
   }
   if (item.kind === "LOT" && item.status === "OPENED") {

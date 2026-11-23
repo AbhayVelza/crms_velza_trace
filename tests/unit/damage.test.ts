@@ -120,9 +120,9 @@ describe("report damaged", () => {
   it("a Retailer opens a case and reports one pack; the other packs stay in stock", async () => {
     await dispatch(ids.ss1, { action: "confirm", toPartnerId: ids.DB1, invoice: "INV-2", codes: [lots[1]] });
     await receive(ids.db1, { code: lots[1] });
-    // A Distributor ships sealed cases: it can't open one, so it reports damage by the whole case only.
-    await expect(openLot(ids.db1, { lotCode: lots[1] })).rejects.toMatchObject({ status: 403 });
-    expect(await reportDamaged(ids.db1, { code: `${lots[1]}63`, reason: "Leaking", ...photoOf(`${lots[1]}63`) })).toMatchObject({ ok: false, code: "LOT_SEALED", message: expect.not.stringMatching(/open the lot/) });
+    // The case is sealed at the Distributor: a single pack is reported only once the case is opened (a Distributor
+    // may open it, see splitAtDistributor.test.ts); here it ships the case on sealed.
+    expect(await reportDamaged(ids.db1, { code: `${lots[1]}63`, reason: "Leaking", ...photoOf(`${lots[1]}63`) })).toMatchObject({ ok: false, code: "LOT_SEALED", message: expect.stringMatching(/open the lot first/) });
     await dispatch(ids.db1, { action: "confirm", toPartnerId: ids.RT1, invoice: "INV-3", codes: [lots[1]] });
     expect(await receive(ids.rt1, { code: lots[1] })).toMatchObject({ ok: true, status: "AT_RETAILER" });
     expect(await reportDamaged(ids.rt1, { code: `${lots[1]}63`, reason: "Leaking", ...photoOf(`${lots[1]}63`) })).toMatchObject({ ok: false, message: expect.stringMatching(/open the lot first/) });

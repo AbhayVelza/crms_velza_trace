@@ -421,6 +421,8 @@ async function referencesTo(tx: StoreTx, entity: AdminEntity, row: { id: string;
   }
   if (entity === "devices") {
     add((await tx.batches.list({ deviceId: id })).length, "batch(es)");
+    // Batch codes issued to it stay recorded against it (used, reserved or returned): the pool is history too.
+    add((await tx.batchCodePool.list({ deviceId: id })).length, "batch code(s) issued to it from the pool");
   }
   if (entity === "countries" || entity === "flavours") {
     const code = String(row.code);
@@ -458,10 +460,7 @@ export async function deleteEntity(userId: string | null, entity: AdminEntity, i
       const hint = entity === "devices" ? "" : " — untick Active instead";
       throw badRequest("IN_USE", `Cannot delete: still used by ${refs.join(", ")}${hint}`);
     }
-    if (entity === "devices") {
-      // Unused codes go back; they are never issued again (codes are unique forever).
-      for (const p of await tx.batchCodePool.list({ deviceId: id, status: "RESERVED" })) await tx.batchCodePool.update(p.id, { status: "RETURNED" });
-    }
+    // (A device with batch codes issued to it is refused above: the pool keeps its device, schema v10.)
     for (const u of logins) await deleteLogin(tx, u.id);
     if (entity === "users") await deleteLogin(tx, id);
     else await repo.delete(id);

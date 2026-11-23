@@ -1,0 +1,37 @@
+# Render Blueprint: the web app on Render's free plan + a paid PostgreSQL database that never expires.
+# Render dashboard → New → Blueprint → this repository. See docs/RENDER.md.
+#
+# The app is the Docker image's default target (`app`, Dockerfile). It upgrades the database schema itself on first
+# use, so no migration step is needed. The free web service sleeps after 15 minutes without visitors; the
+# "Keep Render awake" workflow (.github/workflows/keep-render-awake.yml) visits it every 10 minutes.
+
+services:
+  - type: web
+    name: velza-trace
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /login
+    autoDeploy: true
+    envVars:
+      # Internal address: only Render services can reach it, no SSL needed inside Render's network.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: velza-db
+          property: connectionString
+      - key: STORE
+        value: postgres
+      # The smallest paid database allows few connections; one free instance needs only a handful.
+      - key: PG_POOL_MAX
+        value: "5"
+
+databases:
+  - name: velza-db
+    # Paid: free Render databases are deleted 30 days after creation (14-day grace). This one keeps the data.
+    plan: basic-256mb
+    region: singapore
+    postgresMajorVersion: "17"
+    databaseName: velza
+    user: velza

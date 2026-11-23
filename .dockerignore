@@ -1,0 +1,16 @@
+# Keep the build context small and free of local data and secrets.
+.git
+.github
+.next
+node_modules
+data
+.env*
+!.env.example
+coverage
+test-results
+playwright-report
+infra
+*.patch
+*.log
+.claude
+.neon

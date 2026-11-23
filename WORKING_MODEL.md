@@ -318,9 +318,10 @@ from the system once, plus logged reprints. This is enforced on the server and i
 
 ### Statuses
 
-A case or tray moves as one sealed unit until it is opened; after that, its packs move one by one. An opened case or
-tray still counts as a case or tray at the location that opened it (in My stock and on the HQ dashboard) while any of
-its packs is still there.
+A case or tray moves as one sealed unit until it is opened; after that, its packs move one by one. A Super Stockist,
+Distributor or Retailer may open a case or tray held in its own stock (since 21 Nov 2026; before, only Retailers). An
+opened case or tray still counts as a case or tray at the location that opened it (in My stock, My partners and on the
+HQ dashboard) while any of its packs is still there; its packs count as loose packs wherever they are.
 
 | Status | Meaning | Set when |
 |---|---|---|
@@ -330,7 +331,7 @@ its packs is still there.
 | In transit | On its way to the next partner | Sender confirms dispatch (or the operator dispatches its container) |
 | At customs — awaiting clearance | Received at Customs; held, cannot be dispatched until its container is cleared | Customs scans the container number or the case/tray IN (since 16 Nov 2026) |
 | Cleared at customs (`AT_WAREHOUSE`) / At SS / At DB / At Retailer | At Customs and cleared (ready for an SS), or received at that partner | Customs presses **Mark cleared** on the container; the SS, DB or Retailer scans it IN |
-| Opened | Case or tray opened; packs now move individually | Retailer opens the lot (only Retailers open cases and trays) |
+| Opened | Case or tray opened; packs now move individually (an SS or DB dispatches them singly to its own assigned partners) | A Super Stockist, Distributor or Retailer opens a lot in its own stock (Open lot); Velza field staff taking one pack back open it too. The plant and Customs never open a lot |
 | Quarantined | Failed QC check; cannot move. Two ways out: Void (ends as Void for good), or reprint the bad sticker with a reason, which sends the lot back to Printed so QC verifies it again before it becomes Packed | QC confirms with missing or wrong packs |
 | Void | Misprinted or unused stickers cancelled | Operator voids the lot |
 | Damaged | Case, tray or pack damaged; leaves stock, cannot move, HQ alerted, public page says not for sale | Plant, Velza Warehouse, SS, DB or Retailer reports it on its Damaged page, with a reason, a photo of the item showing its barcode and 1–4 photos of the damage itself |
@@ -510,9 +511,9 @@ its own portal, the server refuses anything outside it, and everyone can change 
 | Manufacturer Operator | A plant | Creating print orders and printing stickers, seeing every generated code per order, loading packed cases and trays into shipping containers and dispatching them to Customs with an invoice (the only way out of the plant since 16 Nov 2026), reprinting damaged stickers (same code, reason logged), voiding misprints, keeping the plant PC synced. | New print order, Print orders (with Codes view), Containers, Reprint, Void lot, My stock, Damaged |
 | Supervisor / QC | A plant | Checking that every pasted pack sticker belongs to its lot before anything leaves the plant: confirms to Packed, or the lot is quarantined. | Verify, My stock, Product details |
 | Customs (Velza) — was Velza Warehouse | Velza Global India (one Customs point for now) | Receiving containers from the plant (container number or case by case, as set by Admin), marking each container cleared after customs clearance (optional Bill of Entry), and dispatching cleared cases and trays to any Super Stockist. Inspects returns. Never opens cases. | Receive, Containers (Mark cleared), Dispatch, My stock, Product details, Damaged |
-| Super Stockist | Its own company (one per state) | Receiving cases from Customs and dispatching them to its assigned distributors and to the retailers assigned to it directly. | Receive, Dispatch, My stock, Product details, Damaged, My partners |
-| Distributor | Its own company | Receiving from its Super Stockist and dispatching to its assigned retailers. | Receive, Dispatch, My stock, Product details, Damaged, My retailers |
-| Retailer | Its own shop | Receiving from its distributor or its Super Stockist and opening cases and trays for sale; the only role that opens them. Cannot dispatch. | Receive, Open lot, My stock, Product details, Damaged |
+| Super Stockist | Its own company (one per state) | Receiving cases from Customs and dispatching them to its assigned distributors and to the retailers assigned to it directly. May open a case or tray of its own stock and dispatch its packs singly (e.g. a large order going through the SS to its direct retailer). | Receive, Dispatch, Open lot, My stock, Product details, Damaged, My partners |
+| Distributor | Its own company | Receiving from its Super Stockist and dispatching to its assigned retailers. May open a case or tray of its own stock and dispatch its packs singly to its retailers (e.g. a retailer ordering a few packs). | Receive, Dispatch, Open lot, My stock, Product details, Damaged, My retailers |
+| Retailer | Its own shop | Receiving from its distributor or its Super Stockist (whole cases and trays, or single packs of opened ones) and opening cases and trays for sale. Cannot dispatch: receipt at a Retailer is the end of tracking (there is no "sold" event). | Receive, Open lot, My stock, Product details, Damaged |
 | Consumer (no login) | — | Scanning the QR code on older stickers to check a product is genuine and not recalled (new stickers have no QR). Sees no business data. | Public check page |
 
 **Returns — Velza field staff (since 13 Nov 2026, branch `features/barcode-history`).** A new Velza staff role,
@@ -547,6 +548,18 @@ at the viewer — where the stock went after leaving you is never shown, and the
 or on its way to / from you ("Passed through you" otherwise). Each scan is in the scan audit as `LOOKUP` (no alert).
 API: `GET /api/details/<code>` (permission `details`); service `src/lib/services/details.ts`; page `/details`.
 
+**Splitting a case or tray at a Super Stockist or Distributor (since 21 Nov 2026).** Confirmed requirement: a
+Distributor or Super Stockist may open a case or tray and dispatch its packs individually to its Retailers (a Retailer
+orders single packs, or a large order such as a hotel group goes through the SS). Open lot is on the SS and DB menus;
+`canOpenLot` allows SS, DB and Retailer, with every other check unchanged: a blocked (recalled, void, quarantined) lot is
+reported first, then the lot must be at the opener's location (so nothing is learned about other partners' stock), then
+in its tier's stock status (`AT_SS` / `AT_DB` / `AT_RETAILER`), and not already opened. The packs keep the opener's
+location and status, and move one by one only to that partner's allowed, assigned destinations. A sealed pack still
+can't be dispatched alone (`LOT_SEALED`); the plant and Customs never open a lot. My stock, My partners and the HQ
+dashboard count the opened lot at the opener while any of its packs is there, and the loose packs wherever they are.
+HQ search of a pack shows its case's history up to the opening, then the pack's own moves. Tests:
+`tests/unit/splitAtDistributor.test.ts`.
+
 Every role that holds stock (plant, Velza Warehouse, Super Stockist, Distributor, Retailer) also reports damaged cases, trays and packs
 on its Damaged page. Scanning the lot code reports a whole case or tray, opened or not (an opened one takes the packs of
 it still at that location); single packs can be reported once the lot is opened. Each Damaged page and the HQ dashboard
@@ -577,8 +590,32 @@ get 404). Reports made before this change have no photo.
 
 The database will have four tables linked by unique IDs: `partners`, `users`, `codes` and `code_history`. It is built
 and tested: the app switches to PostgreSQL as soon as it gets the database's connection string, creates these tables
-itself, and keeps using its data file until then. The schema is at version 2 (Retailer chain); a version 1 database
-upgrades itself once its data is converted.
+itself, and keeps using its data file until then. The schema is at version 10 (each version is described at the top of
+`src/lib/store/sql/schema.ts`); a version 1 database upgrades itself once its data is converted.
+
+**Schema v10 — integrity (21 Nov 2026).**
+- **New foreign keys:** `print_orders.manufacturer_id`, `containers.manufacturer_id` and `containers.to_partner_id` →
+  `partners`; `codes.print_order_id` → `print_orders`; `batch_code_pool.device_id` → `devices`. All are
+  `DEFERRABLE INITIALLY DEFERRED` (rows of one transaction are written in different orders). They are added
+  `NOT VALID`, then validated after a check for orphans. If any row points at a missing row, the upgrade stops with a
+  message naming each table and count, and changes nothing. `code_history` keeps no foreign keys on purpose (failed
+  scans of unknown codes are stored).
+- **`container_items`** (`container_id`, `lot_code`, `loaded_at`, `loaded_by`) holds what each container carried as
+  rows. It is filled once from `containers.lot_codes` and kept equal to it by the app on every container write; "which
+  container carried this lot" (Customs receiving a case) reads it. There is no `UNIQUE (lot_code)`, because the store
+  contract allows a lot to be in several containers over its life. `containers.lot_codes` and `print_orders.lot_codes`
+  stay in this release.
+- **Admin:** because the batch code pool now keeps its device, a device that has been issued batch codes can't be
+  deleted ("history is permanent").
+
+**Live stock summary (v9) and its upkeep.** Triggers on `codes` append signed counts to `stock_deltas`; the view
+`stock_current` (= `stock_summary` + `stock_deltas`) is always exact. The app folds the deltas into `stock_summary` by
+itself, at most once a minute per process, after a successful write and when the summary is read. The fold runs as its
+own short statement outside the request's transaction, and an error is only logged. `stock_summary_rollup()` takes its
+lock with `pg_try_advisory_xact_lock` and returns 0 at once if another rollup holds it. This matters on Vercel, which
+runs no jobs; on Docker / Lightsail the `jobs` container still runs `npm run db:stock -- rollup` every minute (it
+retries for a few seconds while another rollup holds the lock) and `-- check` daily. The HQ dashboard reads this summary
+plus targeted rows (opened lots and their packs, units in transit, recalled and damaged units) instead of every code.
 
 ### Decisions
 
@@ -625,7 +662,14 @@ partners.parent_id ─────────────► partners.partner_i
 codes.manufacturer_id ──────────► partners.partner_id
 codes.location_id / in_transit_to ► partners.partner_id
 codes.lot_code ─────────────────► codes.code                  (pack row → its case/tray row)
-code_history.code ──────────────► codes.code                  (kept even for unknown codes)
+codes.print_order_id ───────────► print_orders.print_order_id (v10)
+print_orders.manufacturer_id ───► partners.partner_id         (v10)
+containers.manufacturer_id / to_partner_id ► partners.partner_id (v10)
+container_items.container_id ───► containers.container_id     (v10)
+container_items.lot_code ───────► codes.code                  (v10; a lot may be in several containers)
+container_items.loaded_by ──────► users.login_id              (v10)
+batch_code_pool.device_id ──────► devices.device_id           (v10)
+code_history.code ──────────────► codes.code                  (kept even for unknown codes: no foreign key)
 code_history.location_id, from_id, to_id ► partners.partner_id
 code_history.login_id ──────────► users.login_id
 ```
@@ -1453,6 +1497,7 @@ section above in the same change.
 
 | Date | Who | Change | Verified |
 |---|---|---|---|
+| 21 Nov 2026 | Claude Code on `chore/vercel-setup` (7 commits, not pushed) | **Vercel readiness, SS/DB split rule, schema v10, dashboard on the stock summary** (Statuses, Roles and responsibilities, Database design). (1) `STORE=pglite` refused on Vercel. (2) Connections: ordinary work on `DATABASE_URL` (Neon's pooled address on Vercel, `PG_POOL_MAX` default 3 there, 10 elsewhere); only code-allocation transactions use `DATABASE_URL_UNPOOLED` through a second pool (`PG_LOCK_POOL_MAX`, default 2); without it, one pool as before. (3) `stock_summary_rollup()` never waits (`pg_try_advisory_xact_lock`, returns 0 if busy); the SQL store folds the deltas itself at most once a minute per process, outside the request's transaction, errors only logged; `db:stock rollup` retries while busy; `deploy/jobs.sh` unchanged. (4) **A Super Stockist or Distributor may open a case/tray** of its own stock and dispatch its packs singly to its own assigned partners (`openLot` permission, `canOpenLot`, SS/DB menus). (5) **Schema v10**: five deferred foreign keys (validated after an orphan check that stops the upgrade and names what is wrong), `container_items` kept equal to `containers.lot_codes` (no `UNIQUE (lot_code)`), `latestContainerWithLot` reads it; a device with batch codes issued to it can no longer be deleted. (6) HQ dashboard from the live stock summary plus targeted reads, output identical to the previous implementation. Files: `src/lib/store/{index,Store}.ts`, `src/lib/store/sql/{driver,schema,sqlStore}.ts`, `db/schema.sql`, `scripts/db-stock.ts`, `src/lib/core/{rules,permissions}.ts`, `src/lib/menu.ts`, `src/lib/services/{admin,demo,trace}.ts`, `.env.example`, README, docs/VERCEL.md, docs/DEPLOYMENT.md; tests `src/lib/store/{storeKind,databaseUrl}.test.ts`, `src/lib/store/sql/{driver,stockRollup,schemaV10}.test.ts`, `tests/unit/{splitAtDistributor,containerItems,dashboardEquivalence}.test.ts` (new) and updated contract, rules, damage, demo-script, disclosure, admin-devices and continuation tests. | Typecheck, lint clean; `npm test` 1032 passed / 9 skipped (JSON + PGlite); dashboard equivalence deep-equal at 14 checkpoints on both stores; on 10,005 codes the dashboard reads 2,652 rows instead of 10,041; `test:e2e:postgres` 20 passed |
 | 16 Nov 2026 | Claude Code on `feature/all-latest-integration` (uncommitted, as asked) | **Customs pipeline: MF → Customs → SS, with customs clearance** (Part 1 Overview, partner tiers, new "Customs and customs clearance" section, Statuses, Partner tree, Workflow, Roles). The plant ships to Customs (the Velza Warehouse partner, relabelled *Customs (Velza)*) only in containers (`CONTAINER_REQUIRED`; plant Dispatch menu removed). Goods scanned in at Customs are held `AT_CUSTOMS` until the Customs user presses **Mark cleared** on the container (optional Bill of Entry; `CUSTOMS_CLEARED` movements; container `CLEARED`); cleared stock (`AT_WAREHOUSE`) goes to Super Stockists only (`NOT_CLEARED`, `WRONG_DESTINATION`). Receiving method is an Admin setting (`customsReceiveModes`: container / case-tray; pallet prepared, not built). Early clearance allowed (later arrivals cleared on arrival); a container scan after single-case receipts receives the rest; loose lots in transit at go-live arrive cleared. Schema **v8**. Design `docs/superpowers/specs/2026-11-16-customs-clearance-design.md`, plan `docs/superpowers/plans/2026-11-16-customs-clearance.md`. Files: `src/lib/core/{types,rules,permissions}.ts`, `src/lib/services/{customs,containers,movement,damage,admin,returns,trace}.ts`, `src/lib/store/sql/{schema,sqlStore}.ts`, `db/schema.sql`, `src/app/api/containers/[id]/clear/route.ts`, screens Containers, Stock, Receive, Settings, Partners, Product details, Dispatch, `src/lib/menu.ts`, `src/components/ui.tsx`; tests `tests/unit/customs.test.ts` (new), `tests/fixtures/shipToCustoms.ts` (new), 13 unit test files and `tests/e2e/demo.spec.ts` moved to the container flow. | Typecheck, lint clean; unit JSON 621 passed / 1 skipped, PGlite 317 passed / 8 skipped (serial, after the final-review fixes: a container scan no longer looks its container up per case; container-only setting no longer strands loose go-live cases; n-of-N count fixed); e2e 20/20; v7→v8 upgrade on PGlite (twice); live walkthrough on a production build at :3500 with a COPY of `data/db.json` (20 API checks + Containers / My stock screens: held → Mark cleared with Bill of Entry → SS only; late case of a cleared container arrives cleared) |
 | 14 Nov 2026 | Claude Code on `feature/all-latest-integration` (from `main` @ `ff9d44a`) | **Schema version clash fixed: self sign-up is v7.** On 14 Nov `main` received every branch (PRs #7–#19), including `features/barcode-history` (Returns, schema v6) and `develop/aditya` (self sign-up, also schema v6). The merge kept both at `SCHEMA_VERSION = 6`, but the app re-applies the schema only when the stored version differs, so a PostgreSQL database already at v6 from either branch would never receive the other change (e.g. a v6 Returns database would lack `partners.approval` and sign-up would fail). Returns (pushed first, 13 Nov) keeps **v6**; self sign-up is now **v7** (`SCHEMA_VERSION = 7`, `db/schema.sql` regenerated by `npm run db:schema`, the duplicated contract-test line made one check for 7). Every schema statement is idempotent, so a database at either v6 upgrades to v7 with both changes. Where the self sign-up row below says v6, read v7. Files: `src/lib/store/sql/schema.ts`, `db/schema.sql`, `src/lib/store/store.contract.test.ts`, this file. | Typecheck, lint, unit tests JSON 594 passed / 1 skipped, PGlite 296 passed / 8 skipped (serial); a v6 database from either branch upgrades to v7 with the approval column, VELZA_FIELD and RETURN_IN_TRANSIT (in-memory PGlite) |
 | 14 Nov 2026 | Claude Code on `develop/aditya` (uncommitted, as asked) | **Self sign-up for SS / DB / Retailers; Admin registers only the plant and the Warehouse** (design `docs/superpowers/specs/2026-11-14-self-signup-design.md`, approach A chosen by the user). `/signup` page (link on sign-in); Retailer active at once; SS / DB pending until Admin → Partners → Pending approvals (Approve / Reject); pending or rejected partners cannot sign in (own messages), be dispatched to, be picked as supplier, or be switched on with the Active box. Schema **v6**: `partners.approval` (NULL / PENDING / REJECTED), one-SS-per-state index leaves rejected out. Sign-up limited to 5 per IP per hour. Files: `src/lib/services/signup.ts` (new), `admin.ts` (decideApproval, NOT_APPROVED guard, rejected SS frees its state), `auth.ts` (PENDING_APPROVAL / REJECTED), `src/app/api/signup`, `src/app/api/admin/approvals/[id]`, `src/proxy.ts`, `src/app/signup/page.tsx`, `src/components/AuthShell.tsx` (moved from the sign-in page), `src/app/login/page.tsx`, `src/app/(screens)/admin/partners/page.tsx`, `src/lib/store/sql/{schema,sqlStore}.ts`, `db/schema.sql`, `types.ts`. Note: `features/barcode-history` also uses v6 (Returns) — renumber one when merging. | New `tests/unit/signup.test.ts` (10 tests, json + postgres) written first and failing, then passing; contract test for the v6 index/check; e2e test 11 rewritten (Distributor signs up → waits → Admin approves → signs in; Retailer under SS-1 works at once). Full unit suite 833 passed / 9 skipped; `tsc`, ESLint clean; Playwright 19/19. Browser on a prod build at :3500 with a copy of `data/db.json`: Retailer RT0003 signed up and opened its portal; Distributor DB0002 pending → refused at sign-in → Active box refused → approved → signed in, offered in SS0001's dispatch list and to new Retailers; SS0002 (Goa) rejected → refused at sign-in, Goa free again; Admin tier list = Manufacturer, Velza Warehouse. |

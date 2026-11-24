@@ -5,7 +5,7 @@
 // (MotionConfig reducedMotion="user") movement is dropped but fades, colour changes and count-ups still play.
 
 import { animate, motion, MotionConfig, useInView, type HTMLMotionProps, type Variants } from "motion/react";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 export const EASE_OUT = [0.2, 0.8, 0.2, 1] as const;
 
@@ -44,22 +44,55 @@ export function RevealItem({ children, className, ...rest }: HTMLMotionProps<"di
   );
 }
 
-/** Counts up to `value` the first time it is seen, then eases between later values (data refreshes). */
+/**
+ * Counts up to `value` the first time it is seen, then eases between later values (data refreshes).
+ * Until it is seen it shows the real value, so printed pages and tiles that are hidden or off screen never read 0.
+ */
 export function AnimatedNumber({ value, className }: { value: number; className?: string }) {
   const ref = useRef<HTMLSpanElement>(null);
   const text = useRef<HTMLSpanElement>(null);
   const inView = useInView(ref, { once: true });
-  const from = useRef(0);
+  // The number on screen while counting; null until the first count starts.
+  const shown = useRef<number | null>(null);
+  // On screen at mount: shows 0 and waits for the count instead of showing the value.
+  const waiting = useRef(false);
+  // React renders the text once; after that only the effects below write it (so React never overwrites a count).
+  const [initial] = useState(value);
+
+  // A tile already on screen at mount starts from 0 before paint, so it never flashes the final value first.
+  // Only before its first count: a route shown again from Next's hidden-route cache re-runs this effect.
+  useLayoutEffect(() => {
+    if (shown.current !== null) return;
+    const box = ref.current?.getBoundingClientRect();
+    if (text.current && box && box.width > 0 && box.bottom > 0 && box.top < window.innerHeight) {
+      text.current.textContent = "0";
+      waiting.current = true;
+    }
+  }, []);
 
   // Writes straight to the text node (no React state), so counting never re-renders the tile.
   useEffect(() => {
     const el = text.current;
-    if (!inView || !el) return;
+    if (!el) return;
+    if (!inView) {
+      if (!waiting.current) el.textContent = value.toLocaleString();
+      return;
+    }
     // Counting digits do not move anything on screen, so they run even under reduced motion.
-    const show = (n: number) => (el.textContent = Math.round(n).toLocaleString());
-    const controls = animate(from.current, value, { duration: from.current === 0 ? 1.1 : 0.5, ease: EASE_OUT, onUpdate: show });
-    from.current = value;
-    return () => controls.stop();
+    const show = (n: number) => {
+      shown.current = n;
+      el.textContent = Math.round(n).toLocaleString();
+    };
+    const first = shown.current === null;
+    // A refresh mid-count continues from the number on screen instead of jumping.
+    const controls = animate(shown.current ?? 0, value, { duration: first ? 1.1 : 0.5, ease: EASE_OUT, onUpdate: show });
+    // Paper gets the final figure, not a frame of the count.
+    const finish = () => controls.complete();
+    window.addEventListener("beforeprint", finish);
+    return () => {
+      window.removeEventListener("beforeprint", finish);
+      controls.stop();
+    };
   }, [value, inView]);
 
   // Screen readers and tests read the real value; the counting digits are decorative.
@@ -67,7 +100,7 @@ export function AnimatedNumber({ value, className }: { value: number; className?
     <span ref={ref} className={className}>
       <span className="sr-only">{value.toLocaleString()}</span>
       <span ref={text} aria-hidden="true">
-        0
+        {initial.toLocaleString()}
       </span>
     </span>
   );

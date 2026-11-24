@@ -17,16 +17,29 @@ const minH = (className?: string) => (className?.includes("min-h-") ? "" : "min-
 /** Full width unless the caller sets a width (`w-auto`, `w-28` …). */
 const width = (className?: string) => (/(^|\s)w-/.test(className ?? "") ? "" : "w-full");
 
+/** DESIGN.md label-caps: 11px, 600, uppercase, 0.06em tracking (overlines and table heads). */
+const labelCaps = "text-[0.6875rem] font-semibold uppercase leading-4 tracking-[0.06em]";
+
 export function PageTitle({ title, subtitle, actions, eyebrow }: { title: string; subtitle?: ReactNode; actions?: ReactNode; eyebrow?: ReactNode }) {
   return (
     <div className="mb-6 flex flex-wrap items-end justify-between gap-x-4 gap-y-3 sm:mb-8">
       <div className="min-w-0">
-        {eyebrow && <div className="mb-2 text-[0.6875rem] font-semibold uppercase tracking-[0.16em] text-subtle-foreground">{eyebrow}</div>}
-        <h1 className="text-[1.625rem] font-bold leading-tight tracking-[-0.02em] text-foreground sm:text-[1.875rem]">{title}</h1>
-        {subtitle && <p className="mt-2 max-w-3xl text-[0.9375rem] leading-relaxed text-muted-foreground">{subtitle}</p>}
+        {eyebrow && <div className={cx("mb-1 text-subtle-foreground", labelCaps)}>{eyebrow}</div>}
+        {/* headline-lg (28/36) on desktop, headline-lg-mobile (22/28) on phones */}
+        <h1 className="text-[1.375rem] font-bold leading-7 tracking-[-0.015em] text-foreground sm:text-[1.75rem] sm:leading-9 sm:tracking-[-0.02em]">{title}</h1>
+        {subtitle && <p className="mt-1.5 max-w-3xl text-sm leading-[1.375rem] text-muted-foreground">{subtitle}</p>}
       </div>
-      {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
+      {actions && <div className="flex flex-wrap items-center gap-3">{actions}</div>}
     </div>
+  );
+}
+
+/** Neutral rounded-square icon surround (DESIGN.md "icon surrounds"). */
+function IconTile({ Icon, size = "md" }: { Icon: ComponentType<IconProps>; size?: "md" | "lg" }) {
+  return (
+    <span aria-hidden="true" className={cx("flex shrink-0 items-center justify-center bg-muted text-muted-foreground", size === "lg" ? "h-8 w-8 rounded-icon" : "h-7 w-7 rounded-lg")}>
+      <Icon size={16} />
+    </span>
   );
 }
 
@@ -34,14 +47,10 @@ export function Card({ title, children, className, actions, icon: Icon }: { titl
   return (
     <section className={cx("card-surface min-w-0 rounded-card border border-line bg-surface p-4 shadow-card transition-[border-color,box-shadow] duration-200 ease-out sm:p-6", className)}>
       {(title || actions) && (
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 sm:mb-5">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           {title && (
-            <h2 className="flex min-w-0 items-center gap-2.5 text-[1.0625rem] font-bold leading-snug tracking-[-0.01em] text-foreground sm:text-lg">
-              {Icon && (
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-brand-line bg-brand-soft text-brand">
-                  <Icon size={17} />
-                </span>
-              )}
+            <h2 className="flex min-w-0 items-center gap-2.5 text-base font-semibold leading-6 tracking-[-0.01em] text-foreground">
+              {Icon && <IconTile Icon={Icon} />}
               {title}
             </h2>
           )}
@@ -57,9 +66,9 @@ type Variant = "primary" | "secondary" | "outline" | "danger" | "ghost";
 const VARIANTS: Record<Variant, string> = {
   // Velza red: the main action on a screen.
   primary:
-    "bg-primary text-primary-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.14),0_6px_16px_-10px_var(--primary)] hover:bg-primary-hover disabled:bg-muted-strong disabled:text-subtle-foreground disabled:shadow-none",
-  // Dark charcoal: everything else that acts.
-  secondary: "border border-line-strong bg-surface-2 text-foreground hover:border-subtle-foreground/60 hover:bg-muted disabled:border-line disabled:bg-surface disabled:text-subtle-foreground",
+    "bg-primary text-primary-foreground shadow-[0_4px_12px_-4px_rgb(223_37_49/0.35)] hover:bg-primary-hover disabled:bg-muted-strong disabled:text-subtle-foreground disabled:shadow-none",
+  // Neutral: everything else that acts (hairline border, turns primary text on hover).
+  secondary: "border border-line-strong bg-surface text-foreground hover:bg-muted disabled:border-line disabled:bg-surface disabled:text-subtle-foreground",
   outline: "border border-line-strong bg-transparent text-foreground hover:border-brand-line hover:bg-brand-soft disabled:border-line disabled:text-subtle-foreground",
   danger: "bg-danger text-danger-foreground hover:bg-danger-hover disabled:bg-muted-strong disabled:text-subtle-foreground",
   ghost: "text-foreground hover:bg-muted disabled:text-subtle-foreground",
@@ -190,18 +199,22 @@ export function StatusBadge({ status }: { status: string }) {
 }
 
 export function Code({ children }: { children: ReactNode }) {
-  return <span className="font-mono text-[0.92em] tracking-wide">{children}</span>;
+  // DESIGN.md code-md: JetBrains Mono, 500.
+  return <span className="font-mono text-[0.92em] font-medium tracking-[-0.01em]">{children}</span>;
 }
 
-/** Wide tables scroll sideways inside their own box on small screens; the page itself never does. */
-export function Table({ head, children, empty }: { head: ReactNode[]; children: ReactNode; empty?: ReactNode }) {
+/**
+ * Wide tables scroll sideways inside their own box on small screens; the page itself never does.
+ * `align` (optional, per column) right-aligns numeric column heads; the cells set their own alignment.
+ */
+export function Table({ head, children, empty, align }: { head: ReactNode[]; children: ReactNode; empty?: ReactNode; align?: ("left" | "right")[] }) {
   return (
-    <div className="-mx-4 overflow-x-auto overscroll-x-contain sm:mx-0 sm:rounded-control sm:border sm:border-line">
+    <div className="-mx-4 overflow-x-auto overscroll-x-contain sm:mx-0 sm:rounded-xl sm:border sm:border-line">
       <table className="min-w-full text-left text-sm tabular">
-        <thead className="border-b border-line bg-surface-2 text-[0.6875rem] uppercase tracking-[0.08em] text-muted-foreground">
+        <thead className={cx("border-b border-line bg-surface-2 text-subtle-foreground", labelCaps)}>
           <tr>
             {head.map((h, i) => (
-              <th key={i} scope="col" className="whitespace-nowrap px-3.5 py-3 font-semibold">
+              <th key={i} scope="col" className={cx("whitespace-nowrap px-4 py-3 font-semibold", align?.[i] === "right" && "text-right")}>
                 {h}
               </th>
             ))}
@@ -215,14 +228,14 @@ export function Table({ head, children, empty }: { head: ReactNode[]; children: 
 }
 
 export function Td({ children, className }: { children?: ReactNode; className?: string }) {
-  return <td className={cx("px-3.5 py-3 align-top text-foreground", className)}>{children}</td>;
+  return <td className={cx("px-4 py-3 align-top text-foreground", className)}>{children}</td>;
 }
 
 export function Empty({ children }: { children: ReactNode }) {
   return (
-    <p className="flex flex-col items-center gap-3 px-3 py-10 text-center text-[0.9375rem] text-muted-foreground">
-      <span aria-hidden="true" className="flex h-11 w-11 items-center justify-center rounded-full border border-line bg-surface-2 text-subtle-foreground">
-        <IconInbox size={20} />
+    <p className="flex flex-col items-center gap-2 px-3 py-8 text-center text-sm text-muted-foreground">
+      <span aria-hidden="true" className="flex h-9 w-9 items-center justify-center rounded-full bg-muted text-subtle-foreground">
+        <IconInbox size={18} />
       </span>
       <span>{children}</span>
     </p>
@@ -274,10 +287,17 @@ export function LoadingPage({ title, subtitle, actions, children }: { title: str
   );
 }
 
+const STAT_TONE = {
+  danger: { bar: "bg-danger", tile: "bg-danger-soft text-danger", value: "text-danger", hint: "border-danger-line bg-danger-soft text-danger" },
+  warn: { bar: "bg-warning", tile: "bg-warning-soft text-warning", value: "text-warning", hint: "border-warning-line bg-warning-soft text-warning" },
+  ok: { bar: "bg-success", tile: "bg-success-soft text-success", value: "text-foreground", hint: "border-success-line bg-success-soft text-success" },
+} as const;
+
 /**
- * A key figure. `icon` shows a red outline icon top-right; `tone` marks a figure that needs attention (border,
- * icon and value colour). Numbers count up when first shown. `share` (0–1, from the caller's real data) draws a
- * small meter under the value; the tile never invents a trend.
+ * A key figure (DESIGN.md metric card): label top-left, neutral icon tile top-right, large tabular value.
+ * `tone` marks a figure that needs attention (warn / danger) or is explicitly clear (ok): a 4px top bar, a tinted
+ * icon tile and, for `hint`, a tinted chip. A plain 0 is shown quieter. Numbers count up when first shown.
+ * `share` (0–1, from the caller's real data) draws a small meter under the value; the tile never invents a trend.
  */
 export function Stat({
   label,
@@ -289,33 +309,28 @@ export function Stat({
 }: {
   label: string;
   value: ReactNode;
-  tone?: "warn" | "danger";
+  tone?: "warn" | "danger" | "ok";
   hint?: string;
   icon?: ComponentType<IconProps>;
   share?: number;
 }) {
-  const color = tone === "danger" ? "text-danger" : tone === "warn" ? "text-warning" : "text-foreground";
+  const t = tone ? STAT_TONE[tone] : null;
+  const quiet = !tone && value === 0;
   return (
-    <div
-      className={cx(
-        "card-surface group/stat relative flex min-w-0 flex-col rounded-card border bg-surface p-4 shadow-card transition-[border-color,box-shadow,transform] duration-300 ease-out hover:-translate-y-1 hover:shadow-hover sm:p-5",
-        tone === "danger" ? "border-danger-line" : tone === "warn" ? "border-warning-line" : "border-line hover:border-brand-line",
-      )}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-1.5 text-[0.8125rem] font-semibold text-foreground-2">
-          {!Icon && tone === "danger" && <IconTriangleAlert size={15} className="text-danger" />}
-          {!Icon && tone === "warn" && <IconTriangleAlert size={15} className="text-warning" />}
+    <div className="card-surface group/stat relative flex h-full min-w-0 flex-col overflow-hidden rounded-card border border-line bg-surface p-4 shadow-card transition-[box-shadow,transform] duration-300 ease-out hover:-translate-y-0.5 hover:shadow-hover sm:p-5">
+      {t && <span aria-hidden="true" className={cx("absolute inset-x-0 top-0 h-1", t.bar)} />}
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+          {!Icon && (tone === "danger" || tone === "warn") && <IconTriangleAlert size={15} className={t?.value} />}
           <span className="truncate">{label}</span>
         </div>
         {Icon && (
-          <Icon
-            size={20}
-            className={cx("transition-transform duration-300 ease-out group-hover/stat:scale-110", tone === "danger" ? "text-danger" : tone === "warn" ? "text-warning" : "text-brand")}
-          />
+          <span aria-hidden="true" className={cx("flex h-8 w-8 shrink-0 items-center justify-center rounded-icon", t ? t.tile : "bg-muted text-muted-foreground")}>
+            <Icon size={16} />
+          </span>
         )}
       </div>
-      <div className={cx("mt-3 text-[1.75rem] font-bold leading-none tracking-[-0.02em] tabular sm:text-[2rem]", color)}>
+      <div className={cx("mt-4 text-[1.75rem] font-bold leading-none tracking-[-0.03em] tabular sm:text-[2rem] lg:text-[2.25rem]", quiet ? "text-subtle-foreground" : t ? t.value : "text-foreground")}>
         {typeof value === "number" ? <AnimatedNumber value={value} /> : value}
       </div>
       {share !== undefined && (
@@ -326,7 +341,17 @@ export function Stat({
           />
         </div>
       )}
-      {hint && <div className="mt-2 text-[0.8125rem] text-muted-foreground">{hint}</div>}
+      {hint &&
+        (t ? (
+          <div className="mt-3">
+            <span className={cx("inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[0.6875rem] font-medium", t.hint)}>
+              <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-current" />
+              {hint}
+            </span>
+          </div>
+        ) : (
+          <div className="mt-2 text-[0.6875rem] font-medium text-muted-foreground">{hint}</div>
+        ))}
     </div>
   );
 }

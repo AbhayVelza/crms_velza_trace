@@ -1,8 +1,9 @@
 "use client";
 
 // Left sidebar: the role's menu (src/lib/menu.ts stays the only source of labels, hrefs and permissions).
-// Desktop (lg+): always visible, collapsible to an icon rail (saved in this browser, applied before first paint
-// by THEME_SCRIPT). Below lg: the same element slides in as a drawer from the header's menu button.
+// Desktop (lg+): 240px, collapsible to the 68px icon rail (saved in this browser, applied before first paint by
+// THEME_SCRIPT). Tablet (md–lg): always the icon rail. Phone (below md): the same element slides in as a drawer
+// from the header's menu button.
 
 import { motion } from "motion/react";
 import Link from "next/link";
@@ -100,7 +101,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
 
 export const useShell = () => useContext(ShellContext);
 
-/** Header button that opens the drawer (below lg only). */
+/** Header button that opens the drawer (phones only, below md). */
 export function MenuButton({ className, children }: { className?: string; children: ReactNode }) {
   const { drawerOpen, setDrawerOpen } = useShell();
   return (
@@ -111,7 +112,7 @@ export function MenuButton({ className, children }: { className?: string; childr
       aria-controls={DRAWER_ID}
       aria-expanded={drawerOpen}
       onClick={() => setDrawerOpen(true)}
-      className={cx("inline-flex h-10 w-10 items-center justify-center rounded-control text-foreground transition-colors duration-150 hover:bg-muted lg:hidden", className)}
+      className={cx("inline-flex h-10 w-10 items-center justify-center rounded-control text-foreground transition-colors duration-150 hover:bg-muted md:hidden", className)}
     >
       {children}
     </button>
@@ -151,19 +152,21 @@ export function CollapseButton({ className }: { className?: string }) {
       aria-controls={DRAWER_ID}
       aria-label={label}
       title={label}
-      className={cx("hidden h-10 w-10 items-center justify-center rounded-control text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground lg:inline-flex", className)}
+      className={cx("hidden h-9 w-9 items-center justify-center rounded-control text-subtle-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground lg:inline-flex", className)}
     >
-      <IconPanelLeft size={20} />
+      <IconPanelLeft size={18} />
     </button>
   );
 }
 
-function subscribeDesktop(onChange: () => void) {
-  const m = window.matchMedia("(min-width: 1024px)");
+/** md and up: the sidebar is in the page (rail or full); below md it is the drawer. */
+const WIDE_QUERY = "(min-width: 768px)";
+function subscribeWide(onChange: () => void) {
+  const m = window.matchMedia(WIDE_QUERY);
   m.addEventListener("change", onChange);
   return () => m.removeEventListener("change", onChange);
 }
-const readDesktop = () => window.matchMedia("(min-width: 1024px)").matches;
+const readWide = () => window.matchMedia(WIDE_QUERY).matches;
 
 // ── Sidebar ──────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -171,9 +174,9 @@ export function Sidebar() {
   const { role, user, organisation } = useSession();
   const pathname = usePathname();
   const { drawerOpen, setDrawerOpen } = useShell();
-  const desktop = useSyncExternalStore(subscribeDesktop, readDesktop, () => true);
+  const wide = useSyncExternalStore(subscribeWide, readWide, () => true);
   const panel = useRef<HTMLElement>(null);
-  const open = drawerOpen && !desktop;
+  const open = drawerOpen && !wide;
 
   const close = useCallback(() => {
     setDrawerOpen(false);
@@ -220,38 +223,37 @@ export function Sidebar() {
       <div
         aria-hidden="true"
         onClick={close}
-        className={cx("fixed inset-0 z-40 bg-black/60 backdrop-blur-[2px] transition-opacity duration-300 ease-out lg:hidden print:hidden", open ? "opacity-100" : "pointer-events-none opacity-0")}
+        className={cx("fixed inset-0 z-40 bg-black/50 backdrop-blur-[2px] transition-opacity duration-300 ease-out md:hidden print:hidden", open ? "opacity-100" : "pointer-events-none opacity-0")}
       />
       <aside
         id={DRAWER_ID}
         ref={panel}
         aria-label="Sidebar"
         // Off-screen drawer links must not be reachable with Tab.
-        inert={!desktop && !drawerOpen}
-        // Follows the theme: white with black text and red accents in light, red-black in dark.
+        inert={!wide && !drawerOpen}
         className={cx(
-          "fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] flex-col border-r border-line bg-surface pb-[env(safe-area-inset-bottom)] text-foreground shadow-pop transition-transform duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] dark:bg-[#0c0b0b] print:hidden",
+          "fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] flex-col border-r border-line bg-surface pb-[env(safe-area-inset-bottom)] text-foreground shadow-pop transition-transform duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] dark:bg-[#161618] print:hidden",
           open ? "translate-x-0" : "-translate-x-full",
-          "lg:sticky lg:top-0 lg:z-30 lg:h-screen lg:w-64 lg:max-w-none lg:translate-x-0 lg:shadow-none lg:transition-[width] lg:duration-250 lg:sidebar-collapsed:w-[4.75rem]",
+          "md:sticky md:top-0 md:z-30 md:h-screen md:w-[68px] md:max-w-none md:translate-x-0 md:shadow-none md:transition-[width] md:duration-250 lg:w-60 lg:sidebar-collapsed:w-[68px]",
         )}
       >
-        {/* Brand. Clear space around the V equals its height (brand book p. 20). */}
-        <div className="flex h-16 shrink-0 items-center justify-between gap-2 border-b border-line px-5 lg:sidebar-collapsed:justify-center lg:sidebar-collapsed:px-0">
-          <Link href="/" onClick={() => setDrawerOpen(false)} className="flex min-w-0 items-center gap-4 rounded-md py-1" aria-label="Velza Traceability — portal home">
-            <VelzaSymbol height={26} />
-            <span className="min-w-0 leading-none lg:sidebar-collapsed:hidden">
-              <span className="block text-[0.625rem] font-semibold uppercase tracking-[0.28em] text-subtle-foreground">Velza</span>
-              <span className="mt-1 block truncate text-[1.0625rem] font-bold tracking-[0.005em] text-foreground">Traceability</span>
+        {/* Brand (the existing Velza symbol). Same height as the top bar so their hairlines line up. */}
+        <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-line px-5 rail:justify-center rail:px-0">
+          <Link href="/" onClick={() => setDrawerOpen(false)} className="flex min-w-0 items-center gap-3 rounded-md py-1" aria-label="Velza Traceability — portal home">
+            <VelzaSymbol height={24} />
+            <span className="min-w-0 leading-none rail:hidden">
+              <span className="block text-[0.625rem] font-bold uppercase tracking-[0.08em] text-subtle-foreground">Velza</span>
+              <span className="mt-0.5 block truncate text-base font-semibold tracking-[-0.01em] text-foreground">Traceability</span>
             </span>
           </Link>
-          <button type="button" onClick={close} aria-label="Close menu" className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-control text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground lg:hidden">
+          <button type="button" onClick={close} aria-label="Close menu" className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-control text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground md:hidden">
             <IconX size={20} />
           </button>
         </div>
 
         {/* Navigation */}
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 py-4 lg:overflow-visible">
-          <p className="mb-2 px-3 text-[0.6875rem] font-semibold uppercase leading-snug tracking-[0.14em] text-subtle-foreground lg:sidebar-collapsed:sr-only">{ROLE_LABELS[role]} portal</p>
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 py-4 md:overflow-visible">
+          <p className="mb-2 px-3 text-[0.6875rem] font-semibold uppercase leading-4 tracking-[0.06em] text-subtle-foreground rail:sr-only">{ROLE_LABELS[role]} portal</p>
           <nav aria-label="Main">
             <ul className="space-y-1">
               {items.map((m) => {
@@ -265,26 +267,28 @@ export function Sidebar() {
                       onClick={() => setDrawerOpen(false)}
                       aria-current={active ? "page" : undefined}
                       className={cx(
-                        "relative isolate flex h-11 items-center gap-3 whitespace-nowrap rounded-control px-3 text-[0.9375rem] transition-colors duration-200 ease-out lg:sidebar-collapsed:justify-center lg:sidebar-collapsed:px-0",
-                        active ? "font-semibold text-white" : "font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
+                        "relative isolate flex h-10 items-center gap-3 whitespace-nowrap rounded-xl px-3 text-sm transition-colors duration-200 ease-out rail:justify-center rail:px-0",
+                        active ? "font-semibold text-foreground" : "font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
                       )}
                     >
-                      {/* Active pill: a Velza-red gradient that glides to the new item when the page changes (Motion layout animation). */}
+                      {/* Active anchor: a quiet neutral pill that glides to the new item when the page changes
+                          (Motion layout animation); red only on the dot and the icon. */}
                       {active && (
                         <motion.span
                           layoutId="sidebar-active"
                           aria-hidden="true"
                           transition={{ type: "spring", stiffness: 420, damping: 36 }}
-                          className="absolute inset-0 -z-10 rounded-control bg-primary shadow-[0_10px_24px_-12px_var(--primary)]"
+                          className="absolute inset-0 -z-10 rounded-xl border border-transparent bg-foreground/[0.06] dark:border-line dark:bg-white/10"
                         />
                       )}
-                      {Icon && <Icon size={20} className={cx("transition-colors duration-200", active ? "text-white" : "text-subtle-foreground group-hover/item:text-brand")} />}
-                      <span className="truncate lg:sidebar-collapsed:sr-only">{m.label}</span>
+                      <span aria-hidden="true" className={cx("h-2 w-2 shrink-0 rounded-full rail:hidden", active ? "bg-primary shadow-[0_0_6px_rgb(223_37_49/0.45)]" : "bg-transparent")} />
+                      {Icon && <Icon size={18} className={cx("shrink-0 transition-colors duration-200", active ? "text-brand" : "text-subtle-foreground group-hover/item:text-foreground")} />}
+                      <span className="truncate rail:sr-only">{m.label}</span>
                     </Link>
-                    {/* Tooltip for the collapsed icon rail (the link keeps its accessible name above). */}
+                    {/* Tooltip for the icon rail (the link keeps its accessible name above). */}
                     <span
                       aria-hidden="true"
-                      className="pointer-events-none absolute left-full top-1/2 z-50 ml-3 hidden -translate-y-1/2 translate-x-[-4px] whitespace-nowrap rounded-control bg-foreground px-2.5 py-1.5 text-xs font-semibold text-background opacity-0 shadow-pop transition-[opacity,transform] duration-150 ease-out lg:sidebar-collapsed:block group-hover/item:translate-x-0 group-hover/item:opacity-100 group-focus-within/item:translate-x-0 group-focus-within/item:opacity-100"
+                      className="pointer-events-none absolute left-full top-1/2 z-50 ml-3 hidden -translate-y-1/2 translate-x-[-4px] whitespace-nowrap rounded-control bg-foreground px-2.5 py-1.5 text-xs font-semibold text-background opacity-0 shadow-pop transition-[opacity,transform] duration-150 ease-out rail:block group-hover/item:translate-x-0 group-hover/item:opacity-100 group-focus-within/item:translate-x-0 group-focus-within/item:opacity-100"
                     >
                       {m.label}
                     </span>
@@ -297,14 +301,17 @@ export function Sidebar() {
 
         {/* Who is signed in (display only: account and sign-out controls stay in the header). */}
         {user && (
-          <div className="shrink-0 border-t border-line p-3">
-            <div className="flex items-center gap-3 rounded-control px-2 py-2 lg:sidebar-collapsed:justify-center lg:sidebar-collapsed:px-0" title={`${user.name} · ${ROLE_LABELS[role]}`}>
-              <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-brand-line bg-brand-soft text-xs font-bold uppercase text-brand">
+          <div className="shrink-0 border-t border-line p-3 rail:px-2">
+            <div
+              className="flex items-center gap-3 rounded-xl border border-line bg-surface-2 px-3 py-2.5 rail:justify-center rail:border-transparent rail:bg-transparent rail:px-0"
+              title={`${user.name} · ${ROLE_LABELS[role]}`}
+            >
+              <span aria-hidden="true" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-foreground text-xs font-semibold uppercase text-background dark:border dark:border-line dark:bg-white/10 dark:text-foreground">
                 {initials(user.name)}
               </span>
-              <span className="min-w-0 leading-tight lg:sidebar-collapsed:sr-only">
-                <span className="block truncate text-sm font-semibold text-foreground">{user.name}</span>
-                <span className="mt-0.5 block truncate text-xs text-subtle-foreground">{organisation || ROLE_LABELS[role]}</span>
+              <span className="min-w-0 leading-tight rail:sr-only">
+                <span className="block truncate text-xs font-semibold text-foreground">{user.name}</span>
+                <span className="mt-0.5 block truncate text-[0.6875rem] text-muted-foreground">{organisation || ROLE_LABELS[role]}</span>
               </span>
             </div>
           </div>

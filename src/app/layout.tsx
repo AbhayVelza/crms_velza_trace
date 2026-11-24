@@ -1,17 +1,16 @@
 import type { Metadata } from "next";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import localFont from "next/font/local";
 import favicon from "@/components/brand-assets/velza-favicon.svg";
 import { THEME_SCRIPT } from "@/components/themeScript";
 import "./globals.css";
 
-// Open Sans, the brand book's UI typeface (SIL OFL, bundled so the app needs no internet).
-const openSans = localFont({
-  src: "./fonts/OpenSans-Variable.ttf",
-  weight: "300 800",
-  style: "normal",
-  display: "swap",
-  variable: "--font-open-sans",
-});
+// DESIGN.md typography. next/font downloads the files at build time and serves them from this app,
+// so browsers never contact Google and the running app needs no internet.
+const inter = Inter({ subsets: ["latin"], display: "swap", variable: "--font-inter" });
+const jetbrainsMono = JetBrains_Mono({ subsets: ["latin"], display: "swap", variable: "--font-jetbrains-mono" });
+// Open Sans stays the printed stickers' font (globals.css pins .sheet to it), so sticker text sizes don't change.
+const openSans = localFont({ src: "./fonts/OpenSans-Variable.ttf", weight: "300 800", style: "normal", display: "swap", variable: "--font-open-sans" });
 
 export const metadata: Metadata = {
   title: "Velza Traceability",
@@ -24,7 +23,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     // data-theme is replaced before first paint by THEME_SCRIPT (saved choice; dark by default).
-    <html lang="en" data-theme="dark" className={`${openSans.variable} h-full antialiased`} suppressHydrationWarning>
+    <html lang="en" data-theme="dark" className={`${inter.variable} ${jetbrainsMono.variable} ${openSans.variable} h-full antialiased`} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>

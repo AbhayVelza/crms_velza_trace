@@ -59,7 +59,12 @@ next-env.d.ts
 *.tfstate.*
 *.tfvars
 !*.tfvars.example
+# go-live roots: the one per-environment variables file is committed (no secrets in it, see infra/aws/README.md)
+!infra/aws/live/*/terraform.tfvars
 .terraform.lock.hcl.bak
+# saved terraform plans contain resource values (and can contain secrets): never commit them
+*.tfplan
+tfplan
 
 # Python bytecode caches (e.g. skill scripts)
 __pycache__/

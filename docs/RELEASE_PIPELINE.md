@@ -47,14 +47,14 @@ Existing jobs stay as they are. New jobs are marked **new**.
 | **Dependency audit** (new) | `npm audit --omit=dev --audit-level=high` | yes |
 | **Secret scan** (new) | `gitleaks` on the PR diff | yes |
 | Terraform fmt + validate (exists) | pilot roots; formatting stays a warning there | yes |
-| **Terraform for `infra/aws`** (new) | `terraform fmt -check` (blocking), `validate` per root, `trivy config infra/aws` (fail on HIGH), `terraform plan` per changed root using the read-only `velza-gha-tf-plan` role, plan posted as a PR comment | yes (plan job only when AWS exists) |
+| **Terraform for `infra/aws`** (new) | `terraform fmt -check` (blocking), `validate` per root, `trivy config infra/aws` (fail on HIGH), `terraform plan` per changed root using the read-only `velza-<env>-gha-tf-plan` role, plan posted as a PR comment | yes (plan job only when AWS exists) |
 
 ## 3. Build once (`release-build.yml`, new)
 
 Trigger: `workflow_run` of CI on `main`, success only (and `workflow_dispatch` for a rebuild).
 
 1. Check out the exact `head_sha`.
-2. OIDC → `velza-gha-build` (staging account; trust limited to `ref:refs/heads/main`).
+2. OIDC → `velza-gha-build` (staging account; trust limited to the GitHub environment `build`, which only allows `main`).
 3. `docker buildx` the `app` and `ops` targets and `deploy/backup` with the GitHub Actions cache. Build args
    `HTTPS_ONLY=1`; `NEXT_PUBLIC_DEMO_HELPER` unset. Add OCI labels `org.opencontainers.image.revision=<sha>`.
 4. Push `:<sha>` (ECR tag immutability on: a SHA can never be overwritten).
@@ -65,7 +65,7 @@ Trigger: `workflow_run` of CI on `main`, success only (and `workflow_dispatch` f
 
 ## 4. Deploy to staging (`release-deploy.yml`, job `staging`, automatic)
 
-GitHub environment `staging`, OIDC → `velza-gha-deploy-staging`. Concurrency group `deploy-staging` (never cancelled
+GitHub environment `staging`, OIDC → `velza-staging-gha-deploy`. Concurrency group `deploy-staging` (never cancelled
 halfway).
 
 1. **Render task definitions** from `deploy/aws/taskdefs/*.json` templates with the image **digests**, `RELEASE_SHA`,
@@ -86,7 +86,7 @@ halfway).
 ## 5. Deploy to production (`release-deploy.yml`, job `production`)
 
 GitHub environment `production`: **required reviewers** (the release approvers), deployment branch `main` only.
-OIDC → `velza-gha-deploy-prod`. Concurrency group `deploy-prod`.
+OIDC → `velza-prod-gha-deploy`. Concurrency group `deploy-prod`.
 
 1. **Preflight**: the SHA must be the one staging just ran successfully (`/velza/staging/release/current`); the
    digests must exist in the prod ECR replica; no production alarm in `ALARM` state (otherwise stop and ask).

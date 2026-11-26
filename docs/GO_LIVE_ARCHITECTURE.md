@@ -276,11 +276,11 @@ No IAM users with access keys anywhere. Humans use Identity Center; machines use
 | `velza-<env>-backup-task` | each | `ecs-tasks.amazonaws.com` | `s3:PutObject/GetObject/ListBucket` on `backups/db/*`; `s3:DeleteObject` on `backups/db/daily/*` only (pruning) | photos, archive |
 | `velza-<env>-admin-task` | each | `ecs-tasks.amazonaws.com` | `ssmmessages:*` (ECS Exec) | S3, SSM parameters |
 | `velza-<env>-scheduler` | each | `scheduler.amazonaws.com` | `ecs:RunTask` on `velza-ops-*` / `velza-backup` task definitions; `iam:PassRole` on their two roles | other services |
-| `velza-gha-build` | staging | GitHub OIDC, `sub = repo:AbhayVelza/crms_velza_trace:ref:refs/heads/main` | push to the three ECR repos | ECS, SSM, RDS |
-| `velza-gha-deploy-staging` | staging | OIDC, `sub = …:environment:staging` | register task definitions; update service `app`; `ecs:RunTask` migrate/admin; `iam:PassRole` on the env task roles; read `/velza/staging/*`; `rds:CreateDBSnapshot`/`Describe*` on the staging DB; read logs | IAM, VPC, anything in prod |
-| `velza-gha-deploy-prod` | prod | OIDC, `sub = …:environment:production` | same as staging, on prod resources only | push images, change infrastructure |
-| `velza-gha-tf-plan` | each | OIDC, `sub = …:pull_request` | `ReadOnlyAccess` + read state bucket + `kms:Decrypt` for state | any write |
-| `velza-gha-tf-apply` | each | OIDC, `sub = …:environment:infra-<env>` (GitHub environment with required reviewers) | `AdministratorAccess` minus Organizations/billing/IAM-Identity-Center (permissions boundary) | org changes, leaving the boundary |
+| `velza-gha-build` | staging | GitHub OIDC, `sub = repo:AbhayVelza/crms_velza_trace:environment:build` (GitHub environment limited to `main`) | push to the three ECR repos | ECS, SSM, RDS |
+| `velza-staging-gha-deploy` | staging | OIDC, `sub = …:environment:staging` | register task definitions; update service `app`; `ecs:RunTask` migrate/admin; `iam:PassRole` on the env task roles; read `/velza/staging/*`; `rds:CreateDBSnapshot`/`Describe*` on the staging DB; read logs | IAM, VPC, anything in prod |
+| `velza-prod-gha-deploy` | prod | OIDC, `sub = …:environment:production` | same as staging, on prod resources only | push images, change infrastructure |
+| `velza-<env>-gha-tf-plan` | each | OIDC, `sub = …:pull_request` | `ReadOnlyAccess` + read state bucket + `kms:Decrypt` for state | any write |
+| `velza-<env>-gha-tf-apply` | each | OIDC, `sub = …:environment:infra-<env>` (GitHub environment with required reviewers) | `AdministratorAccess` minus Organizations/billing/IAM-Identity-Center (permissions boundary) | org changes, leaving the boundary |
 | `BreakGlass` permission set | prod | Identity Center, 2 named people, MFA, 1-hour session | `AdministratorAccess` | — (every sign-in triggers a page via a CloudTrail metric filter) |
 | Emergency IAM user `velza-breakglass` | management only | console password + hardware MFA, **no access keys**, credentials sealed | assume `OrganizationAccountAccessRole` | — (every sign-in pages). Used only if Identity Center itself is unavailable |
 
@@ -537,7 +537,7 @@ How the design changes for this account:
 | Deletion protection | on (RDS, ALB, `prevent_destroy`) | off by variable (`protect = false`), so `terraform destroy` removes everything; the real account sets it to `true` |
 | Domain | `app.velzaglobal.com` | a test subdomain, e.g. `demo.velzaglobal.com` (Q2) |
 | Data | real | seed data or masked copies only |
-| Cost guardrails | Budgets | Budget **₹74,000/month including GST** (a full month of the rehearsal with GST ≈ ₹69,770 + ~5 %; AWS Budgets counts tax by default, so on AISPL it includes GST; was ₹25,000 / ₹60,000 / ₹1,00,000). Alerts (email): 80 % (₹59,200) on **forecasted** spend, 100 % on **actual** spend, plus an early actual-spend alert at ₹18,500 (25 %) to catch a stack left running. **Cost Anomaly Detection** (free), daily cost check in the runbook, and a `teardown` runbook (`terraform destroy` per root, then check Cost Explorer for leftovers: snapshots, cross-Region backups, ECR images, log groups, KMS keys pending deletion) |
+| Cost guardrails | Budgets | **One budget for the whole demo account**, `velza-demo-account-monthly`: **$30 / $60 / $90 a month, tax included** (AWS Budgets counts tax by default, so on AISPL it includes GST; ≈ ₹2,800 / ₹5,600 / ₹8,500; was ₹74,000). No env filter, so it covers staging and prod together; it is created only by the root with `manage_account_resources = true` (prod in the demo), staging creates none. Alerts (email): **actual** spend above $30, $60 and $90, and **forecasted** spend above $90. With the full stack running (≈ ₹2,300/day) the $30 alert fires within about a day: that is the reminder that a stack is running. **Cost Anomaly Detection** (free; one per-service monitor, daily email), daily cost check in the runbook, and a `teardown` runbook (`terraform destroy` per root, run by Kailash with his admin sign-in because the CI roles cannot delete themselves; then check Cost Explorer for leftovers: snapshots, cross-Region backups, ECR images, log groups, KMS keys pending deletion) |
 
 **Cost** (section 11 prices, ₹94/USD, 730 h/month, 30.4 days/month). Production-size stack and staging both run in the demo
 account. There is **no Business Support+** (the demo account stays on Basic support; it is for production only):
@@ -565,4 +565,4 @@ moment resources are deleted. Destroy with Terraform first, then close the accou
 | GitHub Actions release workflows | the app running on that infrastructure: build image → ECR → migrate → deploy | merge to `main` (staging), approval (production) |
 
 One-time bootstrap by hand (the only console step): create the Terraform state bucket and the GitHub OIDC
-`velza-gha-tf-apply` role in the demo account (exact steps in the Phase 2 PR). Everything after that runs from GitHub.
+`velza-staging-gha-tf-apply` / `velza-prod-gha-tf-apply` roles in the demo account (exact steps in `docs/golive/BOOTSTRAP.md`). Everything after that runs from GitHub.

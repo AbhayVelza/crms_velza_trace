@@ -4,7 +4,7 @@
 # Placeholders (000000000000, CHANGE_ME@example.com) are rejected by validation, so fill them in before a plan.
 # Pass bucket/region to the backend with infra/aws/scripts/init.ps1 (or init.sh) staging.
 
-account_id = "000000000000"                 # demo AWS account ID (12 digits)
+account_id = "138893339714"                 # demo AWS account ID (12 digits)
 region     = "ap-south-1"                   # Mumbai
 domain     = "staging.demo.velzaglobal.com" # test subdomain (Q2), used from Phase 5
 protect    = false                          # demo: false so terraform destroy removes everything; company: true
@@ -20,7 +20,7 @@ manage_account_resources = false
 budget_name           = "velza-staging-account-monthly"
 budget_thresholds_usd = [30, 60, 90] # USD per month, tax included (GST on AISPL)
 anomaly_threshold_usd = 5
-alert_email           = "CHANGE_ME@example.com"
+alert_email           = "claude.kailash@velzaglobal.com"
 
 github_repo  = "AbhayVelza/crms_velza_trace"
-state_bucket = "velza-tfstate-000000000000" # velza-tfstate-<account_id>
+state_bucket = "velza-tfstate-138893339714" # velza-tfstate-<account_id>

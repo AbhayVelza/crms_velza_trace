@@ -4,7 +4,7 @@
 # Placeholders (000000000000, CHANGE_ME@example.com) are rejected by validation, so fill them in before a plan.
 # Pass bucket/region to the backend with infra/aws/scripts/init.ps1 (or init.sh) prod.
 
-account_id = "000000000000"         # demo AWS account ID (12 digits)
+account_id = "138893339714"         # demo AWS account ID (12 digits)
 region     = "ap-south-1"           # Mumbai
 dr_region  = "ap-south-2"           # Hyderabad (DR, Phase 4)
 domain     = "demo.velzaglobal.com" # test subdomain (Q2), used from Phase 5; company: app.velzaglobal.com
@@ -22,7 +22,7 @@ manage_account_resources = true
 budget_name           = "velza-demo-account-monthly"
 budget_thresholds_usd = [30, 60, 90]
 anomaly_threshold_usd = 5 # USD of impact before an anomaly email is sent
-alert_email           = "CHANGE_ME@example.com"
+alert_email           = "claude.kailash@velzaglobal.com"
 
 github_repo  = "AbhayVelza/crms_velza_trace"
-state_bucket = "velza-tfstate-000000000000" # velza-tfstate-<account_id>
+state_bucket = "velza-tfstate-138893339714" # velza-tfstate-<account_id>

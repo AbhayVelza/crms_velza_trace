@@ -4,6 +4,9 @@ Terraform needs a few things before it can run: a bucket to keep its state in, a
 to AWS. You make these **once, by hand**. After that, Terraform takes them over (the `import` blocks in
 `infra/aws/live/*/main.tf`) and everything else is code.
 
+> **Status (demo account): steps 1–9 done on 26 Nov 2026.** First applies by Kailash: prod 2 imported, 16 added,
+> 2 changed; staging 1 imported, 9 added, 1 changed. Step 10 is next.
+
 Time needed: about 30 minutes. You need the demo account's admin sign-in with MFA. Nobody else needs any AWS password
 or key, and **no access keys are created anywhere**.
 

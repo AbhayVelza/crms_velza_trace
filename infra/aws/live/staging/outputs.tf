@@ -14,3 +14,27 @@ output "state_bucket" {
 output "budget_name" {
   value = var.manage_account_resources ? module.budgets[0].budget_name : null
 }
+
+# ---- Phase 3 network, used by Phase 4 (data) and Phase 5 (app)
+
+output "vpc_id" {
+  value = module.network.vpc_id
+}
+
+output "subnet_ids" {
+  description = "Subnet IDs by tier (public, private_app, db), in az_ids order."
+  value       = module.network.subnet_ids
+}
+
+output "security_group_ids" {
+  description = "Security group IDs: alb, app, task, db."
+  value       = module.network.security_group_ids
+}
+
+output "db_subnet_group_name" {
+  value = module.network.db_subnet_group_name
+}
+
+output "s3_endpoint_id" {
+  value = module.network.s3_endpoint_id
+}

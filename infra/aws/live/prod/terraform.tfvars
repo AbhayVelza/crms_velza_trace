@@ -26,3 +26,27 @@ alert_email           = "claude.kailash@velzaglobal.com"
 
 github_repo  = "AbhayVelza/crms_velza_trace"
 state_bucket = "velza-tfstate-138893339714" # velza-tfstate-<account_id>
+
+# ---- Phase 3 network (docs/GO_LIVE_ARCHITECTURE.md section 3)
+# vpc_cidr: prod 10.40.0.0/16, staging 10.41.0.0/16. They must not overlap (in the demo account both VPCs sit side by
+#   side). Keep the same values in the company account.
+# az_ids: AZ IDs, not names. ap-south-1a/b/c map to different physical zones in each account; aps1-az1/2/3 do not.
+#   Check which IDs the account has and that the sizes we need are offered there (README, Phase 3).
+vpc_cidr = "10.40.0.0/16"
+az_ids   = ["aps1-az1", "aps1-az3"]
+
+# ---- FAST TRACK (docs/golive/FAST_TRACK.md): database and app at production sizes (Step 0 / D10 / D11)
+db_engine_version            = "17"           # D1 (proposed)
+db_instance_class            = "db.t4g.large" # D11
+db_multi_az                  = true
+db_allocated_storage_gib     = 200
+db_max_allocated_storage_gib = 500
+db_backup_retention_days     = 14
+app_cpu                      = 1024 # 1 vCPU (D10)
+app_memory_mib               = 2048 # 2 GB (D10)
+# 1, not D10's 2, until C1 (photos on S3) and C8 (shared lockout) are built: today's app keeps sign-in lockout, rate
+# limits and damage photos inside one task. FAST_TRACK.md explains.
+app_desired_count  = 1
+log_retention_days = 30
+# "" until the first image is pushed (the service then runs 0 tasks). deploy/aws/roll-app.ps1 sets it.
+app_image_tag = ""

@@ -27,6 +27,17 @@ Mentor: read docs/GO_LIVE_APP_CHANGES_AND_PLAN.md section 3 (Q1–Q16) and docs/
 
 ---
 
+## FAST TRACK — see it working on AWS as soon as possible (do this before the full phases)
+
+Goal: run TODAY's app (current code, schema v10) on the real go-live shape in the demo account within days,
+prove it works like live, then destroy. The full phases and app changes (C1–C11) follow afterwards.
+
+```
+Cloud agent + devops agent: FAST TRACK rehearsal. Using docs/GO_LIVE_ARCHITECTURE.md and the Phase 2 code in infra/aws, implement the minimum of Phases 3, 4 and 5 needed to run TODAY's app (current code, schema v10, unchanged) in the DEMO account, in the PROD root at production sizes from Step 0 (VPC over 2 AZs without NAT, RDS PostgreSQL Multi-AZ db.t4g.large 200 GiB, ECS Fargate 2 tasks 1 vCPU / 2 GB behind an ALB, ECR repo velza-app, CloudWatch logs, secrets in Parameter Store/Secrets Manager, protect = false). No domain yet: use the ALB DNS name over HTTP for this test (note that camera scanning needs HTTPS later). The app may run its own schema migration on start for this test (C10 comes later); one task is fine if in-memory lockout/rate limits matter (C8 comes later). Write modules network, data, registry, app as in section 12 so the full phases build on them, not throw-away code. Agents never run aws or terraform apply: check whether Docker is installed (docker --version); write scripts I run myself to build the image, push it to ECR and roll the ECS service, and a docs/golive/FAST_TRACK.md with: exact apply order, how to open the app and sign in, a 10-minute test checklist (sign in, create partner, print order, scan through the chain), cost per hour/day, and the exact destroy order. terraform fmt + validate only. Then reviewer, then commit and push on a new branch chore/kailash-aws-fast-track.
+```
+
+---
+
 ## INFRA TRACK (cloud + devops agents)
 
 ### Phase 2 — Foundation (demo account)

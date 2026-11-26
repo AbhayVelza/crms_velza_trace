@@ -24,3 +24,11 @@ alert_email           = "claude.kailash@velzaglobal.com"
 
 github_repo  = "AbhayVelza/crms_velza_trace"
 state_bucket = "velza-tfstate-138893339714" # velza-tfstate-<account_id>
+
+# ---- Phase 3 network (docs/GO_LIVE_ARCHITECTURE.md section 3)
+# vpc_cidr: prod 10.40.0.0/16, staging 10.41.0.0/16. They must not overlap (in the demo account both VPCs sit side by
+#   side). Keep the same values in the company account.
+# az_ids: AZ IDs, not names. ap-south-1a/b/c map to different physical zones in each account; aps1-az1/2/3 do not.
+#   Check which IDs the account has and that the sizes we need are offered there (README, Phase 3).
+vpc_cidr = "10.41.0.0/16"
+az_ids   = ["aps1-az1", "aps1-az3"]

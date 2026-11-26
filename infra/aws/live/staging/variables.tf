@@ -96,3 +96,13 @@ variable "state_bucket" {
     error_message = "state_bucket must be velza-tfstate-<account_id> (same account_id as above)."
   }
 }
+
+variable "vpc_cidr" {
+  description = "VPC CIDR of this environment, a /16 (docs/GO_LIVE_ARCHITECTURE.md section 3: prod 10.40.0.0/16, staging 10.41.0.0/16)."
+  type        = string
+}
+
+variable "az_ids" {
+  description = "Two Availability Zone IDs (not names) for the subnets, e.g. [\"aps1-az1\", \"aps1-az3\"]."
+  type        = list(string)
+}

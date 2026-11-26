@@ -148,7 +148,7 @@ until cut-over. No new workloads are put in the management account.
 
 | VPC | CIDR | Notes |
 |---|---|---|
-| production (Mumbai) | `10.40.0.0/16` | 2 AZs: `ap-south-1a`, `ap-south-1b` (pinned by AZ ID in Terraform) |
+| production (Mumbai) | `10.40.0.0/16` | 2 AZs pinned by AZ **ID**, set in `terraform.tfvars` (`az_ids`): `aps1-az1` + `aps1-az3`. Any two Mumbai AZ IDs work (names like `ap-south-1a` map to different zones per account; IDs don't). Before Phase 4, confirm `db.t4g.large` (prod) / `db.t4g.small` (staging) is offered in both |
 | staging (Mumbai) | `10.41.0.0/16` | same layout, separate account |
 | DR (Hyderabad, only built during a region failover) | `10.42.0.0/16` | same module, `region = ap-south-2` |
 
@@ -156,8 +156,8 @@ Subnets per environment (shown for production; staging is the same with `10.41`)
 
 | Subnet | AZ a | AZ b | Route table | Holds |
 |---|---|---|---|---|
-| public | `10.40.0.0/24` | `10.40.1.0/24` | 0.0.0.0/0 → internet gateway; S3 gateway endpoint | ALB, app tasks, one-off tasks (public IP on) |
-| private-app (**reserved, empty**) | `10.40.10.0/24` | `10.40.11.0/24` | local only (+ endpoints if D2 changes) | for the private-subnet option |
+| public | `10.40.0.0/24` | `10.40.1.0/24` | 0.0.0.0/0 → internet gateway; S3 gateway endpoint | ALB, app tasks, one-off tasks (public IP via `assign_public_ip` on the ECS service / run-task; the subnets don't auto-assign) |
+| private-app (**reserved, empty**) | `10.40.10.0/24` | `10.40.11.0/24` | local only; S3 gateway endpoint (+ interface endpoints if D2 changes) | for the private-subnet option |
 | db | `10.40.20.0/24` | `10.40.21.0/24` | local only, **no internet route** | RDS primary and standby (DB subnet group) |
 
 Security groups:
@@ -500,8 +500,8 @@ infra/aws/                         # NEW: go-live. infra/terraform/ stays as the
   modules/
     org/            accounts, Identity Center permission sets, org CloudTrail, GuardDuty, Budgets
     state/          per-account state bucket + KMS
-    network/        VPC, subnets, routes, S3 gateway endpoint, security groups
-    data/           RDS (+ parameter group, subnet group, cross-Region backups), S3 buckets, KMS, SSM placeholders
+    network/        VPC, subnets, routes, S3 gateway endpoint, security groups, DB subnet group (Phase 3)
+    data/           RDS (+ parameter group, cross-Region backups), S3 buckets, KMS, SSM placeholders
     registry/       ECR repos, replication, lifecycle
     app/            ECS cluster, services, task definitions, ALB, ACM, WAF, Route 53, scheduler
     observability/  log groups, metric filters, dashboard, alarms, SNS, event rules

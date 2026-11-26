@@ -40,6 +40,17 @@ module "ci_access" {
   create_build_role         = true # images are built once, in staging, and promoted to prod
 }
 
+# ---- Phase 3 network (docs/GO_LIVE_ARCHITECTURE.md section 3): VPC, 6 subnets over 2 AZs, IGW, route tables,
+# S3 gateway endpoint, DB subnet group, security groups. No NAT, no interface endpoints (D2).
+
+module "network" {
+  source = "../../modules/network"
+
+  env      = local.env
+  vpc_cidr = var.vpc_cidr
+  az_ids   = var.az_ids
+}
+
 # ---- Adopt what bootstrap made by hand (docs/golive/BOOTSTRAP.md). After the first apply these are no-ops.
 
 import {

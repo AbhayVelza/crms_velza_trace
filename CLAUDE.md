@@ -9,14 +9,14 @@ The full business rules live in `WORKING_MODEL.md` — read the relevant section
 ## Stack
 - Next.js 16.4 (App Router, see AGENTS.md — this is NOT the Next.js in your training data), React 19, TypeScript, zod 4.
 - API routes: `src/app/api/*` → services `src/lib/services/*` → pure rules `src/lib/core/*` → store `src/lib/store/*`.
-- Store: `STORE=json | pglite | postgres`. PostgreSQL schema is code: `src/lib/store/sql/schema.ts` (`SCHEMA_VERSION`, currently 10).
+- Store: `STORE=json | pglite | postgres`. PostgreSQL schema is code: `src/lib/store/sql/schema.ts` (`SCHEMA_VERSION`, currently 11; v11 must ship together with the Option C store/service change).
 - Tests: vitest (`npm test`, runs on JSON store and embedded Postgres), Playwright (`npm run test:e2e`).
 - Infra: AWS Lightsail (Mumbai) via Terraform in `infra/terraform/`, Docker + Caddy in `deploy/`, GitHub Actions in `.github/workflows/`. Vercel/Render/Neon configs also exist for previews/testing. Details: `docs/DEPLOYMENT.md`, `docs/VERCEL.md`, `docs/RENDER.md`.
 
 ## Decisions to respect
 - Pack/tray/case relationship: **Option C — packs follow their tray**.
 - Live testing site currently runs on Supabase PostgreSQL. The final AWS database option is **not decided yet** — do not lock code to one provider; stay on plain PostgreSQL 16 features.
-- DB roles: owner (migrations only), `velza_app` (no schema changes; `code_history` append-only), `velza_readonly`. See `db/roles.sql`.
+- DB roles: owner (migrations only), `velza_app` (no schema changes; `code_history` append-only, connection limit 100), `velza_readonly`. See `deploy/roles_v11.sql` (`db/roles.sql` includes it).
 - Security model in `SECURITY.md` (CSP, rate limits, role checks on every API call, parameterised SQL only).
 
 ## Go-live on AWS (design for review, Phase 1 done)
@@ -26,7 +26,8 @@ The full business rules live in `WORKING_MODEL.md` — read the relevant section
 - Agents never hold or ask for AWS passwords or access keys. Terraform is applied by GitHub Actions (OIDC + approval) or by Kailash himself.
 
 ## Rules for all agents
-- Never commit or push to `main`; never force-push. Branch naming in `CONTRIBUTING.md`.
+- Only two branches: go-live work on `feature/kailash-aws-golive`, normal backend work on `backend/kailash`. Never create new branches (this overrides the branch naming in `CONTRIBUTING.md`). Never force-push. Never touch `main` (no commit, push, merge or rebase onto it).
+- `feature/kailash-aws-golive` must not be merged to `main` until the backend Option C change is on it (it carries schema v11, which Vercel production and Render would apply on their own).
 - Never touch production: no `terraform apply`, no deploy workflows, no `db:migrate` against a real database, no reading real `.env*` secrets. Prepare the change and tell the human what to run.
 - A schema change = bump `SCHEMA_VERSION` + an in-place upgrade step + header comment in `schema.ts` + `npm run db:schema` (CI checks "upgrade = fresh install").
 - Every behaviour change gets an entry in the `WORKING_MODEL.md` change log.

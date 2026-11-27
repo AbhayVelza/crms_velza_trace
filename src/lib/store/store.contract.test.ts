@@ -10,11 +10,13 @@ import { JsonStore } from "./jsonStore";
 import { buildBaseSeed } from "./seedData";
 import { createPgliteDriver } from "./sql/driver";
 import { SqlStore } from "./sql/sqlStore";
-import { SCHEMA_SQL } from "./sql/schema";
+import { SCHEMA_SQL, SCHEMA_VERSION } from "./sql/schema";
 import type { DbSnapshot, StockSummaryRow, Store } from "./Store";
 
 const AT = "2026-10-26T10:00:00.000Z";
-const seed = buildBaseSeed({ admin: "Admin2026pass", hq: "Hq2026pass" });
+/** A history row's id: the app uses random UUIDs, and the SQL store keeps event ids as uuid (schema v11). */
+const R1 = "0b6f2c1e-7d1a-4c3e-9a51-3f4e8d2c1b01";
+const seed =buildBaseSeed({ admin: "Admin2026pass", hq: "Hq2026pass" });
 
 const plant: Partner = {
   id: "MF0001",
@@ -346,12 +348,12 @@ describe.each(IMPLS)("Store contract: $name", (impl) => {
   it("keeps movements, scans and reprints apart, in order", async () => {
     await store.appendMovement({ type: "GENERATED", itemKind: "LOT", itemCode: "91AAA111OR00001", fromId: null, toId: "MF0001", fromStatus: null, toStatus: "GENERATED", userId: "AD0001", deviceId: null, invoice: null, note: null });
     await store.appendScan({ context: "RECEIVE", code: "91ZZZZZZOR00001", ok: false, result: "UNKNOWN_CODE", message: "Unknown", userId: "AD0001", partnerId: "SS0001", deviceId: null });
-    await store.reprints.append({ id: "r1", at: AT, code: "91AAA111OR0000161", itemKind: "PACK", reason: "torn", userId: "AD0001", deviceId: null, printOrderId: null });
+    await store.reprints.append({ id: R1, at: AT, code: "91AAA111OR0000161", itemKind: "PACK", reason: "torn", userId: "AD0001", deviceId: null, printOrderId: null });
     await store.appendMovement({ type: "DISPATCHED", itemKind: "LOT", itemCode: "91AAA111OR00001", fromId: "MF0001", toId: "SS0001", fromStatus: "PACKED", toStatus: "IN_TRANSIT", userId: "AD0001", deviceId: null, invoice: "INV-1", note: null });
     expect((await store.movements.list()).map((m) => m.type)).toEqual(["GENERATED", "DISPATCHED"]);
     expect(await store.movements.list({ type: "DISPATCHED" })).toEqual([expect.objectContaining({ invoice: "INV-1", fromId: "MF0001", toId: "SS0001" })]);
     expect(await store.scans.list({ partnerId: "SS0001" })).toEqual([expect.objectContaining({ ok: false, result: "UNKNOWN_CODE", code: "91ZZZZZZOR00001" })]);
-    expect(await store.reprints.list()).toEqual([{ id: "r1", at: AT, code: "91AAA111OR0000161", itemKind: "PACK", reason: "torn", userId: "AD0001", deviceId: null, printOrderId: null }]);
+    expect(await store.reprints.list()).toEqual([{ id: R1, at: AT, code: "91AAA111OR0000161", itemKind: "PACK", reason: "torn", userId: "AD0001", deviceId: null, printOrderId: null }]);
   });
 
   it("settings fall back to defaults and can be updated", async () => {
@@ -491,7 +493,7 @@ describe("PostgreSQL only: the schema guards the data", () => {
     expect(names).toEqual(
       expect.arrayContaining(["codes_manufacturer", "codes_device_unsynced", "print_orders_manufacturer", "print_orders_device_unsynced", "batches_manufacturer", "batches_device_unsynced", "batch_code_pool_device"]),
     );
-    expect(await sql(`SELECT version FROM schema_info`)).toEqual([{ version: 10 }]); // v5: Velza Warehouse; v6: returns; v7: self sign-up approval; v8: customs clearance; v9: live read model; v10: integrity
+    expect(await sql(`SELECT version FROM schema_info`)).toEqual([{ version: SCHEMA_VERSION }]); // v5: Velza Warehouse; v6: returns; v7: self sign-up approval; v8: customs clearance; v9: live read model; v10: integrity; v11: Option C + partitions
   });
 
   it("v9: the stock summary stays exact through inserts, moves, sync, deletes, rollup, rebuild and an upgrade", async () => {
@@ -533,7 +535,7 @@ describe("PostgreSQL only: the schema guards the data", () => {
     await sql(`UPDATE schema_info SET version = 8`);
     await (await store.driver()).exec(SCHEMA_SQL);
     await same();
-    expect(await sql(`SELECT version FROM schema_info`)).toEqual([{ version: 10 }]);
+    expect(await sql(`SELECT version FROM schema_info`)).toEqual([{ version: SCHEMA_VERSION }]);
     // A reset (TRUNCATE) empties it too.
     await store.reset(withPartners());
     expect(await sql(current)).toEqual([]);
@@ -550,12 +552,13 @@ describe("PostgreSQL only: the schema guards the data", () => {
     // An older database is still upgraded.
     await sql(`UPDATE schema_info SET version = 8`);
     await older.migrate();
-    expect(await sql(`SELECT version FROM schema_info`)).toEqual([{ version: 10 }]);
+    expect(await sql(`SELECT version FROM schema_info`)).toEqual([{ version: SCHEMA_VERSION }]);
   });
 
-  it("v9: has the read-path indexes", async () => {
+  it("v9: has the read-path indexes (v11: container_items_lot replaces the GIN index on containers.lot_codes)", async () => {
     const names = (await sql(`SELECT indexname FROM pg_indexes WHERE schemaname = current_schema()`)).map((r) => (r as { indexname: string }).indexname);
-    expect(names).toEqual(expect.arrayContaining(["code_history_scans_recent", "containers_lot_codes", "codes_in_transit_since"]));
+    expect(names).toEqual(expect.arrayContaining(["code_history_scans_recent", "container_items_lot", "codes_in_transit_since"]));
+    expect(names).not.toContain("containers_lot_codes");
   });
 
   it("v8: allows AT_CUSTOMS and CLEARED, keeps clearance fields, and reuses a cleared container's number", async () => {

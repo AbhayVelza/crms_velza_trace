@@ -128,6 +128,12 @@ export function errorResponse(e: unknown): Response {
   if (e instanceof ConcurrentWriteError) {
     return Response.json({ error: { code: "CONCURRENT_WRITE", message: e.message } } satisfies ApiError, { status: 409 });
   }
+  if ((e as { code?: unknown } | null)?.code === "55P03") {
+    // lock_not_available: the database role's lock_timeout (10 s for velza_app, deploy/roles_v11.sql) ran out while
+    // another request held the rows. Nothing was committed; trying again is safe.
+    console.warn(`[velza] lock timeout: ${(e as Error).message}`);
+    return Response.json({ error: { code: "BUSY", message: "Those records are busy right now — please try again in a moment" } } satisfies ApiError, { status: 409 });
+  }
   if (e instanceof JsonStoreLockedError) {
     console.error(`[velza] ${e.message}`);
     return Response.json({ error: { code: "STORE_LOCKED", message: "The data file is in use by another process — see the server log" } } satisfies ApiError, { status: 503 });

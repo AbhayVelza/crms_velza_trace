@@ -5,10 +5,15 @@
 //            itself (at most once a minute per process); stock_summary_rollup() never waits for another rollup, so
 //            when one is running this command tries again for a few seconds instead of reporting 0.
 //   check    recount every code and compare with the live summary. Exit code 1 if anything differs (alert on it).
-//   rebuild  recount the summary from codes. Writes to codes wait until it finishes (seconds at 2 crore codes):
-//            run outside shift peaks, after a failed check or a bulk change made with triggers switched off.
+//   rebuild  recount the summary from codes. Writes to codes wait until it finishes (minutes at full volume): only in
+//            a maintenance window, after a failed check or a bulk change made with triggers switched off.
 //
-// Each command runs as one statement outside the app's SERIALIZABLE transactions, so it never makes a scan retry.
+// Schema v11 (Option C, decision Q7): every code counts by its effective state: a pack that follows its sealed lot under
+// the lot's state, a pack with its own state under that state only. The recount is the view stock_recount.
+//
+// rollup runs as one statement outside the app's SERIALIZABLE transactions, so it never makes a scan retry. check and
+// rebuild read every code: at full volume that takes longer than the app role's 30 s statement limit, so they lift it
+// for their own transaction only (VELZA_JOB_STATEMENT_TIMEOUT, default 30min).
 
 import { closeStores, describeStore, getStore, storeKind } from "@/lib/store";
 import { SqlStore } from "@/lib/store/sql/sqlStore";
@@ -17,6 +22,8 @@ const KEY = "location_id, status, code_type, lot_type, flavour, synced";
 /** rollup: how often and how long to try again while another rollup holds the lock (20 × 250 ms = 5 s). */
 const ROLLUP_ATTEMPTS = 20;
 const ROLLUP_RETRY_MS = 250;
+/** Time limit for one check / rebuild (a PostgreSQL interval such as 30min or 2h; 0 = none). */
+const JOB_TIMEOUT = process.env.VELZA_JOB_STATEMENT_TIMEOUT || "30min";
 
 async function main() {
   const command = process.argv[2];
@@ -31,6 +38,12 @@ async function main() {
     return;
   }
   const d = await (getStore() as SqlStore).driver();
+  /** One transaction with this job's own statement time limit (set_config(…, true) = for this transaction only). */
+  const long = <R>(sql: string) =>
+    d.transaction(async (q) => {
+      await q(`SELECT set_config('statement_timeout', $1, true)`, [JOB_TIMEOUT]);
+      return q<R>(sql);
+    });
 
   if (command === "rollup") {
     // 0 means "nothing to fold" or "another rollup holds the lock". In the second case deltas are still there
@@ -54,16 +67,16 @@ async function main() {
 
   if (command === "rebuild") {
     const started = Date.now();
-    await d.query(`SELECT stock_summary_rebuild()`);
+    await long(`SELECT stock_summary_rebuild()`);
     const [r] = await d.query<{ n: string }>(`SELECT count(*) AS n FROM stock_summary`);
     console.log(`Rebuilt stock_summary from codes: ${r.n} rows in ${Date.now() - started} ms (${describeStore()})`);
     return;
   }
 
   // check: every key where the live summary and a full recount disagree.
-  const diffs = await d.query<Record<string, string | boolean | null>>(
+  const diffs = await long<Record<string, string | boolean | null>>(
     `WITH live AS (SELECT ${KEY}, units FROM stock_current),
-          real AS (SELECT ${KEY}, count(*)::bigint AS units FROM codes GROUP BY ${KEY})
+          real AS (SELECT ${KEY}, units FROM stock_recount)
      SELECT ${KEY.split(", ").map((c) => `COALESCE(live.${c}, real.${c}) AS ${c}`).join(", ")},
             COALESCE(live.units, 0) AS live_units, COALESCE(real.units, 0) AS real_units
        FROM live FULL JOIN real USING (${KEY})

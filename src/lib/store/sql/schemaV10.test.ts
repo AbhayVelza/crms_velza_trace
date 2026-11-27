@@ -152,8 +152,8 @@ afterEach(async () => {
 const version = async (d: SqlDriver) => Number((await d.query<{ version: number }>(`SELECT version FROM schema_info`))[0].version);
 
 describe("schema v10", () => {
-  it("is the current schema version", () => {
-    expect(SCHEMA_VERSION).toBe(10);
+  it("is part of the current schema", () => {
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(10); // v11 builds on it (schemaV11.test.ts)
   });
 
   it("upgrades a v9 database: container_items back-filled from lot_codes, the five foreign keys validated", async () => {
@@ -164,7 +164,7 @@ describe("schema v10", () => {
     // The next start of the app on this database upgrades it (driver() applies the schema when the version is older).
     const upgraded = new SqlStore(async () => d, null, { stockRollupIntervalMs: Number.POSITIVE_INFINITY });
     await upgraded.driver();
-    expect(await version(d)).toBe(10);
+    expect(await version(d)).toBe(SCHEMA_VERSION);
 
     const items = await d.query<{ container_id: string; lot_code: string; loaded_at: string; loaded_by: string | null }>(
       `SELECT container_id, lot_code, to_char(loaded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS loaded_at, loaded_by FROM container_items ORDER BY container_id, lot_code`,
@@ -176,7 +176,8 @@ describe("schema v10", () => {
     ]);
 
     const fks = await d.query<{ conname: string; convalidated: boolean; condeferrable: boolean; condeferred: boolean }>(
-      `SELECT conname, convalidated, condeferrable, condeferred FROM pg_constraint WHERE conname = ANY($1::text[]) ORDER BY conname`,
+      // conparentid = 0: the table's own constraint, not its copies on the partitions of codes (v11).
+      `SELECT conname, convalidated, condeferrable, condeferred FROM pg_constraint WHERE conname = ANY($1::text[]) AND conparentid = 0 ORDER BY conname`,
       [FKS],
     );
     expect(fks).toEqual([...FKS].sort().map((conname) => ({ conname, convalidated: true, condeferrable: true, condeferred: true })));
@@ -187,7 +188,7 @@ describe("schema v10", () => {
     // Running the schema again (npm run db:migrate) changes nothing: no second back-fill, constraints stay.
     await upgraded.migrate();
     expect((await d.query(`SELECT count(*)::int AS n FROM container_items`))[0]).toEqual({ n: 3 });
-    expect(await version(d)).toBe(10);
+    expect(await version(d)).toBe(SCHEMA_VERSION);
   });
 
   it("stops the upgrade on rows that point at missing rows, names them, and changes nothing", async () => {

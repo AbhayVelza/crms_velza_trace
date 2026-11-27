@@ -101,7 +101,7 @@ jobs:
 
       - name: Copy the stack definition and settings
         run: |
-          scp -q deploy/compose.yml deploy/Caddyfile deploy/remote-deploy.sh db/roles.sql \
+          scp -q deploy/compose.yml deploy/Caddyfile deploy/remote-deploy.sh deploy/roles_v11.sql \
             .env app.env jobs.env backup.env migrate.env target:/srv/velza/
 
       - name: Deploy on the server

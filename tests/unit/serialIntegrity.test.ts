@@ -17,6 +17,7 @@ import { listReprints, reprint, voidLot } from "@/lib/services/operator";
 import {
   continueBatch,
   createPrintOrder,
+  legacyReprintServedId,
   markPrinted,
   reprintServedId,
   serveReprint,
@@ -376,5 +377,36 @@ describe.runIf(isJson)("7. JSON file: one process owns it", () => {
     ).rejects.toMatchObject({ name: "ConcurrentWriteError" });
     expect((await store().users.get(ids.operator))!.name).not.toBe("changed");
     expect((await store().printOrders.list()).length).toBe(before);
+  });
+});
+
+describe("reprints served before schema v11 (old ledger id)", () => {
+  it("a reprint served under the old id reprint-served:<id> (an old JSON file, an import into PostgreSQL) never prints again", async () => {
+    const [lot] = await lotsOf(firstOrder);
+    const r = await reprint(ids.operator, { code: lot.lotCode, reason: "Served by an older release" });
+    // The data as an older release left it: the reprint marked as used under its old id.
+    const data = await store().snapshot();
+    const servedAt = "2026-11-20T09:00:00.000Z";
+    data.movements.push({
+      id: legacyReprintServedId(r.reprint.id),
+      at: servedAt,
+      type: "REPRINT_SERVED",
+      itemKind: "LOT",
+      itemCode: lot.lotCode,
+      fromId: null,
+      toId: null,
+      fromStatus: lot.status,
+      toStatus: lot.status,
+      userId: ids.operator,
+      deviceId: null,
+      invoice: null,
+      note: "served by an older release",
+    });
+    await store().reset(data);
+    // JSON keeps the old id; PostgreSQL stores it as md5(old id)::uuid = the id the app now uses.
+    const stored = await store().movements.list({ id: isJson ? legacyReprintServedId(r.reprint.id) : reprintServedId(r.reprint.id) });
+    expect(stored).toEqual([expect.objectContaining({ type: "REPRINT_SERVED", at: servedAt })]);
+    await expect(serveReprint(ids.operator, r.reprint.id)).rejects.toMatchObject({ status: 409, code: "REPRINT_ALREADY_USED" });
+    expect((await listReprints(ids.operator)).find((x) => x.id === r.reprint.id)?.servedAt).toBe(servedAt);
   });
 });

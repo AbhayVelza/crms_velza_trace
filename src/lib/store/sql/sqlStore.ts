@@ -2,6 +2,7 @@
 // (schema.ts): lots and packs are rows of the one `codes` table, movements, scans and reprints are
 // rows of `code_history`. Field names stay the app's; column names are the database's.
 
+import { createHash } from "node:crypto";
 import { after } from "next/server";
 import { LOT_NUMBER_MAX } from "@/lib/core/codes";
 import { DEFAULT_SETTINGS, type Container, type ContainerStatus, type ItemStatus, type LotType, type Movement, type Scan, type Settings } from "@/lib/core/types";
@@ -9,7 +10,7 @@ import { IntegrityError, NotFoundError, type AppendOnlyRepo, type DbSnapshot, ty
 import type { Query, SqlDriver } from "./driver";
 import { ALL_TABLES, SCHEMA_SQL, SCHEMA_VERSION } from "./schema";
 
-type ColType = "text" | "int" | "bool" | "ts" | "date" | "json" | "textarr";
+type ColType = "text" | "int" | "bool" | "ts" | "date" | "json" | "textarr" | "uuid";
 type Col = [field: string, column: string, type?: ColType];
 
 interface Spec {
@@ -29,8 +30,22 @@ const INSERT_CHUNK = 1000;
 /** Bind parameters per statement, under PostgreSQL's limit of 65,535. */
 const MAX_PARAMS = 60_000;
 
-const castOf = (t: ColType | undefined) =>
-  t === "ts" ? "::timestamptz" : t === "date" ? "::date" : t === "json" ? "::jsonb" : t === "textarr" ? "::text[]" : t === "int" ? "::integer" : t === "bool" ? "::boolean" : "";
+const CASTS: Partial<Record<ColType, string>> = { ts: "::timestamptz", date: "::date", json: "::jsonb", textarr: "::text[]", int: "::integer", bool: "::boolean", uuid: "::uuid" };
+const castOf = (t: ColType | undefined) => (t ? (CASTS[t] ?? "") : "");
+
+/**
+ * History event ids are uuid (schema v11). A value that can't be one matches nothing (as on the JSON store) instead of
+ * reaching PostgreSQL, which would refuse it with an error: a mistyped id in a URL is "not found", not a failure.
+ */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const fitsColumn = (v: unknown, type: ColType | undefined) => type !== "uuid" || (typeof v === "string" && UUID.test(v));
+
+/** A history id as stored from v11: a UUID as it is, anything else as the md5 of it written as a UUID (= md5(id)::uuid). */
+export function asHistoryId(id: string): string {
+  if (UUID.test(id)) return id;
+  const h = createHash("md5").update(id).digest("hex");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
 
 /** SELECT expression giving the app's value: timestamps as ISO strings, dates as YYYY-MM-DD. */
 const selectExpr = ([field, column, type]: Col) => {
@@ -289,7 +304,7 @@ const SPECS = {
     order: "history_id",
     fixed: { record_type: "MOVEMENT" },
     cols: T(
-      ["id", "event_id"],
+      ["id", "event_id", "uuid"],
       ["at", "event_time", "ts"],
       ["type", "event"],
       ["itemKind", "item_kind"],
@@ -312,7 +327,7 @@ const SPECS = {
     order: "history_id",
     fixed: { record_type: "SCAN" },
     cols: T(
-      ["id", "event_id"],
+      ["id", "event_id", "uuid"],
       ["at", "event_time", "ts"],
       ["context", "context"],
       ["code", "code"],
@@ -330,7 +345,7 @@ const SPECS = {
     key: "event_id",
     order: "history_id",
     fixed: { record_type: "REPRINT" },
-    cols: T(["id", "event_id"], ["at", "event_time", "ts"], ["code", "code"], ["itemKind", "item_kind"], ["reason", "reason"], ["userId", "login_id"], ["deviceId", "device_id"], ["printOrderId", "print_order_id"]),
+    cols: T(["id", "event_id", "uuid"], ["at", "event_time", "ts"], ["code", "code"], ["itemKind", "item_kind"], ["reason", "reason"], ["userId", "login_id"], ["deviceId", "device_id"], ["printOrderId", "print_order_id"]),
     derive: async (rows) => rows.map(() => ({ event: "REPRINTED", ok: true, result: "OK" })),
   },
 } satisfies Record<string, Spec>;
@@ -346,6 +361,8 @@ function makeRepo<R extends Row>(q: Query, spec: Spec): Repo<R> {
   const colOf = new Map(spec.cols.map((c) => [c[0], c]));
   const select = `SELECT ${spec.cols.map(selectExpr).join(", ")} FROM ${spec.table}`;
   const fixed = Object.entries(spec.fixed ?? {});
+  /** Type of the primary key column: an id that can't be one is simply not found. */
+  const keyType = spec.cols.find(([, column]) => column === spec.key)?.[2];
 
   function where(filter: Record<string, unknown> | undefined, params: unknown[]): string {
     const parts = fixed.map(([column, value]) => (params.push(value), `${column} = $${params.length}`));
@@ -357,10 +374,13 @@ function makeRepo<R extends Row>(q: Query, spec: Spec): Repo<R> {
       else if (Array.isArray(value)) {
         // "Any of": = ANY(array), so an index on the column is used; null in the list matches NULL, as in the JSON store.
         if (col[2] === "json" || col[2] === "textarr") throw new Error(`${spec.table}: field ${field} takes equality only`);
-        const values = value.filter((v) => v !== null);
+        // A value that can't be in the column (a non-UUID history id) is left out: it matches nothing.
+        const values = value.filter((v) => v !== null && fitsColumn(v, col[2]));
         params.push(values.map((v) => toParam(v, col[2])));
         const any = `${col[1]} = ANY($${params.length}${castOf(col[2]) || "::text"}[])`;
-        parts.push(values.length < value.length ? `(${any} OR ${col[1]} IS NULL)` : any);
+        parts.push(value.includes(null) ? `(${any} OR ${col[1]} IS NULL)` : any);
+      } else if (!fitsColumn(value, col[2])) {
+        parts.push("false");
       } else {
         params.push(toParam(value, col[2]));
         parts.push(`${col[1]} = $${params.length}${castOf(col[2])}`);
@@ -432,6 +452,7 @@ function makeRepo<R extends Row>(q: Query, spec: Spec): Repo<R> {
       return rows.sort((a, b) => Number(a.ord) - Number(b.ord)).map((r) => r.id);
     },
     async get(id) {
+      if (!fitsColumn(id, keyType)) return null;
       const params: unknown[] = [id];
       const extra = fixed.map(([column, value]) => (params.push(value), ` AND ${column} = $${params.length}`)).join("");
       return (await q<R>(`${select} WHERE ${spec.key} = $1${extra}`, params))[0] ?? null;
@@ -458,6 +479,7 @@ function makeRepo<R extends Row>(q: Query, spec: Spec): Repo<R> {
         params.push(toParam(value, col[2]));
         sets.push(`${col[1]} = $${params.length}${castOf(col[2])}`);
       }
+      if (!fitsColumn(id, keyType)) throw new NotFoundError(`${spec.table} ${id}`);
       params.push(id);
       const keyParam = `$${params.length}`;
       const extra = fixed.map(([column, value]) => (params.push(value), ` AND ${column} = $${params.length}`)).join("");
@@ -470,6 +492,7 @@ function makeRepo<R extends Row>(q: Query, spec: Spec): Repo<R> {
       return row;
     },
     async delete(id) {
+      if (!fitsColumn(id, keyType)) throw new NotFoundError(`${spec.table} ${id}`);
       const params: unknown[] = [id];
       const extra = fixed.map(([column, value]) => (params.push(value), ` AND ${column} = $${params.length}`)).join("");
       const gone = await q(`DELETE FROM ${spec.table} WHERE ${spec.key} = $1${extra} RETURNING ${spec.key}`, params);
@@ -621,6 +644,8 @@ const LEDGERS = ["movements", "scans", "reprints"] as const;
 
 /** How often (at most) one process folds stock_deltas into stock_summary by itself. */
 export const STOCK_ROLLUP_INTERVAL_MS = 60_000;
+/** How often (at most) one process makes sure the next months of history have their partitions (schema v11). */
+export const PARTITION_CHECK_INTERVAL_MS = 6 * 60 * 60_000;
 
 export interface SqlStoreOptions {
   /** Least time between two in-app stock rollups of this store (default STOCK_ROLLUP_INTERVAL_MS; Infinity = never). */
@@ -631,6 +656,7 @@ export class SqlStore implements Store {
   private conn: Promise<SqlDriver> | null = null;
   private ready: Promise<SqlDriver> | null = null;
   private lastStockRollup = Number.NEGATIVE_INFINITY;
+  private lastPartitionCheck = Number.NEGATIVE_INFINITY;
   private stockRollupRun: Promise<void> = Promise.resolve();
   private readonly stockRollupIntervalMs: number;
 
@@ -661,15 +687,36 @@ export class SqlStore implements Store {
     const now = Date.now();
     if (now - this.lastStockRollup < this.stockRollupIntervalMs) return;
     this.lastStockRollup = now;
-    const run = this.rollupStock(d).then(
-      () => undefined,
-      (e) => console.error("[velza] Stock summary rollup failed (counts stay exact; it is tried again later):", (e as Error).message),
-    );
+    const run = this.rollupStock(d)
+      .then(
+        () => undefined,
+        (e) => console.error("[velza] Stock summary rollup failed (counts stay exact; it is tried again later):", (e as Error).message),
+      )
+      .then(() => this.maybeEnsureHistoryMonths(d));
     this.stockRollupRun = run;
     try {
       after(run);
     } catch {
       // Not in a request scope: nothing to keep alive.
+    }
+  }
+
+  /**
+   * Schema v11: history is partitioned by month and a row dated in a month without its partition lands in the default
+   * partition. The daily job (velza_daily_maintenance) keeps 3 months ahead; where nothing runs jobs (Vercel, Render,
+   * a dev machine) the app does it itself, at most once per PARTITION_CHECK_INTERVAL_MS per process, right after a
+   * stock rollup. code_history_ensure_partitions() only looks when the months exist (takes no lock); making one (once a
+   * month) briefly locks the empty default partition, so a whole-history read may wait a few seconds, while inserts
+   * carry on. A failure is only logged.
+   */
+  private async maybeEnsureHistoryMonths(d: SqlDriver): Promise<void> {
+    const now = Date.now();
+    if (now - this.lastPartitionCheck < PARTITION_CHECK_INTERVAL_MS) return;
+    this.lastPartitionCheck = now;
+    try {
+      await d.alone(`SELECT code_history_ensure_partitions()`);
+    } catch (e) {
+      console.error("[velza] Making the next months of history failed (the daily job or the next check tries again):", (e as Error).message);
     }
   }
 
@@ -717,11 +764,18 @@ export class SqlStore implements Store {
     return (await this.driver()).label;
   }
 
-  /** Apply the schema even if the database reports this version (`npm run db:migrate`). */
-  async migrate(): Promise<SqlDriver> {
+  /**
+   * `npm run db:migrate`: bring the database to this version (driver() does that on connecting). A database already at
+   * this version is left alone unless `force` (\`npm run db:migrate -- --force\`): every statement is idempotent, but
+   * re-running the schema drops and re-creates triggers on codes and code_history, which waits for every scan in
+   * progress and holds the next ones for up to its 10 s lock timeout. Force it only in a quiet moment (repairing a
+   * dropped index, say). An older release's schema is never applied to a newer database.
+   */
+  async migrate(opts: { force?: boolean } = {}): Promise<SqlDriver> {
     const d = await this.driver();
-    // Re-applying the current schema is safe (every statement is idempotent); an older release's schema is not.
-    if ((await schemaVersion(d)) <= SCHEMA_VERSION) await d.exec(SCHEMA_SQL);
+    // Looked at again: the connection may have been checked earlier, before something changed the database.
+    const version = await schemaVersion(d);
+    if (version < SCHEMA_VERSION || (opts.force && version === SCHEMA_VERSION)) await d.exec(SCHEMA_SQL);
     return d;
   }
 
@@ -765,7 +819,10 @@ export class SqlStore implements Store {
       if (version && version < SCHEMA_VERSION) await exec(SCHEMA_SQL);
       const tx = makeTx(q);
       for (const name of COLLECTION_REPOS) await (tx[name] as Repo<Row>).createMany((data[name] ?? []) as Row[]);
-      for (const name of LEDGERS) for (const row of data[name] ?? []) await (tx[name] as AppendOnlyRepo<Row>).append(row);
+      // History ids are uuid (v11). Data written before (an old JSON file: "reprint-served:<id>", hand-made test rows)
+      // gets the md5 uuid of its id, the same rule as the v11 upgrade, so the app finds those rows under the ids it uses.
+      for (const name of LEDGERS)
+        for (const row of data[name] ?? []) await (tx[name] as AppendOnlyRepo<Row>).append({ ...row, id: asHistoryId(String(row.id)) });
       for (const s of data.sequences ?? []) await q(`INSERT INTO id_counters (name, last_value) VALUES ($1, $2)`, [s.id, s.value]);
       for (const s of data.settings ?? []) await q(`INSERT INTO settings (id, data) VALUES ($1, $2::jsonb)`, [s.id, JSON.stringify(s)]);
     });

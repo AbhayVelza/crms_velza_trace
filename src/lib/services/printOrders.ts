@@ -810,8 +810,22 @@ export function stickerByCodeRefused(): never {
   );
 }
 
-/** Id of the ledger row that marks a reprint authorization as used: unique, so it can be written only once. */
-export const reprintServedId = (reprintId: string) => `reprint-served:${reprintId}`;
+/**
+ * Id of the ledger row that marks a reprint authorization as used: fixed for each reprint and unique, so it can be
+ * written only once. History ids are UUIDs (schema v11), so it is the md5 of "reprint-served:<reprint id>" written as a
+ * UUID: the same value the v11 upgrade gave the rows written before, whose id was that text. The database keeps it unique
+ * for all time (table code_history_once).
+ */
+export const reprintServedId = (reprintId: string) => {
+  const h = createHash("md5").update(`reprint-served:${reprintId}`).digest("hex");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+};
+/**
+ * The id the same row had before schema v11. Still looked for, so a reprint served before is never served again where
+ * old rows keep it (a JSON data file written by an older release; on PostgreSQL the v11 upgrade and an import map it to
+ * reprintServedId, and the SQL store finds nothing for a non-UUID id).
+ */
+export const legacyReprintServedId = (reprintId: string) => `reprint-served:${reprintId}`;
 
 /**
  * Serve the sticker of one logged reprint, once. Refused if the reprint belongs to another manufacturer,
@@ -833,7 +847,7 @@ export async function serveReprint(userId: string | null, reprintId: string): Pr
       if (!row) throw notFound(`Reprint ${reprintId}`);
       const lot = await tx.lots.findOne({ lotCode: row.code.slice(0, 15) });
       if (!lot || lot.manufacturerId !== manufacturer.id) throw notFound(`Reprint ${reprintId}`);
-      if ((await tx.movements.list({ id: servedId })).length) throw alreadyUsed();
+      if ((await tx.movements.list({ id: [servedId, legacyReprintServedId(reprintId)] })).length) throw alreadyUsed();
       const found = await findItem(tx, row.code, manufacturer.id);
       if (!found.ok) throw notFound(`Code ${row.code}`);
       const check = canReprint(found.item.movable, row.reason);
@@ -871,8 +885,8 @@ export async function serveReprint(userId: string | null, reprintId: string): Pr
   } catch (e) {
     // A concurrent use of the same reprint committed first: the ledger row id is unique.
     const pg = e as { code?: string };
-    if (pg.code === "23505" || /duplicate id reprint-served:/.test((e as Error).message ?? "")) throw alreadyUsed();
-    if (pg.code === "40001" || pg.code === "40P01") throw new ServiceError(409, "REPRINT_BUSY", "The reprint could not be checked right now — open its print view again");
+    if (pg.code === "23505" || ((e as Error).message ?? "").includes(`duplicate id ${servedId}`)) throw alreadyUsed();
+    if (pg.code === "40001" || pg.code === "40P01" || pg.code === "55P03") throw new ServiceError(409, "REPRINT_BUSY", "The reprint could not be checked right now — open its print view again");
     throw e;
   }
 }

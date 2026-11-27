@@ -161,20 +161,15 @@ export async function logScan(
 
 export const nowIso = () => new Date().toISOString();
 
-/** Apply a lot status change to the lot and (while sealed) all its packs. */
+/**
+ * Apply a status change to a lot (Option C, schema v11). The packs of a sealed case/tray follow it: only the lot row
+ * is written, and its following packs read the new state through it. Opening it (status OPENED) first gives each
+ * following pack the lot's state as it is now, in the same transaction, so from then on they move one by one. A pack
+ * that already has a state of its own (damaged or recalled on its own inside a sealed lot) keeps it.
+ */
 export async function setLotState(tx: StoreTx, lot: Lot, patch: Partial<Lot>, at: string) {
-  const updated = await tx.lots.update(lot.id, { ...patch, updatedAt: at });
-  const packs = await tx.packs.list({ lotCode: lot.lotCode });
-  for (const pack of packs) {
-    const packPatch: Partial<Pack> = { updatedAt: at };
-    if (patch.status && patch.status !== "OPENED") packPatch.status = patch.status;
-    if (patch.locationId !== undefined) packPatch.locationId = patch.locationId;
-    if (patch.inTransitToId !== undefined) packPatch.inTransitToId = patch.inTransitToId;
-    if (patch.dispatchedAt !== undefined) packPatch.dispatchedAt = patch.dispatchedAt;
-    if (patch.statusBeforeRecall !== undefined) packPatch.statusBeforeRecall = patch.statusBeforeRecall;
-    await tx.packs.update(pack.id, packPatch);
-  }
-  return updated;
+  if (patch.status === "OPENED") await tx.packs.updateWhere({ lotCode: lot.lotCode, followsLot: true }, { followsLot: false, updatedAt: at });
+  return tx.lots.update(lot.id, { ...patch, updatedAt: at });
 }
 
 /** Strip the password hash before a user row leaves the server. */

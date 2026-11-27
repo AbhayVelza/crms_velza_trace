@@ -34,6 +34,20 @@ psql "$MIGRATE_DATABASE_URL" -f migration/04_report.sql > out/migration_report.t
 psql "$MIGRATE_DATABASE_URL" -f migration/06_cleanup.sql
 ```
 
+**Before cut-over: packs with their own state inside a sealed case/tray.** On the new database (and, on the Supabase
+copy, after a rehearsal of the in-place upgrade) run:
+
+```bash
+psql "$MIGRATE_DATABASE_URL" -c "SELECT sealed_lot_packs_with_own_state FROM db_health"
+```
+
+It should be 0. If it isn't, those packs (listed by 04) keep their own state and place: when their case/tray is later
+dispatched or received, **they stay behind** at the old place (Option C, accepted by Kailash on 27 Nov 2026). Fix each
+one by hand before cut-over: either open its case/tray in the source data, or give the pack its lot's state so it
+follows again (`UPDATE codes SET status = NULL, location_id = NULL, in_transit_to = NULL, dispatched_at = NULL,
+status_before_recall = NULL WHERE code = '<pack>'`, only when that is what really happened to the pack, and only under a
+sealed lot). Run the query again until it says 0, or note each remaining pack in the change record.
+
 Then set new Admin/HQ passwords. Rollback = point the app back to Supabase (it was only read).
 
 What 03 checks before it commits (any failure keeps nothing): same row counts; every barcode's effective state equals

@@ -231,6 +231,7 @@ async function createNewBatchOrder(
             statusBeforeRecall: null,
             createdAt: at,
             updatedAt: at,
+            followsLot: true, // Option C: a new pack follows its sealed case/tray (no state of its own)
           }),
         );
       }
@@ -528,6 +529,7 @@ export async function continueBatch(userId: string | null, body: unknown) {
             statusBeforeRecall: null,
             createdAt: at,
             updatedAt: at,
+            followsLot: true, // Option C: a new pack follows its sealed case/tray (no state of its own)
           }),
         );
       }
@@ -933,7 +935,8 @@ export async function markPrinted(userId: string | null, printOrderId: string, b
     if (pending.length) {
       const lotCodes = pending.map((l) => l.lotCode);
       await tx.lots.updateWhere({ printOrderId, status: "GENERATED", ...(lotType ? { lotType } : {}) }, { status: "PRINTED", updatedAt: at });
-      await tx.packs.updateWhere({ lotCode: lotCodes, status: "GENERATED" }, { status: "PRINTED", updatedAt: at });
+      // Option C: the packs of these sealed lots follow them; only a pack with a state of its own is written.
+      await tx.packs.updateWhere({ lotCode: lotCodes, status: "GENERATED", followsLot: false }, { status: "PRINTED", updatedAt: at });
       const note = confirmingPc && confirmingPc.id !== order.deviceId ? `Confirmed on ${confirmingPc.name}` : null;
       await tx.appendMovements(
         pending.map((lot) => ({

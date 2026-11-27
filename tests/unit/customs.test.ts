@@ -50,12 +50,13 @@ async function containerOnTheWay(lots: string[]) {
 const lotStatus = async (lotCode: string) => (await store().lots.findOne({ lotCode }))!.status;
 const packStatuses = async (lotCode: string) => [...new Set((await store().packs.list({ lotCode })).map((p) => p.status))];
 
-/** Puts a lot (and its packs) into a state directly, for situations the current flow can no longer create. */
+/**
+ * Puts a sealed lot into a state directly, for situations the current flow can no longer create. Its packs follow it
+ * (Option C): only the lot row is written.
+ */
 async function place(lotCode: string, patch: { status: ItemStatus; locationId: string; inTransitToId?: string | null }) {
   const lot = (await store().lots.findOne({ lotCode }))!;
-  const p = { inTransitToId: null, ...patch };
-  await store().lots.update(lot.id, p);
-  for (const pack of await store().packs.list({ lotCode })) await store().packs.update(pack.id, p);
+  await store().lots.update(lot.id, { inTransitToId: null, ...patch });
 }
 
 beforeAll(async () => {

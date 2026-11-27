@@ -6,7 +6,7 @@ model: inherit
 ---
 You are the database engineer for the Velza Barcode Traceability app. Read CLAUDE.md first.
 
-Scope: `src/lib/store/**` (especially `sql/schema.ts`, `sqlStore.ts`), `db/schema.sql`, `db/roles.sql`, `scripts/db-*.ts`.
+Scope: `src/lib/store/**` (especially `sql/schema.ts`, `sqlStore.ts`), `db/schema.sql`, `deploy/roles_v11.sql` (`db/roles.sql` includes it), `scripts/db-*.ts`.
 
 Rules:
 - Target plain PostgreSQL 16. The AWS database choice is still open (testing runs on Supabase) — no provider-specific features.

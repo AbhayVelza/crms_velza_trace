@@ -818,6 +818,13 @@ CREATE INDEX IF NOT EXISTS codes_in_transit_since ON codes (dispatched_at) WHERE
 CREATE INDEX IF NOT EXISTS codes_print_order ON codes (print_order_id);
 CREATE INDEX IF NOT EXISTS codes_manufacturer ON codes (manufacturer_id, code_type);
 CREATE INDEX IF NOT EXISTS codes_device_unsynced ON codes (device_id) WHERE NOT synced;
+-- Rare states listed across all partners (dashboard, Damaged list: "status = 'DAMAGED'", "status = 'RECALLED' AND
+-- status_before_recall = 'DAMAGED'", opened / recalled lots). Serves both halves of the packs repo's state filter: the
+-- lots (whose following packs are then found by codes_lot) and the packs with a state of their own. Following packs
+-- (status NULL) and the common states are not in it, so it stays small. code_type and status_before_recall in the key
+-- keep a big batch recall from being read whole when only its lots, or only its once-damaged codes, are wanted.
+CREATE INDEX IF NOT EXISTS codes_rare_status ON codes (status, code_type, status_before_recall)
+  WHERE status IN ('DAMAGED', 'RECALLED', 'OPENED', 'QUARANTINED');
 
 -- Effective state of every barcode: a lot (and an opened lot's pack) reads its own row, a sealed pack its lot's.
 -- [13] Views are dropped and created (CREATE OR REPLACE VIEW fails when a view's columns change).

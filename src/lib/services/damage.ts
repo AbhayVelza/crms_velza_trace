@@ -53,6 +53,8 @@ export async function reportDamaged(userId: string | null, body: unknown) {
     const at = nowIso();
     const note = reason.trim();
     const opened = item.kind === "LOT" && item.lot.status === "OPENED";
+    // A sealed case/tray reported whole: the packs that follow it (one damaged or recalled on its own keeps its state).
+    const followingPacks = item.kind === "LOT" && !opened ? (await tx.packs.list({ lotCode: item.lot.lotCode, followsLot: true })).length : 0;
     // An opened lot stays OPENED (its packs elsewhere keep moving); only its packs here become DAMAGED.
     if (opened) for (const p of openedHere) await tx.packs.update(p.id, { status: "DAMAGED", updatedAt: at });
     else if (item.kind === "LOT") await setLotState(tx, item.lot, { status: "DAMAGED" }, at);
@@ -69,6 +71,18 @@ export async function reportDamaged(userId: string | null, body: unknown) {
       deviceId,
       invoice: null,
       note,
+    });
+    // The damage report row (schema v11 damage_reports), in this transaction, under the movement's id.
+    await tx.damageReports.append({
+      id: report.id,
+      code: item.movable.code,
+      itemKind: item.kind,
+      partnerId: partner.id,
+      reason: note,
+      // damage_reports.packs_affected > 0: a sealed lot whose packs all have a state of their own still counts as 1.
+      packsAffected: item.kind === "PACK" ? 1 : opened ? openedHere.length : Math.max(1, followingPacks),
+      reportedBy: actor.user.id,
+      reportedAt: report.at,
     });
     const unit = item.lot.lotType === "CASE" ? "Case" : "Tray";
     const what =

@@ -5,8 +5,9 @@
 import { createHash } from "node:crypto";
 import { after } from "next/server";
 import { LOT_NUMBER_MAX } from "@/lib/core/codes";
-import { DEFAULT_SETTINGS, type Container, type ContainerStatus, type ItemStatus, type LotType, type Movement, type Scan, type Settings } from "@/lib/core/types";
-import { IntegrityError, NotFoundError, type AppendOnlyRepo, type DbSnapshot, type NewMovement, type NewScan, type Repo, type Row, type StockSummaryRow, type Store, type StoreTx, type TransactionOptions, type Where } from "../Store";
+import { DEFAULT_SETTINGS, type Container, type ContainerStatus, type DamageReport, type ItemStatus, type LotType, type Movement, type Pack, type Scan, type Settings } from "@/lib/core/types";
+import { assertOwnStateValues, damageReportsFor, infersFollow, isPackStateField, LOT_OPENED_MESSAGE, PACK_STATE_FIELDS, type PackState } from "../packState";
+import { IntegrityError, NotFoundError, type AppendOnlyRepo, type DbSnapshot, type LedgerReadOptions, type NewMovement, type NewScan, type Repo, type Row, type StockSummaryRow, type Store, type StoreTx, type TransactionOptions, type Where } from "../Store";
 import type { Query, SqlDriver } from "./driver";
 import { ALL_TABLES, SCHEMA_SQL, SCHEMA_VERSION } from "./schema";
 
@@ -20,9 +21,14 @@ interface Spec {
   cols: Col[];
   /** Column values that pick this collection's rows out of a shared table (codes, code_history). */
   fixed?: Record<string, string>;
-  /** Extra columns written on insert, derived from the row (and the database). */
+  /**
+   * Extra columns written on insert, derived from the row (and the database). A derived value for a column the row
+   * maps itself replaces the row's value (a following pack's state columns: NULL).
+   */
   derive?: (rows: Record<string, unknown>[], q: Query) => Promise<Record<string, unknown>[]>;
   order: string;
+  /** Ledgers: the time column a read's `since` bounds (code_history is partitioned by it). */
+  timeColumn?: string;
 }
 
 const SETTINGS_ID = "default";
@@ -275,24 +281,34 @@ const SPECS = {
     async derive(rows, q) {
       const info = await batchInfo(q, rows.map((r) => String(r.packCode ?? r.id).slice(2, 8)));
       // A pack carries its lot's sync flag (lots.update keeps them equal afterwards). Taken from the lot, not the batch:
-      // a continuation order made offline adds unsynced lots to a batch that is already synced.
+      // a continuation order made offline adds unsynced lots to a batch that is already synced. The lot's state decides
+      // whether a pack written without followsLot follows it (Option C, the v11 upgrade's rule).
       const lotCodes = [...new Set(rows.map((r) => String(r.lotCode)))];
-      const lotSynced = new Map(
-        (await q<{ code: string; synced: boolean }>(`SELECT code, synced FROM codes WHERE code = ANY($1::text[]) AND code_type = 'LOT'`, [lotCodes])).map((l) => [l.code, l.synced]),
+      const lotRows = await q<PackState & { code: string; synced: boolean }>(
+        `SELECT code, synced, status AS "status", location_id AS "locationId", in_transit_to AS "inTransitToId",
+                ${selectExpr(["dispatchedAt", "dispatched_at", "ts"])}, status_before_recall AS "statusBeforeRecall"
+           FROM codes WHERE code = ANY($1::text[]) AND code_type = 'LOT'`,
+        [lotCodes],
       );
+      const lotByCode = new Map(lotRows.map((l) => [l.code, l]));
       return rows.map((r) => {
         const code = String(r.packCode ?? r.id);
         const p = parts(code);
         const b = info.get(p.batch_code);
+        const lot = lotByCode.get(String(r.lotCode));
+        const follows = (r.followsLot as boolean | undefined) ?? (r.status === null || infersFollow(r as unknown as PackState, lot));
+        if (!follows) assertOwnStateValues(r); // the same refusal as the JSON store, before the database's check
         return {
           ...p,
+          // A following pack stores no state of its own (all five columns NULL: "same as my lot").
+          ...(follows ? Object.fromEntries(PACK_STATE_COLUMNS.map((c) => [c, null])) : {}),
           lot_type: Number(r.packSize) === 6 ? "CASE" : "TRAY",
           mfg_date: b?.mfg_date ?? null,
           expiry_date: b?.expiry_date ?? null,
           manufacturer_id: b?.manufacturer_id ?? null,
           device_id: b?.device_id ?? null,
           print_order_id: b?.print_order_id ?? null,
-          synced: lotSynced.get(String(r.lotCode)) ?? b?.synced ?? true,
+          synced: lot?.synced ?? b?.synced ?? true,
           generated_by: b?.created_by ?? null,
         };
       });
@@ -302,6 +318,7 @@ const SPECS = {
     table: "code_history",
     key: "event_id",
     order: "history_id",
+    timeColumn: "event_time",
     fixed: { record_type: "MOVEMENT" },
     cols: T(
       ["id", "event_id", "uuid"],
@@ -325,6 +342,7 @@ const SPECS = {
     table: "code_history",
     key: "event_id",
     order: "history_id",
+    timeColumn: "event_time",
     fixed: { record_type: "SCAN" },
     cols: T(
       ["id", "event_id", "uuid"],
@@ -347,6 +365,23 @@ const SPECS = {
     fixed: { record_type: "REPRINT" },
     cols: T(["id", "event_id", "uuid"], ["at", "event_time", "ts"], ["code", "code"], ["itemKind", "item_kind"], ["reason", "reason"], ["userId", "login_id"], ["deviceId", "device_id"], ["printOrderId", "print_order_id"]),
     derive: async (rows) => rows.map(() => ({ event: "REPRINTED", ok: true, result: "OK" })),
+    timeColumn: "event_time",
+  },
+  damageReports: {
+    table: "damage_reports",
+    key: "report_id",
+    order: "reported_at",
+    timeColumn: "reported_at",
+    cols: T(
+      ["id", "report_id", "uuid"],
+      ["code", "code"],
+      ["itemKind", "item_kind"],
+      ["partnerId", "partner_id"],
+      ["reason", "reason"],
+      ["packsAffected", "packs_affected", "int"],
+      ["reportedBy", "reported_by"],
+      ["reportedAt", "reported_at", "ts"],
+    ),
   },
 } satisfies Record<string, Spec>;
 
@@ -357,41 +392,55 @@ const selectOf = (spec: Spec) => `SELECT ${spec.cols.map(selectExpr).join(", ")}
 
 // ---------------------------------------------------------------- generic repo
 
-function makeRepo<R extends Row>(q: Query, spec: Spec): Repo<R> {
+/**
+ * One filter condition on an SQL expression (a column, or an effective pack state): null → IS NULL; an array → "any of"
+ * (= ANY, so an index on the column is used; null in the list matches NULL, as in the JSON store); a value → equality.
+ */
+function condition(table: string, field: string, expr: string, type: ColType | undefined, value: unknown, params: unknown[]): string {
+  if (value === null) return `${expr} IS NULL`;
+  if (Array.isArray(value)) {
+    if (type === "json" || type === "textarr") throw new Error(`${table}: field ${field} takes equality only`);
+    // A value that can't be in the column (a non-UUID history id) is left out: it matches nothing.
+    const values = value.filter((v) => v !== null && fitsColumn(v, type));
+    params.push(values.map((v) => toParam(v, type)));
+    const any = `${expr} = ANY($${params.length}${castOf(type) || "::text"}[])`;
+    return value.includes(null) ? `(${any} OR ${expr} IS NULL)` : any;
+  }
+  if (!fitsColumn(value, type)) return "false";
+  params.push(toParam(value, type));
+  return `${expr} = $${params.length}${castOf(type)}`;
+}
+
+/** A repo with ledger reads: `list(where, { since })` (only tables with a time column take `since`). */
+type SqlRepo<R extends Row> = Repo<R> & { list(where?: Where<R>, opts?: LedgerReadOptions): Promise<R[]> };
+
+function makeRepo<R extends Row>(q: Query, spec: Spec): SqlRepo<R> {
   const colOf = new Map(spec.cols.map((c) => [c[0], c]));
   const select = `SELECT ${spec.cols.map(selectExpr).join(", ")} FROM ${spec.table}`;
   const fixed = Object.entries(spec.fixed ?? {});
   /** Type of the primary key column: an id that can't be one is simply not found. */
   const keyType = spec.cols.find(([, column]) => column === spec.key)?.[2];
 
-  function where(filter: Record<string, unknown> | undefined, params: unknown[]): string {
+  function where(filter: Record<string, unknown> | undefined, params: unknown[], opts?: LedgerReadOptions): string {
     const parts = fixed.map(([column, value]) => (params.push(value), `${column} = $${params.length}`));
     for (const [field, value] of Object.entries(filter ?? {})) {
       if (value === undefined) continue;
       const col = colOf.get(field);
       if (!col) throw new Error(`${spec.table}: no column for field ${field}`);
-      if (value === null) parts.push(`${col[1]} IS NULL`);
-      else if (Array.isArray(value)) {
-        // "Any of": = ANY(array), so an index on the column is used; null in the list matches NULL, as in the JSON store.
-        if (col[2] === "json" || col[2] === "textarr") throw new Error(`${spec.table}: field ${field} takes equality only`);
-        // A value that can't be in the column (a non-UUID history id) is left out: it matches nothing.
-        const values = value.filter((v) => v !== null && fitsColumn(v, col[2]));
-        params.push(values.map((v) => toParam(v, col[2])));
-        const any = `${col[1]} = ANY($${params.length}${castOf(col[2]) || "::text"}[])`;
-        parts.push(value.includes(null) ? `(${any} OR ${col[1]} IS NULL)` : any);
-      } else if (!fitsColumn(value, col[2])) {
-        parts.push("false");
-      } else {
-        params.push(toParam(value, col[2]));
-        parts.push(`${col[1]} = $${params.length}${castOf(col[2])}`);
-      }
+      parts.push(condition(spec.table, field, col[1], col[2], value, params));
+    }
+    if (opts?.since) {
+      if (!spec.timeColumn) throw new Error(`${spec.table}: no time column for since`);
+      // A bound on the partition key: only the history months from then on are read (partition pruning).
+      params.push(opts.since);
+      parts.push(`${spec.timeColumn} >= $${params.length}::timestamptz`);
     }
     return parts.length ? ` WHERE ${parts.join(" AND ")}` : "";
   }
 
-  const list = async (filter?: Where<R>) => {
+  const list = async (filter?: Where<R>, opts?: LedgerReadOptions) => {
     const params: unknown[] = [];
-    return q<R>(`${select}${where(filter as Record<string, unknown>, params)} ORDER BY ${spec.order}`, params);
+    return q<R>(`${select}${where(filter as Record<string, unknown>, params, opts)} ORDER BY ${spec.order}`, params);
   };
 
   async function insert(rows: R[]) {
@@ -403,7 +452,7 @@ function makeRepo<R extends Row>(q: Query, spec: Spec): Repo<R> {
     for (const [field, column, type] of spec.cols) {
       if (seen.has(column)) continue;
       seen.add(column);
-      columns.push({ column, type, value: (r) => toParam(r[field], type) });
+      columns.push({ column, type, value: (r, d) => (Object.hasOwn(d, column) ? d[column] : toParam(r[field], type)) });
     }
     const add = (column: string, value: (r: Record<string, unknown>, d: Record<string, unknown>) => unknown) => {
       if (seen.has(column)) return;
@@ -462,6 +511,11 @@ function makeRepo<R extends Row>(q: Query, spec: Spec): Repo<R> {
       return (await q<R>(`${select}${where(filter as Record<string, unknown>, params)} ORDER BY ${spec.order} LIMIT 1`, params))[0] ?? null;
     },
     list,
+    async exists(filter) {
+      const params: unknown[] = [];
+      const rows = await q<{ e: boolean }>(`SELECT EXISTS (SELECT 1 FROM ${spec.table}${where(filter as Record<string, unknown>, params)}) AS e`, params);
+      return !!rows[0]?.e;
+    },
     async create(row) {
       await insert([row]);
       return structuredClone(row);
@@ -501,13 +555,172 @@ function makeRepo<R extends Row>(q: Query, spec: Spec): Repo<R> {
   };
 }
 
+// ---------------------------------------------------------------- packs (Option C, schema v11)
+
+/** The state columns of a pack: all NULL while it follows its sealed lot, all its own once it has a state of its own. */
+const PACK_STATE_COLUMNS = PACK_STATE_FIELDS.map((f) => PACK_COLS.find(([field]) => field === f)![1]);
+const PACK_STATE_COLUMN_SET = new Set(PACK_STATE_COLUMNS);
+/** Each column of PACK_COLS once (id and packCode are both `code`). */
+const PACK_COLUMNS = [...new Set(PACK_COLS.map(([, column]) => column))];
+/** A pack's effective value of a column: its lot's while it follows it (status NULL), its own otherwise. */
+const effective = (column: string) => (PACK_STATE_COLUMN_SET.has(column) ? `CASE WHEN p.status IS NULL THEN l.${column} ELSE p.${column} END` : `p.${column}`);
+
+/**
+ * The packs repo. Every read gives the effective state (the lot's for a following pack, as view code_state does) and
+ * `followsLot`. A filter on a state field is a UNION ALL of two index-backed parts instead of a filter on the effective
+ * value (which no index serves): packs with a state of their own (by their own columns: codes_location,
+ * codes_in_transit_to …) and following packs found through their lot (the lot by the same indexes, then its packs by
+ * codes_lot). Writes follow packState.ts: a state field written to a following pack gives it a state of its own (the
+ * columns the patch leaves out copied from its lot in the same statement), followsLot: true clears its state.
+ */
+function makePackRepo(q: Query): Repo<Pack> {
+  const spec = SPECS.packs as Spec;
+  const base = makeRepo<Pack>(q, spec);
+  const colOf = new Map(PACK_COLS.map((c) => [c[0], c]));
+  const outer = `${PACK_COLS.map(selectExpr).join(", ")}, x.follows AS "followsLot"`;
+
+  type Branch = "own" | "follow" | "mixed";
+  const FROM: Record<Branch, string> = {
+    own: `FROM codes p WHERE p.code_type = 'PACK' AND p.status IS NOT NULL`,
+    follow: `FROM codes l JOIN codes p ON p.lot_code = l.code AND p.code_type = 'PACK' AND p.status IS NULL WHERE l.code_type = 'LOT'`,
+    mixed: `FROM codes p LEFT JOIN codes l ON l.code = p.lot_code AND l.code_type = 'LOT' WHERE p.code_type = 'PACK'`,
+  };
+  const valueOf = (branch: Branch, column: string) =>
+    !PACK_STATE_COLUMN_SET.has(column) ? `p.${column}` : branch === "own" ? `p.${column}` : branch === "follow" ? `l.${column}` : effective(column);
+  const FOLLOWS: Record<Branch, string> = { own: "false", follow: "true", mixed: "(p.status IS NULL)" };
+
+  /** The inner SELECT of one branch with its filter conditions (state fields on the branch's own source). */
+  function branchSql(branch: Branch, filter: Record<string, unknown>, params: unknown[]): string {
+    const cols = PACK_COLUMNS.map((c) => `${valueOf(branch, c)} AS ${c}`).join(", ");
+    const conds: string[] = [];
+    for (const [field, value] of Object.entries(filter)) {
+      if (value === undefined || field === "followsLot") continue;
+      const col = colOf.get(field);
+      if (!col) throw new Error(`packs: no column for field ${field}`);
+      conds.push(condition("packs", field, valueOf(branch, col[1]), col[2], value, params));
+    }
+    return `SELECT ${cols}, ${FOLLOWS[branch]} AS follows, p.row_no ${FROM[branch]}${conds.map((c) => ` AND ${c}`).join("")}`;
+  }
+
+  /** The inner query for a filter: one join when no state field is filtered, else own UNION ALL following (null: none). */
+  function inner(where: Where<Pack> | undefined, params: unknown[]): string | null {
+    const filter = Object.fromEntries(Object.entries(where ?? {}).filter(([, v]) => v !== undefined));
+    const follows = filter.followsLot as boolean | readonly boolean[] | null | undefined;
+    const allowed = (b: boolean) => follows === undefined || (Array.isArray(follows) ? follows.includes(b) : follows === b);
+    const byState = Object.keys(filter).some(isPackStateField);
+    const branches: Branch[] = !byState && follows === undefined ? ["mixed"] : ([allowed(false) && "own", allowed(true) && "follow"].filter(Boolean) as Branch[]);
+    if (!branches.length) return null; // followsLot: [] matches nothing
+    return branches.map((b) => branchSql(b, filter, params)).join(" UNION ALL ");
+  }
+
+  const read = async (where: Where<Pack> | undefined, tail = ""): Promise<Pack[]> => {
+    const params: unknown[] = [];
+    const sql = inner(where, params);
+    return sql === null ? [] : q<Pack>(`SELECT ${outer} FROM (${sql}) x ORDER BY x.row_no${tail}`, params);
+  };
+
+  /** SET list and FROM for a patch: see packState.ts packPatchToStore (the same rules, in one statement). */
+  function setClause(patch: Partial<Omit<Pack, "id">>, params: unknown[]): string[] {
+    const { followsLot, ...rest } = patch;
+    const sets: string[] = [];
+    const given = new Set<string>();
+    for (const [field, value] of Object.entries(rest)) {
+      if (value === undefined || field === "id") continue;
+      const col = colOf.get(field);
+      if (!col) throw new Error(`packs: no column for field ${field}`);
+      if (PACK_STATE_COLUMN_SET.has(col[1])) given.add(col[1]);
+      params.push(toParam(value, col[2]));
+      sets.push(`${col[1]} = $${params.length}${castOf(col[2])}`);
+    }
+    assertOwnStateValues(rest);
+    if (followsLot === true) {
+      if (given.size) throw new Error("packs: a pack that follows its lot takes no state of its own");
+      return [...sets, ...PACK_STATE_COLUMNS.map((c) => `${c} = NULL`)];
+    }
+    if (!given.size && followsLot !== false) return sets;
+    // A state of its own: the columns not in the patch keep the pack's own value, or take its lot's if it follows.
+    for (const c of PACK_STATE_COLUMNS) if (!given.has(c)) sets.push(`${c} = ${effective(c)}`);
+    return sets;
+  }
+
+  async function update(filterSql: (params: unknown[]) => string, patch: Partial<Omit<Pack, "id">>): Promise<string[]> {
+    const params: unknown[] = [];
+    const sets = setClause(patch, params);
+    const filter = filterSql(params);
+    if (!sets.length) {
+      const rows = await q<{ id: string }>(`SELECT p.code AS id FROM codes p LEFT JOIN codes l ON l.code = p.lot_code AND l.code_type = 'LOT' WHERE p.code_type = 'PACK' AND ${filter} ORDER BY p.row_no`, params);
+      return rows.map((r) => r.id);
+    }
+    // Joined to its lot, whose state the patch may copy and the filter may read; a pack's lot always exists (foreign key).
+    const rows = await q<{ id: string; ord: string | number }>(
+      `UPDATE codes p SET ${sets.join(", ")}
+         FROM codes l
+        WHERE l.code = p.lot_code AND l.code_type = 'LOT' AND p.code_type = 'PACK' AND ${filter}
+       RETURNING p.code AS id, p.row_no AS ord`,
+      params,
+    );
+    return rows.sort((a, b) => Number(a.ord) - Number(b.ord)).map((r) => r.id);
+  }
+
+  /** The filter of updateWhere on the joined row (p, l): effective state, as reads see it. */
+  const joinedFilter = (where: Where<Pack>) => (params: unknown[]) => {
+    const conds: string[] = [];
+    for (const [field, value] of Object.entries(where)) {
+      if (value === undefined) continue;
+      if (field === "followsLot") {
+        // As reads (inner) and the JSON store: null and [] match nothing, [true, false] anything.
+        const wanted = value === null ? [] : Array.isArray(value) ? value : [value];
+        const follow = wanted.includes(true);
+        const own = wanted.includes(false);
+        if (!follow && !own) conds.push("false");
+        else if (follow !== own) conds.push(follow ? "p.status IS NULL" : "p.status IS NOT NULL");
+        continue;
+      }
+      const col = colOf.get(field);
+      if (!col) throw new Error(`packs: no column for field ${field}`);
+      conds.push(condition("packs", field, effective(col[1]), col[2], value, params));
+    }
+    return conds.length ? conds.join(" AND ") : "true";
+  };
+
+  const repo: Repo<Pack> = {
+    async get(id) {
+      return (await read({ id }))[0] ?? null;
+    },
+    async findOne(where) {
+      return (await read(where, " LIMIT 1"))[0] ?? null;
+    },
+    list: (where) => read(where),
+    async exists(where) {
+      const params: unknown[] = [];
+      const sql = inner(where, params);
+      return sql !== null && (await q(`SELECT 1 FROM (${sql}) x LIMIT 1`, params)).length > 0;
+    },
+    create: base.create,
+    createMany: base.createMany,
+    async update(id, patch) {
+      const changed = await update((params) => (params.push(id), `p.code = $${params.length}`), patch);
+      if (!changed.length) throw new NotFoundError(`codes ${id}`);
+      const row = await repo.get(id);
+      if (!row) throw new NotFoundError(`codes ${id}`);
+      return row;
+    },
+    async updateWhere(where, patch) {
+      if (!Object.values(where ?? {}).some((v) => v !== undefined)) throw new Error("codes: updateWhere needs a filter");
+      return update(joinedFilter(where), patch);
+    },
+    delete: base.delete,
+  };
+  return repo;
+}
+
 // ---------------------------------------------------------------- transaction-scoped store
 
 function makeTx(q: Query): StoreTx {
   const repo = <R extends Row>(name: RepoName) => makeRepo<R>(q, SPECS[name] as Spec);
   const ledger = <R extends Row>(name: RepoName): AppendOnlyRepo<R> => {
     const r = repo<R>(name);
-    return { list: r.list, append: r.create };
+    return { list: r.list, exists: r.exists, append: r.create };
   };
   const lots = repo<DbSnapshot["lots"][number]>("lots");
   const movementRows = repo<Movement>("movements");
@@ -537,10 +750,11 @@ function makeTx(q: Query): StoreTx {
         return ids;
       },
     },
-    packs: repo("packs"),
+    packs: makePackRepo(q),
     movements: ledger("movements"),
     scans: ledger("scans"),
     reprints: ledger("reprints"),
+    damageReports: ledger<DamageReport>("damageReports"),
     sessions: repo("sessions"),
 
     async appendMovement(m: NewMovement) {
@@ -615,6 +829,11 @@ function makeTx(q: Query): StoreTx {
         }),
       );
     },
+    async historyAtPartner(partnerId) {
+      // code_history_location (v11): one index probe per partition, stopping at the first row.
+      const rows = await q<{ e: boolean }>(`SELECT EXISTS (SELECT 1 FROM code_history WHERE location_id = $1) AS e`, [partnerId]);
+      return !!rows[0]?.e;
+    },
   };
   return tx;
 }
@@ -640,7 +859,7 @@ async function schemaVersion(d: SqlDriver): Promise<number> {
 }
 
 const COLLECTION_REPOS = ["countries", "flavours", "partners", "users", "sessions", "devices", "batchCodePool", "batches", "printOrders", "containers", "lots", "packs"] as const;
-const LEDGERS = ["movements", "scans", "reprints"] as const;
+const LEDGERS = ["movements", "scans", "reprints", "damageReports"] as const;
 
 /** How often (at most) one process folds stock_deltas into stock_summary by itself. */
 export const STOCK_ROLLUP_INTERVAL_MS = 60_000;
@@ -790,6 +1009,8 @@ export class SqlStore implements Store {
       const code = (e as { code?: string }).code;
       if (code === "VZ001") throw new IntegrityError("COUNTER_BACKWARDS", (e as Error).message);
       if (code === "VZ002") throw new IntegrityError("ISSUED_CODE_PROTECTED", (e as Error).message);
+      // v11 Option C: a pack left following a case/tray that is opened (at insert, or at commit).
+      if (code === "VZ003") throw new IntegrityError("LOT_OPENED_CONFLICT", LOT_OPENED_MESSAGE(/Lot (\S+)/.exec((e as Error).message)?.[1] ?? "?"));
       throw e;
     }
   }
@@ -800,6 +1021,7 @@ export class SqlStore implements Store {
       await this.loadIn(d, data, version);
     } catch (e) {
       // A foreign key (v10) refusing the data being loaded (a JSON import, a converted database): say which link.
+      if ((e as { code?: string }).code === "VZ003") throw new IntegrityError("LOT_OPENED_CONFLICT", LOT_OPENED_MESSAGE(/Lot (\S+)/.exec((e as Error).message)?.[1] ?? "?"));
       if ((e as { code?: string }).code === "23503") {
         const detail = (e as { detail?: string }).detail;
         throw new Error(`The data refers to rows that are not in it: ${(e as Error).message}${detail ? ` (${detail})` : ""}. Nothing was changed.`, { cause: e });
@@ -821,8 +1043,10 @@ export class SqlStore implements Store {
       for (const name of COLLECTION_REPOS) await (tx[name] as Repo<Row>).createMany((data[name] ?? []) as Row[]);
       // History ids are uuid (v11). Data written before (an old JSON file: "reprint-served:<id>", hand-made test rows)
       // gets the md5 uuid of its id, the same rule as the v11 upgrade, so the app finds those rows under the ids it uses.
+      // Damage reports share their DAMAGED movement's id; data without them gets them made from those movements.
+      const ledgers = { ...data, damageReports: damageReportsFor(data) };
       for (const name of LEDGERS)
-        for (const row of data[name] ?? []) await (tx[name] as AppendOnlyRepo<Row>).append({ ...row, id: asHistoryId(String(row.id)) });
+        for (const row of ledgers[name] ?? []) await (tx[name] as AppendOnlyRepo<Row>).append({ ...row, id: asHistoryId(String(row.id)) });
       for (const s of data.sequences ?? []) await q(`INSERT INTO id_counters (name, last_value) VALUES ($1, $2)`, [s.id, s.value]);
       for (const s of data.settings ?? []) await q(`INSERT INTO settings (id, data) VALUES ($1, $2::jsonb)`, [s.id, JSON.stringify(s)]);
     });
@@ -874,6 +1098,7 @@ export class SqlStore implements Store {
       get: async (id) => (await read()).get(id),
       findOne: async (where) => (await read()).findOne(where),
       list: async (where) => (await read()).list(where),
+      exists: async (where) => (await read()).exists(where),
       create: write((r, row: R) => r.create(row)),
       createMany: write((r, rows: R[]) => r.createMany(rows)),
       update: write((r, id: string, patch: Partial<Omit<R, "id">>) => r.update(id, patch)),
@@ -883,8 +1108,12 @@ export class SqlStore implements Store {
   }
 
   private ledger<R extends Row>(name: (typeof LEDGERS)[number]): AppendOnlyRepo<R> {
-    const r = this.repo<R>(name);
-    return { list: r.list, append: (row) => this.transaction((tx) => (tx[name] as unknown as AppendOnlyRepo<R>).append(row)) };
+    const read = async () => makeTx((await this.driver()).query)[name] as unknown as AppendOnlyRepo<R>;
+    return {
+      list: async (where, opts) => (await read()).list(where, opts),
+      exists: async (where) => (await read()).exists(where),
+      append: (row) => this.transaction((tx) => (tx[name] as unknown as AppendOnlyRepo<R>).append(row)),
+    };
   }
 
   appendMovements(ms: NewMovement[]) {
@@ -905,6 +1134,7 @@ export class SqlStore implements Store {
   movements = this.ledger<DbSnapshot["movements"][number]>("movements");
   scans = this.ledger<DbSnapshot["scans"][number]>("scans");
   reprints = this.ledger<DbSnapshot["reprints"][number]>("reprints");
+  damageReports = this.ledger<DamageReport>("damageReports");
   sessions = this.repo<DbSnapshot["sessions"][number]>("sessions");
 
   appendMovement(m: NewMovement) {
@@ -927,6 +1157,9 @@ export class SqlStore implements Store {
   }
   async latestContainerWithLot(toId: string, lotCode: string, statuses: readonly ContainerStatus[]) {
     return makeTx((await this.driver()).query).latestContainerWithLot(toId, lotCode, statuses);
+  }
+  async historyAtPartner(partnerId: string) {
+    return makeTx((await this.driver()).query).historyAtPartner(partnerId);
   }
   async stockSummary() {
     const d = await this.driver();

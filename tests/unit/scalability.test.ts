@@ -448,10 +448,11 @@ describe("a network with stock at every tier", () => {
       expect(t.timeline.filter((e) => e.itemKind === "BATCH").map((e) => e.event)).toEqual(["RECALLED"]);
     });
 
-    it("deleting a partner with history is refused, counting its references by filter", async () => {
+    it("deleting a partner with history is refused, checking its references by EXISTS (never reading them)", async () => {
       const { result, reads } = await readsOf(() => deleteEntity(ids.admin, "partners", ids.RT1).catch((e: Error) => e));
       expect(whole(reads)).toEqual([]);
-      expect(result).toMatchObject({ status: 400, message: expect.stringMatching(/lot\(s\).*pack\(s\).*movement\(s\)/) });
+      expect(reads.filter((r) => r.table === "lots" || r.table === "packs" || r.table === "movements" || r.table === "scans")).toEqual([]);
+      expect(result).toMatchObject({ status: 400, message: expect.stringMatching(/lots.*packs.*movement or scan history/) });
     });
   });
 });

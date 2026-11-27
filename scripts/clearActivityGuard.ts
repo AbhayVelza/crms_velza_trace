@@ -1,5 +1,5 @@
 // Safety rules for `npm run clear-activity`, which deletes ALL activity (batches, print orders, lots, packs, movements,
-// scans, reprints) and keeps the setup. Same pattern as the seed guard (src/lib/store/seedGuard.ts):
+// scans, reprints, damage reports) and keeps the setup. Same pattern as the seed guard (src/lib/store/seedGuard.ts):
 //   - prints the exact target first, and refuses an ambiguous target (two stores configured, a JSON file that is
 //     missing, not .json, a backup, a folder or a link),
 //   - never runs in a production environment,
@@ -22,11 +22,11 @@ export class ClearActivityRefused extends Error {
 
 /** The collections clear-activity empties. Everything else (countries, flavours, partners, sign-ins, sessions,
  *  devices, batch code pool, ID sequences, settings) is kept exactly as it is. */
-export const ACTIVITY_COLLECTIONS = ["batches", "printOrders", "containers", "lots", "packs", "movements", "scans", "reprints"] as const;
+export const ACTIVITY_COLLECTIONS = ["batches", "printOrders", "containers", "lots", "packs", "movements", "scans", "reprints", "damageReports"] as const;
 type ActivityCollection = (typeof ACTIVITY_COLLECTIONS)[number];
 
 export function activityCounts(s: DbSnapshot): Record<string, number> {
-  const counts = Object.fromEntries(ACTIVITY_COLLECTIONS.map((k) => [k, s[k].length])) as Record<ActivityCollection, number>;
+  const counts = Object.fromEntries(ACTIVITY_COLLECTIONS.map((k) => [k, (s[k] ?? []).length])) as Record<ActivityCollection, number>;
   return Object.fromEntries(Object.entries(counts).filter(([, n]) => n > 0));
 }
 
@@ -66,7 +66,7 @@ async function writeBackup(snapshot: DbSnapshot, dir: string, now: Date): Promis
     await writeFile(file, JSON.stringify(snapshot, null, 1), { encoding: "utf8", flag: "wx" }); // wx: fail if it exists
     const back = JSON.parse(await readFile(file, "utf8")) as DbSnapshot;
     for (const k of ["partners", ...ACTIVITY_COLLECTIONS] as const) {
-      if (back[k]?.length !== snapshot[k].length) throw new Error(`read-back mismatch in ${k}`);
+      if ((back[k] ?? []).length !== (snapshot[k] ?? []).length) throw new Error(`read-back mismatch in ${k}`);
     }
   } catch (e) {
     throw new ClearActivityRefused("BACKUP_FAILED", `Backup to ${file} failed (${(e as Error).message}); nothing was changed`);

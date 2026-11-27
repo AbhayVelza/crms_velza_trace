@@ -363,9 +363,10 @@ export async function decideApproval(userId: string | null, partnerId: string, b
  */
 async function guardDeactivate(tx: StoreTx, entity: AdminEntity, current: { id: string; name?: string; code?: unknown }) {
   if (entity === "partners") {
+    // Loose packs: those in transit on their own (a state of their own); a sealed lot's packs travel inside it.
     const [lots, packs] = await Promise.all([
       tx.lots.list({ inTransitToId: current.id, status: "IN_TRANSIT" }),
-      tx.packs.list({ inTransitToId: current.id, status: "IN_TRANSIT" }),
+      tx.packs.list({ inTransitToId: current.id, status: "IN_TRANSIT", followsLot: false }),
     ]);
     const lotCodes = new Set(lots.map((l) => l.lotCode));
     const loosePacks = packs.filter((p) => !lotCodes.has(p.lotCode)).length;
@@ -388,36 +389,35 @@ async function referencesTo(tx: StoreTx, entity: AdminEntity, row: { id: string;
   const found: string[] = [];
   const add = (n: number, what: string) => n && found.push(`${n} ${what}`);
   if (entity === "partners") {
-    // Each reference read by its own filter (indexed where it matters), never whole tables; a row
-    // matching on two fields is counted once.
-    const [devices, children, lots, packs, moves, scans] = await Promise.all([
+    // Whether anything refers to the partner, each by one EXISTS on an indexed column (C11e, review issue 6): codes it
+    // made, holds or is sent (a following pack is where its lot is, so its lot answers for it), and the ledger at it
+    // (code_history.location_id). Never reads the rows themselves, so a busy partner costs the same as an idle one.
+    const [devices, children, lots, packs, history] = await Promise.all([
       tx.devices.list({ manufacturerId: id }),
       tx.partners.list({ parentId: id }),
-      Promise.all([tx.lots.list({ manufacturerId: id }), tx.lots.list({ locationId: id }), tx.lots.list({ inTransitToId: id })]),
-      Promise.all([tx.packs.list({ locationId: id }), tx.packs.list({ inTransitToId: id })]),
-      Promise.all([tx.movements.list({ fromId: id }), tx.movements.list({ toId: id })]),
-      tx.scans.list({ partnerId: id }),
+      Promise.all([tx.lots.exists({ manufacturerId: id }), tx.lots.exists({ locationId: id }), tx.lots.exists({ inTransitToId: id })]),
+      Promise.all([tx.packs.exists({ locationId: id, followsLot: false }), tx.packs.exists({ inTransitToId: id, followsLot: false })]),
+      tx.historyAtPartner(id),
     ]);
-    const distinct = (lists: { id: string }[][]) => new Set(lists.flat().map((r) => r.id)).size;
     add(devices.length, "device(s)");
     add(children.length, "assigned partner(s)");
-    add(distinct(lots), "lot(s)");
-    add(distinct(packs), "pack(s)");
-    add(distinct(moves), "movement(s)");
-    add(scans.length, "scan(s)");
+    if (lots.some(Boolean)) found.push("lots");
+    if (packs.some(Boolean)) found.push("packs");
+    if (history) found.push("movement or scan history");
   }
   if (entity === "users") {
+    // The ledger by EXISTS on code_history.login_id (indexed): a busy sign-in's history is never read row by row.
     const [moves, scans, batches, orders, reprints] = await Promise.all([
-      tx.movements.list({ userId: id }),
-      tx.scans.list({ userId: id }),
+      tx.movements.exists({ userId: id }),
+      tx.scans.exists({ userId: id }),
       tx.batches.list({ createdBy: id }),
       tx.printOrders.list({ createdBy: id }),
-      tx.reprints.list({ userId: id }),
+      tx.reprints.exists({ userId: id }),
     ]);
-    add(moves.length, "movement(s)");
-    add(scans.length, "scan(s)");
+    if (moves) found.push("movements");
+    if (scans) found.push("scans");
     add(batches.length + orders.length, "batch/print order(s)");
-    add(reprints.length, "reprint(s)");
+    if (reprints) found.push("reprints");
   }
   if (entity === "devices") {
     add((await tx.batches.list({ deviceId: id })).length, "batch(es)");

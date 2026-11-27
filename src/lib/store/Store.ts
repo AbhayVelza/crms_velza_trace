@@ -7,6 +7,7 @@ import type {
   Container,
   ContainerStatus,
   Country,
+  DamageReport,
   Device,
   Flavour,
   ItemStatus,
@@ -38,6 +39,8 @@ export interface Repo<T extends Row> {
   get(id: string): Promise<T | null>;
   findOne(where: Where<T>): Promise<T | null>;
   list(where?: Where<T>): Promise<T[]>;
+  /** Whether any row matches (PostgreSQL: EXISTS, stops at the first row). */
+  exists(where: Where<T>): Promise<boolean>;
   create(row: T): Promise<T>;
   createMany(rows: T[]): Promise<void>;
   update(id: string, patch: Partial<Omit<T, "id">>): Promise<T>;
@@ -51,9 +54,17 @@ export interface Repo<T extends Row> {
   delete(id: string): Promise<void>;
 }
 
+/** Time bound of a ledger read: only rows recorded at or after `since` (an ISO time). */
+export interface LedgerReadOptions {
+  since?: string;
+}
+
 /** Ledger tables: rows are appended, never updated or deleted. */
 export interface AppendOnlyRepo<T extends Row> {
-  list(where?: Where<T>): Promise<T[]>;
+  /** `opts.since` bounds the read in time (on PostgreSQL only the history months from then on are read). */
+  list(where?: Where<T>, opts?: LedgerReadOptions): Promise<T[]>;
+  /** Whether any row matches (PostgreSQL: EXISTS, stops at the first row). */
+  exists(where: Where<T>): Promise<boolean>;
   append(row: T): Promise<T>;
 }
 
@@ -75,6 +86,8 @@ export interface StoreTx {
   movements: AppendOnlyRepo<Movement>;
   scans: AppendOnlyRepo<Scan>;
   reprints: AppendOnlyRepo<Reprint>;
+  /** Damage reports (schema v11): one per DAMAGED movement, appended in the same transaction under its id. */
+  damageReports: AppendOnlyRepo<DamageReport>;
   sessions: Repo<Session>;
 
   appendMovement(m: NewMovement): Promise<Movement>;
@@ -104,6 +117,12 @@ export interface StoreTx {
    * JSON store counts its rows. Keys with no units are left out.
    */
   stockSummary(): Promise<StockSummaryRow[]>;
+  /**
+   * Whether the ledger holds any movement or scan that took place at this partner (a movement's place: the sender of a
+   * dispatch, otherwise where it ended up; a scan's: the scanning partner). PostgreSQL: one EXISTS on the indexed
+   * code_history.location_id. Used before a partner is deleted (the ledger is permanent).
+   */
+  historyAtPartner(partnerId: string): Promise<boolean>;
 }
 
 /** One line of the live stock summary: how many lot or pack codes share these attributes right now. */
@@ -132,6 +151,11 @@ export interface DbSnapshot {
   movements: Movement[];
   scans: Scan[];
   reprints: Reprint[];
+  /**
+   * Damage reports (schema v11). Left out (data written before v11): made from the DAMAGED movements on reset, as the
+   * v11 upgrade does. Reports whose code or partner is not in the data are dropped on reset.
+   */
+  damageReports?: DamageReport[];
   sessions: Session[];
   sequences: Sequence[];
   settings: Settings[];
@@ -152,6 +176,7 @@ export const COLLECTIONS = [
   "movements",
   "scans",
   "reprints",
+  "damageReports",
   "sessions",
   "sequences",
   "settings",
@@ -180,11 +205,16 @@ export interface Store extends StoreTx {
 
 /**
  * A write the storage layer refuses because it would break code integrity, whatever the caller:
- * a batch's lot counter moving backwards, or deleting / renaming a code a print order issued.
+ * a batch's lot counter moving backwards, deleting / renaming a code a print order issued, or a pack left following
+ * a case/tray that is opened.
  */
 export class IntegrityError extends Error {
   constructor(
-    public code: "COUNTER_BACKWARDS" | "ISSUED_CODE_PROTECTED",
+    /**
+     * LOT_OPENED_CONFLICT: a pack would follow a case/tray that is opened (Option C; PostgreSQL error VZ003). Not the
+     * scan result LOT_OPENED ("this lot is opened, scan its packs"), which is a rule answer, not a storage refusal.
+     */
+    public code: "COUNTER_BACKWARDS" | "ISSUED_CODE_PROTECTED" | "LOT_OPENED_CONFLICT",
     message: string,
   ) {
     super(message);

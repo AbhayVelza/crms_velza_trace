@@ -155,6 +155,19 @@ without Option C (`SCHEMA_VERSION = 10`; no inherited pack state in `schema.ts`)
    - Either way: maintenance window, the old site read-only, row counts and `04_report.sql` saved with the change
      record, old site kept untouched for rollback (point DNS back).
 
+### Later (decided 27 Nov 2026, after the fast-track test)
+
+- **Alert-state table.** Alerts are recomputed from history on every request, so today the Alerts list reads only the
+  last 30 days and an unacknowledged alert older than that drops off (interim, `WORKING_MODEL.md` change log). Decided:
+  unacknowledged alerts stay until acknowledged. Needs a table `alerts(alert_id PK, type, code, partner_id, first_at,
+  last_at, count, state OPEN/ACKNOWLEDGED/CLOSED, state_at, state_by)` with a partial index on open alerts, written in
+  the same transaction as the scan that raises the alert and by the acknowledge/close/reopen actions, a matching JSON
+  collection, and a one-time back-fill from history. Then the list = all open alerts + acknowledged/closed ones from the
+  last 30 days. About 1.5–2 days (database agent first, then backend).
+- **Opened-trays list on the dashboard.** `lots.list({ status: "OPENED" })` grows forever (every tray opened at a
+  retailer stays OPENED). Decided: page it and show recent ones only. Services/UI change; it already uses the
+  `codes_rare_status` index.
+
 ---
 
 ## 2. Where the documents and the code disagree

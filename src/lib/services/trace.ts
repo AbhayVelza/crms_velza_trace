@@ -19,7 +19,7 @@ import {
   type ComputeAlertsInput,
   type InTransitUnit,
 } from "@/lib/core/alerts";
-import { batchCounter } from "@/lib/core/codes";
+import { batchCounter, buildPackCodes } from "@/lib/core/codes";
 import { recallPatch } from "@/lib/core/rules";
 import { ITEM_STATUSES, PARTNER_TYPE_LABELS, type ItemStatus, type Lot, type Movement, type Pack, type Partner, type Scan, type Settings } from "@/lib/core/types";
 import { MAX_SCAN_INPUT, normalizeScannedCode } from "@/lib/scan/normalize";
@@ -233,8 +233,17 @@ async function namedAlerts(tx: StoreTx, input: AlertSources) {
   }));
 }
 
-/** The scan rows alerts are computed from: failed scans, and successful public-page scans (copied-sticker check). */
-const alertScans = (store: StoreTx) => Promise.all([store.scans.list({ ok: false }), store.scans.list({ context: "PUBLIC_LOOKUP", ok: true })]);
+/** How far back alerts look at scans (C11e: a bounded read of the newest history months, not the whole ledger). */
+export const ALERT_SCAN_DAYS = 30;
+
+/**
+ * The scan rows alerts are computed from: failed scans, and successful public-page scans (copied-sticker check), of the
+ * last ALERT_SCAN_DAYS days.
+ */
+const alertScans = (store: StoreTx, now = Date.now()) => {
+  const since = new Date(now - ALERT_SCAN_DAYS * 24 * 60 * 60_000).toISOString();
+  return Promise.all([store.scans.list({ ok: false }, { since }), store.scans.list({ context: "PUBLIC_LOOKUP", ok: true }, { since })]);
+};
 
 export async function alerts(userId: string | null) {
   const store = getStore();
@@ -243,7 +252,8 @@ export async function alerts(userId: string | null) {
   // Only what can raise an alert: units in transit, failed scans and damage reports — not every lot and pack.
   const [lots, packs, [scans, publicOkScans], settings, damaged] = await Promise.all([
     store.lots.list({ status: "IN_TRANSIT", synced: true }),
-    store.packs.list({ status: "IN_TRANSIT" }),
+    // Packs in transit on their own: those with a state of their own (a sealed lot's packs travel inside it).
+    store.packs.list({ status: "IN_TRANSIT", followsLot: false }),
     alertScans(store),
     store.getSettings(),
     store.movements.list({ type: "DAMAGED" }),
@@ -498,8 +508,9 @@ export async function myStock(userId: string | null) {
   const [lotsHere, lotsIncoming, packsHere, packsIncoming, wholeReports] = await Promise.all([
     store.lots.list({ locationId: partner.id }),
     store.lots.list({ inTransitToId: partner.id }),
-    store.packs.list({ locationId: partner.id }),
-    store.packs.list({ inTransitToId: partner.id }),
+    // Packs moving on their own (a state of their own): a sealed lot's packs are counted with it.
+    store.packs.list({ locationId: partner.id, followsLot: false }),
+    store.packs.list({ inTransitToId: partner.id, followsLot: false }),
     store.movements.list({ type: "DAMAGED", itemKind: "LOT", fromId: partner.id }),
   ]);
   const packLots = await store.lots.list({ lotCode: uniqueIds([...packsHere, ...packsIncoming].map((p) => p.lotCode)) });
@@ -603,7 +614,8 @@ export async function batchReport(userId: string | null, batchCode: string) {
   const lotCodes = new Set(lots.map((l) => l.lotCode));
   const movements = await store.movements.list({ itemCode: [...lotCodes] });
   const ever = (type: Movement["type"]) => new Set(movements.filter((m) => m.type === type).map((m) => m.itemCode)).size;
-  const reprints = (await store.reprints.list()).filter((r) => lotCodes.has(r.code.slice(0, 15)));
+  // Reprints of this batch's stickers by code (indexed), not every reprint ever logged (C11e).
+  const reprints = await store.reprints.list({ code: lots.flatMap((l) => [l.lotCode, ...buildPackCodes(l.lotCode, l.lotType)]) });
   return {
     batch: { ...batch, flavourName: flavoursLabel(batch, lots, n.flavour), manufacturer: n.partner(batch.manufacturerId), counter: batchCounter(batch), displayStatus: batchDisplayStatus(batch) },
     summary: {
@@ -635,8 +647,10 @@ export async function recall(userId: string | null, body: unknown) {
     if (batch.status === "RECALLED") throw badRequest("ALREADY_RECALLED", `Batch ${batchCode} is already recalled`);
     const at = nowIso();
     const lots = await tx.lots.list({ batchCode });
-    // Every pack of the batch in one read (not one query per lot).
-    const packsOf = Map.groupBy(await tx.packs.list({ lotCode: lots.map((l) => l.lotCode) }), (p) => p.lotCode);
+    // Option C: a pack that follows its sealed case/tray is recalled with it (only the lot row is written). Only packs
+    // with a state of their own are recalled one by one: those of opened lots, and any damaged / recalled on its own
+    // inside a sealed one. Read in one query (not one per lot).
+    const packsOf = Map.groupBy(await tx.packs.list({ lotCode: lots.map((l) => l.lotCode), followsLot: false }), (p) => p.lotCode);
     for (const lot of lots) {
       const patch = recallPatch(lot.status);
       if (patch) {

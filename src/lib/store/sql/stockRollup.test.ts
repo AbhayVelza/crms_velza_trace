@@ -116,9 +116,10 @@ const packsOf = (l: Lot): Pack[] =>
     updatedAt: AT,
   }));
 
-// What stock_current must always equal: a full recount of codes (the logic of `npm run db:stock -- check`).
+// What stock_current must always equal: a full recount of codes by effective state (view stock_recount, v11 Option C: a
+// pack that follows its sealed lot counts under the lot's state), the logic of `npm run db:stock -- check`.
 const KEY = "location_id, status, code_type, lot_type, flavour, synced";
-const recount = `SELECT ${KEY}, count(*)::bigint AS units FROM codes GROUP BY ${KEY} ORDER BY ${KEY}`;
+const recount = `SELECT ${KEY}, units FROM stock_recount ORDER BY ${KEY}`;
 const current = `SELECT ${KEY}, units FROM stock_current ORDER BY ${KEY}`;
 const deltaRows = async (d: SqlDriver) => Number((await d.query<{ n: string }>(`SELECT count(*) AS n FROM stock_deltas`))[0].n);
 

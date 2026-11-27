@@ -49,11 +49,12 @@ export async function myPartners(userId: string | null) {
   const children = (await store.partners.list({ parentId: me.id })).filter((p) => childTypes.includes(p.type));
   const childIds = children.map((c) => c.id);
   // Only what is at my partners or on its way to them from me (indexed by location), never every lot and pack.
+  // Packs only where they move on their own (a state of their own): a sealed lot's packs are counted with the lot.
   const [lotsThere, packsThere, lotsSent, packsSent] = await Promise.all([
     store.lots.list({ locationId: childIds }),
-    store.packs.list({ locationId: childIds }),
+    store.packs.list({ locationId: childIds, followsLot: false }),
     store.lots.list({ locationId: me.id, status: "IN_TRANSIT", inTransitToId: childIds }),
-    store.packs.list({ locationId: me.id, status: "IN_TRANSIT", inTransitToId: childIds }),
+    store.packs.list({ locationId: me.id, status: "IN_TRANSIT", inTransitToId: childIds, followsLot: false }),
   ]);
   // The lots of those packs, to tell loose packs (of an opened lot) from packs inside a sealed one.
   const packLots = await store.lots.list({ lotCode: [...new Set([...packsThere, ...packsSent].map((p) => p.lotCode))] });

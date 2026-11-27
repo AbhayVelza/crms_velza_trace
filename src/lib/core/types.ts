@@ -281,6 +281,30 @@ export interface Pack {
   statusBeforeRecall: ItemStatus | null;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Option C (schema v11): true while the pack is inside its sealed case/tray and follows it. Its state fields are then
+   * the lot's (read through the lot; the pack row stores none). False once it has a state of its own: its lot was
+   * opened, or it was damaged / recalled on its own. Always set on reads. On writes: true = store no state (follow
+   * the lot), false = keep a state of its own, left out = decided from the data (it follows when its lot is sealed and
+   * its state equals the lot's). Writing a state field to a following pack gives it a state of its own.
+   */
+  followsLot?: boolean;
+}
+
+/**
+ * A damage report (schema v11 table damage_reports): written with its DAMAGED movement, in the same transaction, under
+ * the same id. `packsAffected`: 1 for a pack, the packs left at the reporter for an opened case/tray, 4 / 6 for a sealed
+ * case / tray.
+ */
+export interface DamageReport {
+  id: string;
+  code: string;
+  itemKind: "LOT" | "PACK";
+  partnerId: string;
+  reason: string;
+  packsAffected: number;
+  reportedBy: string | null;
+  reportedAt: string;
 }
 
 export const MOVEMENT_TYPES = [

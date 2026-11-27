@@ -174,6 +174,9 @@ Do these in order. Nothing in AWS is created until you run `terraform apply`.
      database on its **first request**, so put the site in maintenance or run `npm run db:migrate` as the owner
      yourself before traffic reaches the new release.
   3. Migrate, run the roles, start the new release, check `npm run db:stock -- check` and `SELECT * FROM db_health`.
+     **Before letting traffic in:** `SELECT sealed_lot_packs_with_own_state FROM db_health` must be 0. Otherwise those
+     packs have their own state inside a sealed case/tray and **stay behind when it moves** (accepted behaviour);
+     fix them by hand first, as in `migration/README.md` ("Before cut-over").
   4. **Rollback = restore the snapshot** (and redeploy the previous release on it). Redeploying an older `image_tag`
      alone does not work.
   The migration rebuilds `codes` and `code_history` as partitioned tables and copies every row into them, in the one

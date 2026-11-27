@@ -13,6 +13,7 @@ import path from "node:path";
 import { LOT_NUMBER_MAX } from "@/lib/core/codes";
 import { DEFAULT_SETTINGS, type Batch, type ContainerStatus, type Lot, type Movement, type Pack, type Settings } from "@/lib/core/types";
 import { conversionNeeded } from "./convertChain";
+import { damageReportsFor, effectivePack, isPackStateField, LOT_OPENED_MESSAGE, lotIsOpened, packPatchToStore, toStoredPack, type StoredPack } from "./packState";
 import {
   COLLECTIONS,
   ConcurrentWriteError,
@@ -20,6 +21,7 @@ import {
   NotFoundError,
   type AppendOnlyRepo,
   type DbSnapshot,
+  type LedgerReadOptions,
   type NewMovement,
   type NewScan,
   type Repo,
@@ -194,6 +196,28 @@ function matcher<T extends object>(where?: Where<T>): (row: T) => boolean {
   return (row) => tests.every((t) => t(row as Record<string, unknown>));
 }
 
+/**
+ * Packs as this file stores them (Option C, as the database does): no state while a pack follows its sealed lot. A pack
+ * row that says so (followsLot) is stored that way; a row without state already follows. A file or snapshot written
+ * before Option C (no pack without state, no flags) has its packs decided by the v11 upgrade's rule (`infer`): a pack of
+ * a sealed lot with the lot's state follows it.
+ */
+function storePacks(db: DbSnapshot, infer: boolean): void {
+  const lotByCode = new Map(db.lots.map((l) => [l.lotCode, l]));
+  db.packs = db.packs.map((p) => {
+    if (p.followsLot !== undefined || (infer && p.status !== null)) return toStoredPack(p, lotByCode.get(p.lotCode));
+    const stored = { ...p };
+    delete stored.followsLot;
+    return stored;
+  }) as unknown as Pack[];
+}
+
+/** A file written before Option C: it has packs, none of them without a state of its own. */
+const beforeOptionC = (db: DbSnapshot) => db.packs.length > 0 && !db.packs.some((p) => p.status === null || p.followsLot !== undefined);
+
+/** Where a movement took place, as PostgreSQL stores it (code_history.location_id): the sender while dispatching. */
+const movementPlace = (m: Pick<Movement, "type" | "fromId" | "toId">) => (m.type === "DISPATCHED" ? m.fromId : (m.toId ?? m.fromId));
+
 function emptyDb(): DbSnapshot {
   return Object.fromEntries(COLLECTIONS.map((c) => [c, []])) as unknown as DbSnapshot;
 }
@@ -220,8 +244,12 @@ async function renameWithRetry(from: string, to: string) {
   }
 }
 
-/** Repos bound to an in-memory snapshot. Reads return copies so callers can't mutate state by accident. */
-function makeTx(db: DbSnapshot): StoreTx {
+/**
+ * Repos bound to an in-memory snapshot. Reads return copies so callers can't mutate state by accident. `openedLots`
+ * collects the lots this transaction opened or left packs following, checked before it is saved (as PostgreSQL's
+ * deferred VZ003 check does at commit).
+ */
+function makeTx(db: DbSnapshot, openedLots: Set<string> = new Set()): StoreTx {
   const repo = <T extends Row>(name: keyof DbSnapshot): Repo<T> => {
     const rows = () => db[name] as unknown as T[];
     return {
@@ -237,6 +265,9 @@ function makeTx(db: DbSnapshot): StoreTx {
         return rows()
           .filter(matcher(where))
           .map(clone);
+      },
+      async exists(where) {
+        return rows().some(matcher(where));
       },
       async create(row) {
         if (rows().some((x) => x.id === row.id)) throw new Error(`${name}: duplicate id ${row.id}`);
@@ -283,7 +314,17 @@ function makeTx(db: DbSnapshot): StoreTx {
   };
   const ledger = <T extends Row>(name: keyof DbSnapshot): AppendOnlyRepo<T> => {
     const r = repo<T>(name);
-    return { list: r.list, append: r.create };
+    /** A ledger row's time: `at` (history), `reportedAt` (damage reports). */
+    const timeOf = (x: T) => String((x as { at?: string; reportedAt?: string }).at ?? (x as { reportedAt?: string }).reportedAt ?? "");
+    return {
+      async list(where, opts?: LedgerReadOptions) {
+        const rows = await r.list(where);
+        const since = opts?.since;
+        return since ? rows.filter((x) => timeOf(x) >= since) : rows;
+      },
+      exists: r.exists,
+      append: r.create,
+    };
   };
 
   // Integrity guards, the same as the PostgreSQL triggers (schema v3): a batch's lot counter never
@@ -308,23 +349,134 @@ function makeTx(db: DbSnapshot): StoreTx {
       return batches.updateWhere(where, patch);
     },
   };
+  // Lots by code, for reading packs through their lot (Option C). Built on first use, dropped on every lot write.
+  let lotIndex: Map<string, Lot> | null = null;
+  const lotOf = (code: string) => (lotIndex ??= new Map(db.lots.map((l) => [l.lotCode, l]))).get(code);
   const lots = repo<Lot>("lots");
+  /** After a lot write: forget the index, and remember lots now opened (their packs must all have a state by commit). */
+  const lotsWritten = <R>(result: R, written: (Lot | null | undefined)[]) => {
+    lotIndex = null;
+    for (const l of written) if (l && lotIsOpened(l)) openedLots.add(l.lotCode);
+    return result;
+  };
   const guardedLots: Repo<Lot> = {
     ...lots,
+    async create(row) {
+      return lotsWritten(await lots.create(row), [row]);
+    },
+    async createMany(rows) {
+      return lotsWritten(await lots.createMany(rows), rows);
+    },
+    async update(id, patch) {
+      const updated = await lots.update(id, patch);
+      return lotsWritten(updated, [updated]);
+    },
+    async updateWhere(where, patch) {
+      const ids = await lots.updateWhere(where, patch);
+      return lotsWritten(
+        ids,
+        ids.map((id) => db.lots.find((l) => l.id === id)),
+      );
+    },
     async delete(id) {
       const lot = db.lots.find((l) => l.id === id);
       if (lot && issued(lot.printOrderId)) throw new IntegrityError("ISSUED_CODE_PROTECTED", `Code ${lot.lotCode} was issued by print order ${lot.printOrderId} and cannot be deleted`);
-      return lots.delete(id);
+      return lotsWritten(await lots.delete(id), []);
     },
   };
-  const packs = repo<Pack>("packs");
+
+  // Packs (Option C): stored without state while they follow their sealed lot, read with the lot's state.
+  const stored = () => db.packs as unknown as StoredPack[];
+  const read = (p: StoredPack) => effectivePack(p, lotOf(p.lotCode));
+  /** A filter split into the fields every pack row stores and those that depend on its lot (state, followsLot). */
+  const packFilter = (where: Where<Pack> | undefined) => {
+    const own: Record<string, unknown> = {};
+    const eff: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(where ?? {})) (isPackStateField(k) || k === "followsLot" ? eff : own)[k] = v;
+    const ownTest = matcher(own as Where<StoredPack>);
+    const effTest = matcher(eff as Where<Pack>);
+    return (p: StoredPack): Pack | null => {
+      if (!ownTest(p)) return null;
+      const r = read(p);
+      return effTest(r) ? r : null;
+    };
+  };
+  /** A pack stored without state under an opened lot: refused at once (PostgreSQL: VZ003 on insert). */
+  const refuseUnderOpened = (p: StoredPack) => {
+    const lot = p.status === null ? lotOf(p.lotCode) : undefined;
+    if (lot && lotIsOpened(lot)) throw new IntegrityError("LOT_OPENED_CONFLICT", LOT_OPENED_MESSAGE(p.lotCode));
+  };
+  const writePack = (i: number, patch: Partial<Omit<Pack, "id">>) => {
+    const list = stored();
+    const current = list[i];
+    list[i] = { ...current, ...clone(packPatchToStore(current, lotOf(current.lotCode), patch)), id: current.id };
+    if (list[i].status === null) openedLots.add(list[i].lotCode); // checked before saving, as PostgreSQL does at commit
+    return list[i];
+  };
   const guardedPacks: Repo<Pack> = {
-    ...packs,
+    async get(id) {
+      const p = stored().find((x) => x.id === id);
+      return p ? read(p) : null;
+    },
+    async findOne(where) {
+      const test = packFilter(where);
+      for (const p of stored()) {
+        const r = test(p);
+        if (r) return r;
+      }
+      return null;
+    },
+    async list(where) {
+      const test = packFilter(where);
+      const out: Pack[] = [];
+      for (const p of stored()) {
+        const r = test(p);
+        if (r) out.push(r);
+      }
+      return out;
+    },
+    async exists(where) {
+      return (await guardedPacks.findOne(where)) !== null;
+    },
+    async create(row) {
+      await guardedPacks.createMany([row]);
+      return clone(row);
+    },
+    async createMany(newRows) {
+      const ids = new Set(stored().map((x) => x.id));
+      const rows = newRows.map((r) => {
+        if (ids.has(r.id)) throw new Error(`packs: duplicate id ${r.id}`);
+        ids.add(r.id);
+        const s = toStoredPack(clone(r), lotOf(r.lotCode));
+        refuseUnderOpened(s);
+        return s;
+      });
+      stored().push(...rows);
+    },
+    async update(id, patch) {
+      const i = stored().findIndex((x) => x.id === id);
+      if (i < 0) throw new NotFoundError(`packs ${id}`);
+      return read(writePack(i, patch));
+    },
+    async updateWhere(where, patch) {
+      if (!Object.values(where ?? {}).some((v) => v !== undefined)) throw new Error("packs: updateWhere needs a filter");
+      const test = packFilter(where);
+      const ids: string[] = [];
+      const list = stored();
+      for (let i = 0; i < list.length; i++) {
+        if (!test(list[i])) continue;
+        ids.push(writePack(i, patch).id);
+      }
+      return ids;
+    },
     async delete(id) {
-      const pack = db.packs.find((p) => p.id === id);
-      const lot = pack && db.lots.find((l) => l.lotCode === pack.lotCode);
-      if (pack && lot && issued(lot.printOrderId)) throw new IntegrityError("ISSUED_CODE_PROTECTED", `Code ${pack.packCode} was issued by print order ${lot.printOrderId} and cannot be deleted`);
-      return packs.delete(id);
+      const list = stored();
+      const i = list.findIndex((x) => x.id === id);
+      if (i < 0) throw new NotFoundError(`packs ${id}`);
+      const pack = list[i];
+      const lot = lotOf(pack.lotCode);
+      if (lot && issued(lot.printOrderId)) throw new IntegrityError("ISSUED_CODE_PROTECTED", `Code ${pack.packCode} was issued by print order ${lot.printOrderId} and cannot be deleted`);
+      list.splice(i, 1);
     },
   };
 
@@ -345,6 +497,7 @@ function makeTx(db: DbSnapshot): StoreTx {
     movements: ledger("movements"),
     scans: ledger("scans"),
     reprints: ledger("reprints"),
+    damageReports: ledger("damageReports"),
     sessions: repo("sessions"),
 
     async appendMovement(m: NewMovement) {
@@ -410,11 +563,17 @@ function makeTx(db: DbSnapshot): StoreTx {
         else counts.set(key, { ...row, units: 1 });
       };
       for (const l of db.lots) add({ locationId: l.locationId, status: l.status, kind: "LOT", lotType: l.lotType, flavour: l.flavour, synced: l.synced });
-      for (const p of db.packs) {
+      // Every pack once, by its effective state (decision Q7): a following pack under its lot's state, a pack with a
+      // state of its own (also inside a sealed lot: damaged, recalled ...) under that state only.
+      for (const p of stored()) {
         const lot = lotByCode.get(p.lotCode);
-        add({ locationId: p.locationId, status: p.status, kind: "PACK", lotType: p.packSize === 6 ? "CASE" : "TRAY", flavour: p.packCode.slice(8, 10), synced: lot?.synced ?? true });
+        const e = effectivePack(p, lot);
+        add({ locationId: e.locationId, status: e.status, kind: "PACK", lotType: p.packSize === 6 ? "CASE" : "TRAY", flavour: p.packCode.slice(8, 10), synced: lot?.synced ?? true });
       }
       return [...counts.values()];
+    },
+    async historyAtPartner(partnerId) {
+      return db.movements.some((m) => movementPlace(m) === partnerId) || db.scans.some((s) => s.partnerId === partnerId);
     },
   };
   return tx;
@@ -463,7 +622,9 @@ export class JsonStore implements Store {
       return this.readDb(locked, check);
     }
     if (!this.cache || mtime !== this.cacheMtime || size !== this.cacheSize) {
-      this.cache = normalize(JSON.parse(await fs.readFile(this.filePath, "utf8")));
+      const db = normalize(JSON.parse(await fs.readFile(this.filePath, "utf8")));
+      storePacks(db, beforeOptionC(db));
+      this.cache = db;
       this.cacheMtime = mtime;
       this.cacheSize = size;
       this.notConverted = conversionNeeded(this.cache);
@@ -505,7 +666,13 @@ export class JsonStore implements Store {
     return this.mutex.run(async () => {
       const draft = clone(await this.readDb(true));
       const [mtime, size] = [this.cacheMtime, this.cacheSize];
-      const result = await fn(makeTx(draft));
+      const openedLots = new Set<string>();
+      const result = await fn(makeTx(draft, openedLots));
+      // Option C, as PostgreSQL checks at commit (VZ003): an opened case/tray has no pack still following it.
+      for (const code of openedLots) {
+        const lot = draft.lots.find((l) => l.lotCode === code);
+        if (lot && lotIsOpened(lot) && draft.packs.some((p) => p.lotCode === code && p.status === null)) throw new IntegrityError("LOT_OPENED_CONFLICT", LOT_OPENED_MESSAGE(code));
+      }
       await this.assertUnchanged(mtime, size);
       await this.writeDb(draft);
       return result;
@@ -513,7 +680,14 @@ export class JsonStore implements Store {
   }
 
   async reset(data: DbSnapshot): Promise<void> {
-    await this.mutex.run(() => this.writeDb(normalize(clone(data))));
+    const db = normalize(clone(data));
+    db.damageReports = damageReportsFor({ ...db, damageReports: data.damageReports });
+    storePacks(db, true);
+    // As PostgreSQL refuses it on load (VZ003): no pack may follow a case/tray that is opened. Nothing is written.
+    const opened = new Set(db.lots.filter(lotIsOpened).map((l) => l.lotCode));
+    const bad = db.packs.find((p) => p.status === null && opened.has(p.lotCode));
+    if (bad) throw new IntegrityError("LOT_OPENED_CONFLICT", LOT_OPENED_MESSAGE(bad.lotCode));
+    await this.mutex.run(() => this.writeDb(db));
   }
 
   async ping(): Promise<void> {
@@ -521,8 +695,12 @@ export class JsonStore implements Store {
     await fs.access(this.filePath, fsConstants.R_OK);
   }
 
+  /** Packs as the app reads them: effective state, with followsLot (a reset of this snapshot stores them the same way). */
   async snapshot(): Promise<DbSnapshot> {
-    return clone(await this.readDb(false, false));
+    const db = clone(await this.readDb(false, false));
+    const lotByCode = new Map(db.lots.map((l) => [l.lotCode, l]));
+    db.packs = (db.packs as unknown as StoredPack[]).map((p) => effectivePack(p, lotByCode.get(p.lotCode)));
+    return db;
   }
 
   // Reads use the latest committed snapshot; writes run as single-step transactions.
@@ -534,6 +712,7 @@ export class JsonStore implements Store {
       get: async (id) => (await read()).get(id),
       findOne: async (where) => (await read()).findOne(where),
       list: async (where) => (await read()).list(where),
+      exists: async (where) => (await read()).exists(where),
       create: write((r, row: T) => r.create(row)),
       createMany: write((r, rows: T[]) => r.createMany(rows)),
       update: write((r, id: string, patch: Partial<Omit<T, "id">>) => r.update(id, patch)),
@@ -542,9 +721,13 @@ export class JsonStore implements Store {
     };
   }
 
-  private ledger<T extends Row>(name: "movements" | "scans" | "reprints"): AppendOnlyRepo<T> {
-    const r = this.repo<T>(name);
-    return { list: r.list, append: (row) => this.transaction((tx) => (tx[name] as unknown as AppendOnlyRepo<T>).append(row)) };
+  private ledger<T extends Row>(name: "movements" | "scans" | "reprints" | "damageReports"): AppendOnlyRepo<T> {
+    const read = async () => makeTx(await this.readDb())[name] as unknown as AppendOnlyRepo<T>;
+    return {
+      list: async (where, opts) => (await read()).list(where, opts),
+      exists: async (where) => (await read()).exists(where),
+      append: (row) => this.transaction((tx) => (tx[name] as unknown as AppendOnlyRepo<T>).append(row)),
+    };
   }
 
   appendMovements(ms: NewMovement[]) {
@@ -565,6 +748,7 @@ export class JsonStore implements Store {
   movements = this.ledger<DbSnapshot["movements"][number]>("movements");
   scans = this.ledger<DbSnapshot["scans"][number]>("scans");
   reprints = this.ledger<DbSnapshot["reprints"][number]>("reprints");
+  damageReports = this.ledger<NonNullable<DbSnapshot["damageReports"]>[number]>("damageReports");
   sessions = this.repo<DbSnapshot["sessions"][number]>("sessions");
 
   appendMovement(m: NewMovement) {
@@ -590,6 +774,9 @@ export class JsonStore implements Store {
   }
   async stockSummary() {
     return makeTx(await this.readDb()).stockSummary();
+  }
+  async historyAtPartner(partnerId: string) {
+    return makeTx(await this.readDb()).historyAtPartner(partnerId);
   }
   updateSettings(patch: Partial<Omit<Settings, "id">>) {
     return this.transaction((tx) => tx.updateSettings(patch));

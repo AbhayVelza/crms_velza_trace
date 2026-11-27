@@ -497,6 +497,108 @@ describe("schema v11: Option C, history and photos", () => {
       (await d.query<{ indexdef: string }>(`SELECT indexdef FROM pg_indexes WHERE indexname = 'codes_location'`))[0].indexdef,
     ).toMatch(/WHERE \(location_id IS NOT NULL\)/);
   });
+
+  it("rare states (dashboard, Damaged list): both halves of the packs filter and the lots read codes_rare_status, never all of codes", async () => {
+    // The store over a driver that records its statements, so the plans checked are those of the real store queries.
+    const d = await db();
+    const sent: { sql: string; params?: unknown[] }[] = [];
+    const recording: SqlDriver = {
+      label: d.label,
+      query: (async (sql: string, params?: unknown[]) => (sent.push({ sql, params }), d.query(sql, params))) as SqlDriver["query"],
+      alone: (sql, params) => d.alone(sql, params),
+      exec: (sql) => d.exec(sql),
+      transaction: (fn, opts) => d.transaction(fn, opts),
+      close: () => d.close(),
+    };
+    const store = new SqlStore(async () => recording, () => data(), { stockRollupIntervalMs: Number.POSITIVE_INFINITY });
+    stores.push(store);
+    await store.driver();
+    // 3,000 sealed trays at SS0001 (21,000 rows), packs following. A few rare ones: 5 trays DAMAGED, 3 RECALLED after
+    // damage, 3 RECALLED from AT_SS (a batch recall), and in two sealed trays one pack with a state of its own.
+    const lot = (i: string) => `'91AAA111OR' || upper(lpad(to_hex(${i}), 5, '0'))`;
+    await d.exec(`
+      INSERT INTO codes (code, code_type, country_code, batch_code, flavour, hex_code, lot_type, pack_size, pack_sequence, lot_code, lot_number, manufacturer_id, status, location_id, generated_at, updated_at)
+      SELECT ${lot("i")}, 'LOT', '91', 'AAA111', 'OR', upper(lpad(to_hex(i), 5, '0')), 'TRAY', 4, NULL, ${lot("i")}, i, 'MF0001', 'AT_SS', 'SS0001', now(), now()
+        FROM generate_series(16, 3015) i
+      UNION ALL
+      SELECT ${lot("i")} || '4' || s, 'PACK', '91', 'AAA111', 'OR', upper(lpad(to_hex(i), 5, '0')), 'TRAY', 4, s, ${lot("i")}, i, 'MF0001', NULL, NULL, now(), now()
+        FROM generate_series(16, 3015) i CROSS JOIN generate_series(1, 6) s;
+      UPDATE codes SET status = 'DAMAGED' WHERE code_type = 'LOT' AND lot_number BETWEEN 16 AND 20;
+      UPDATE codes SET status = 'RECALLED', status_before_recall = 'DAMAGED' WHERE code_type = 'LOT' AND lot_number BETWEEN 21 AND 23;
+      UPDATE codes SET status = 'RECALLED', status_before_recall = 'AT_SS' WHERE code_type = 'LOT' AND lot_number BETWEEN 24 AND 26;
+      UPDATE codes SET status = 'DAMAGED', location_id = 'SS0001' WHERE code = ${lot("100")} || '41';
+      UPDATE codes SET status = 'RECALLED', location_id = 'SS0001', status_before_recall = 'DAMAGED' WHERE code = ${lot("101")} || '41';
+      ANALYZE codes;`);
+
+    /** Runs a store read, then EXPLAINs the statement it sent: [index used (parent name), alias] of every scan of codes. */
+    const scans = async (read: () => Promise<unknown[]>, expected: number) => {
+      sent.length = 0;
+      expect(await read()).toHaveLength(expected);
+      const { sql, params } = sent.at(-1)!;
+      // As in the [6] test, seq scans off; and hash/merge joins off: at 21,000 rows, reading every pack once (seq scan,
+      // or a whole other index) and hashing them costs less than 16 codes_lot probes (one per partition) per rare tray,
+      // which it stops doing long before crores of rows (a full read grows with the table, the probes don't). The
+      // planner still has to find an index for every scan of codes.
+      const [row] = await d.transaction(async (q) => {
+        await q(`SET LOCAL enable_seqscan = off`);
+        await q(`SET LOCAL enable_hashjoin = off`);
+        await q(`SET LOCAL enable_mergejoin = off`);
+        return q<{ "QUERY PLAN": unknown }>(`EXPLAIN (FORMAT JSON) ${sql}`, params);
+      });
+      const raw = row["QUERY PLAN"];
+      const plan = (typeof raw === "string" ? JSON.parse(raw) : raw) as { Plan: PlanNode }[];
+      type PlanNode = { "Node Type": string; "Relation Name"?: string; Alias?: string; "Index Name"?: string; Plans?: PlanNode[] };
+      const found: { node: string; index: string | null; alias: string }[] = [];
+      const indexesBelow = (n: PlanNode): string[] => [...(n["Index Name"] ? [n["Index Name"]] : []), ...(n.Plans ?? []).flatMap(indexesBelow)];
+      const walk = (n: PlanNode) => {
+        if (n["Relation Name"]?.startsWith("codes")) {
+          // A bitmap heap scan names its table; the index is on the bitmap index scan below it.
+          const [index = null] = n["Node Type"] === "Bitmap Heap Scan" ? indexesBelow(n) : n["Index Name"] ? [n["Index Name"]] : [];
+          found.push({ node: n["Node Type"], index, alias: n.Alias ?? "" });
+        }
+        (n.Plans ?? []).forEach(walk);
+      };
+      walk(plan[0].Plan);
+      expect(found.length).toBeGreaterThan(0);
+      // Each partition's index is a child of the parent index declared on codes.
+      const parents = await d.query<{ child: string; parent: string }>(
+        `SELECT c.relname AS child, p.relname AS parent FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid JOIN pg_class p ON p.oid = i.inhparent
+          WHERE c.relname = ANY($1::text[])`,
+        [found.map((f) => f.index).filter(Boolean)],
+      );
+      const parentOf = new Map(parents.map((r) => [r.child, r.parent]));
+      return found.map((f) => [f.index === null ? f.node : (parentOf.get(f.index) ?? f.index), f.alias.replace(/_\d+$/, "")]);
+    };
+    const RARE = "codes_rare_status";
+    const only = (pairs: string[][], index: string) => expect(new Set(pairs.map(([i]) => i))).toEqual(new Set([index]));
+
+    // Packs with a state of their own: their own rows, by the index (one scan per partition, no other access to codes).
+    only(await scans(() => store.packs.list({ status: "DAMAGED", followsLot: false }), 1), RARE);
+    only(await scans(() => store.packs.list({ status: "RECALLED", statusBeforeRecall: "DAMAGED", followsLot: false }), 1), RARE);
+    // Packs following their tray: the tray by the index, then its packs by codes_lot.
+    for (const pairs of [
+      await scans(() => store.packs.list({ status: "DAMAGED", followsLot: true }), 30),
+      await scans(() => store.packs.list({ status: "RECALLED", statusBeforeRecall: "DAMAGED", followsLot: true }), 18),
+    ]) {
+      only(pairs.filter(([, alias]) => alias === "l"), RARE);
+      only(pairs.filter(([, alias]) => alias === "p"), "codes_lot");
+    }
+    // The calls the dashboard and the Damaged list make (both halves in one UNION ALL), and the lots.
+    for (const pairs of [
+      await scans(() => store.packs.list({ status: "DAMAGED" }), 31),
+      await scans(() => store.packs.list({ status: "RECALLED", statusBeforeRecall: "DAMAGED" }), 19),
+    ]) {
+      expect(new Set(pairs.map(([i]) => i))).toEqual(new Set([RARE, "codes_lot"]));
+    }
+    only(await scans(() => store.lots.list({ status: "DAMAGED" }), 5), RARE);
+    only(await scans(() => store.lots.list({ status: "RECALLED", statusBeforeRecall: "DAMAGED" }), 3), RARE);
+    only(await scans(() => store.lots.list({ status: "RECALLED", synced: true }), 6), RARE);
+    // Following packs and the common states are not in it.
+    expect(await count(d, `SELECT count(*) AS n FROM codes WHERE status IN ('DAMAGED', 'RECALLED', 'OPENED', 'QUARANTINED')`)).toBe(13);
+    expect((await d.query<{ indexdef: string }>(`SELECT indexdef FROM pg_indexes WHERE indexname = '${RARE}'`))[0].indexdef).toContain(
+      "WHERE (status = ANY (ARRAY['DAMAGED'::text, 'RECALLED'::text, 'OPENED'::text, 'QUARANTINED'::text]))",
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------------------------- history months

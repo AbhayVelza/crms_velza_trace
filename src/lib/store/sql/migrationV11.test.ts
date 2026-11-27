@@ -23,7 +23,8 @@ let script: ScriptDb;
 const tmp = mkdtempSync(path.join(os.tmpdir(), "velza-migration-"));
 /** A copy of 03 with one change, to prove its checks catch it. */
 function sabotaged(name: string, from: string, to: string) {
-  const text = read("migration", "03_transform.sql");
+  // Normalise line endings: a Windows checkout (core.autocrlf) gives CRLF, and the patterns below use \n.
+  const text = read("migration", "03_transform.sql").replace(/\r\n/g, "\n");
   expect(text).toContain(from);
   const file = path.join(tmp, name);
   writeFileSync(file, text.replace(from, to));

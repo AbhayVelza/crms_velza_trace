@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { VelzaLogo, VelzaSymbol } from "@/components/brand";
+import { LegalLinks } from "@/components/LegalLinks";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 
 /** Sign-in / sign-up layout (`wide` for the longer sign-up form): black brand panel (wide screens) beside the form; the logo sits above the form on phones. */
@@ -27,6 +28,7 @@ export function AuthShell({ children, wide = false }: { children: ReactNode; wid
             <VelzaLogo height={88} className="h-[88px] w-auto" />
           </div>
           <div className="rounded-card border border-line bg-surface p-6 shadow-pop sm:p-8">{children}</div>
+          <LegalLinks className="mt-6" />
         </div>
       </div>
     </main>

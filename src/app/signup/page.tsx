@@ -8,6 +8,7 @@ import { AuthShell } from "@/components/AuthShell";
 import { Button, Field, Input, Notice, Select } from "@/components/ui";
 import { INDIAN_STATES } from "@/lib/core/ids";
 import { api, errorText } from "@/lib/client";
+import { LEGAL } from "@/lib/legal";
 
 type ShopType = "SS" | "DB" | "RETAILER";
 interface Options {
@@ -38,6 +39,9 @@ export default function SignupPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<Result | null>(null);
+  // DPDP Act 2023 s.6: consent must be a clear, affirmative action, so the box starts unticked.
+  const [consent, setConsent] = useState(false);
+  const [consentError, setConsentError] = useState<string | null>(null);
 
   useEffect(() => {
     api<Options>("/api/signup").then(setOpts, (e) => setError(errorText(e)));
@@ -76,10 +80,13 @@ export default function SignupPage() {
     const missing: Partial<Record<Key, string>> = {};
     for (const [k, label] of required) if (!f[k].trim()) missing[k] = `${label} is required`;
     if (f.password && f.confirm !== f.password) missing.confirm = "The two passwords are different";
-    if (Object.keys(missing).length) {
+    const noConsent = !consent;
+    setConsentError(noConsent ? "Please tick the box to agree before creating the account" : null);
+    if (Object.keys(missing).length || noConsent) {
       setErrors(missing);
       setError("Please complete the fields marked in red.");
-      const first = document.querySelector<HTMLElement>(`[data-field="${Object.keys(missing)[0]}"]`);
+      const firstKey = Object.keys(missing)[0] ?? "consent";
+      const first = document.querySelector<HTMLElement>(`[data-field="${firstKey}"]`);
       first?.scrollIntoView({ block: "center" });
       first?.focus({ preventScroll: true });
       return;
@@ -207,6 +214,42 @@ export default function SignupPage() {
               <Field label="Repeat password *" error={err("confirm")}>
                 <Input aria-label="Repeat password" data-field="confirm" type="password" autoComplete="new-password" value={f.confirm} onChange={(e) => set("confirm")(e.target.value)} />
               </Field>
+            </div>
+            <div className="space-y-2 rounded-control border border-line bg-surface-2 p-4 text-sm">
+              <p className="text-muted-foreground">
+                We use these details to register your shop, route stock to you and contact you. Your activity in the app is recorded for product
+                traceability. You can ask to see, correct or delete your data at any time. Details are in the{" "}
+                <a href="/privacy" target="_blank" rel="noopener" className="font-semibold text-foreground underline underline-offset-2">
+                  privacy notice
+                </a>
+                .
+              </p>
+              <label className="flex items-start gap-3 font-medium text-foreground">
+                <input
+                  type="checkbox"
+                  data-field="consent"
+                  checked={consent}
+                  onChange={(e) => {
+                    setConsent(e.target.checked);
+                    if (e.target.checked) setConsentError(null);
+                  }}
+                  aria-invalid={consentError ? true : undefined}
+                  aria-describedby={consentError ? "consent-error" : undefined}
+                  className="mt-0.5 h-5 w-5 shrink-0 accent-primary"
+                />
+                <span>
+                  I agree to the{" "}
+                  <a href="/terms" target="_blank" rel="noopener" className="underline underline-offset-2">
+                    terms of use
+                  </a>{" "}
+                  and to Velza processing my details as described in the privacy notice (version {LEGAL.version}). *
+                </span>
+              </label>
+              {consentError && (
+                <p id="consent-error" role="alert" className="text-[0.8125rem] font-medium text-danger">
+                  {consentError}
+                </p>
+              )}
             </div>
             {error && <Notice tone="error">{error}</Notice>}
             <Button type="submit" className="w-full" loading={busy} disabled={busy}>

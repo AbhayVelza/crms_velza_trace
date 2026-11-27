@@ -1,4 +1,5 @@
 import { defineConfig } from "@playwright/test";
+import { COOKIE_NOTICE_KEY, LEGAL } from "./src/lib/legal";
 
 // End-to-end demo script (spec 9.1) against a production build on port 3100 with its own data,
 // so it never touches data/db.json or a running `npm run dev`.
@@ -31,6 +32,12 @@ export default defineConfig({
     viewport: { width: 1280, height: 900 },
     deviceScaleFactor: 3, // sharp sticker screenshots for barcode decoding
     trace: "retain-on-failure",
+    // The cookie notice (src/components/CookieNotice.tsx) is fixed to the bottom of the screen and would cover
+    // buttons; mark it as already seen.
+    storageState: {
+      cookies: [],
+      origins: [{ origin: `http://localhost:${PORT}`, localStorage: [{ name: COOKIE_NOTICE_KEY, value: LEGAL.version }] }],
+    },
   },
   webServer: {
     command: `npm run build && npx next start -p ${PORT}`,

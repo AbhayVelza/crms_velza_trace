@@ -70,7 +70,7 @@ const VARIANTS: Record<Variant, string> = {
   // Neutral: everything else that acts (hairline border, turns primary text on hover).
   secondary: "border border-line-strong bg-surface text-foreground hover:bg-muted disabled:border-line disabled:bg-surface disabled:text-subtle-foreground",
   outline: "border border-line-strong bg-transparent text-foreground hover:border-brand-line hover:bg-brand-soft disabled:border-line disabled:text-subtle-foreground",
-  danger: "bg-danger text-danger-foreground hover:bg-danger-hover disabled:bg-muted-strong disabled:text-subtle-foreground",
+  danger: "bg-danger-fill text-danger-foreground hover:bg-danger-hover disabled:bg-muted-strong disabled:text-subtle-foreground",
   ghost: "text-foreground hover:bg-muted disabled:text-subtle-foreground",
 };
 
@@ -101,7 +101,12 @@ export function Field({ label, hint, error, children }: { label: string; hint?: 
       <span className="mb-1.5 block text-[0.8125rem] font-semibold tracking-[0.01em] text-foreground-2">{label}</span>
       {children}
       {hint && !error && <span className="mt-1.5 block text-[0.8125rem] leading-snug text-muted-foreground">{hint}</span>}
-      {error && <span className="mt-1.5 block animate-fade-in text-[0.8125rem] font-medium text-danger">{error}</span>}
+      {/* role="alert": screen readers announce the error as soon as it appears. */}
+      {error && (
+        <span role="alert" className="mt-1.5 block animate-fade-in text-[0.8125rem] font-medium text-danger">
+          {error}
+        </span>
+      )}
     </label>
   );
 }

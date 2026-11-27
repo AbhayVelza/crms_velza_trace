@@ -26,8 +26,8 @@
   --line-strong: #d1d1d6; /* control borders */
   --foreground: #1d1d1f; /* text primary */
   --foreground-2: #3a3a3c;
-  --muted-foreground: #6e6e73; /* text secondary (DESIGN #86868B, AA shade) */
-  --subtle-foreground: #737378; /* text tertiary (DESIGN #AEAEB2, AA shade) */
+  --muted-foreground: #636368; /* text secondary (DESIGN #86868B, AA shade: ≥ 4.5:1 on canvas, surface and muted) */
+  --subtle-foreground: #6a6a6f; /* text tertiary (DESIGN #AEAEB2, AA shade: ≥ 4.5:1 on canvas, surface and muted) */
   --primary: #df2531;
   --primary-hover: #c01c27;
   --primary-foreground: #ffffff;
@@ -61,7 +61,8 @@
   --danger: #d70015;
   --danger-soft: rgb(255 59 48 / 0.09);
   --danger-line: rgb(255 59 48 / 0.3);
-  --danger-hover: #b80012;
+  --danger-hover: #b80012; /* filled danger button hover */
+  --danger-fill: #d70015; /* filled danger button: white text 5.4:1 */
   --danger-foreground: #ffffff;
   --info: #0060df;
   --info-soft: rgb(10 132 255 / 0.09);
@@ -82,10 +83,10 @@
   --line-strong: rgb(255 255 255 / 0.16);
   --foreground: #f5f5f7;
   --foreground-2: #e5e5ea;
-  --muted-foreground: #98989d;
-  --subtle-foreground: #86868b; /* DESIGN #636366, AA shade on #1C1C1E */
+  --muted-foreground: #a1a1a6; /* AA (≥ 4.5:1) on surface and muted */
+  --subtle-foreground: #9a9a9f; /* DESIGN #636366, AA shade: ≥ 4.5:1 on #1C1C1E and on muted #2C2C2E */
   --primary: #df2531;
-  --primary-hover: #e8434e;
+  --primary-hover: #c01c27; /* white text 6.1:1 (the lighter #e8434e was 3.9:1) */
   --primary-foreground: #ffffff;
   --brand-text: #ff5a64; /* red text on charcoal needs a lighter step for contrast */
   --brand-soft: rgb(223 37 49 / 0.14);
@@ -114,7 +115,10 @@
   --danger: #ff453a;
   --danger-soft: rgb(255 69 58 / 0.13);
   --danger-line: rgb(255 69 58 / 0.34);
-  --danger-hover: #e0362c;
+  /* --danger stays bright for red text on dark surfaces; the filled button uses the deeper red so white text
+     passes AA (white on #ff453a is only 3.4:1). */
+  --danger-hover: #b80012;
+  --danger-fill: #d70015;
   --danger-foreground: #ffffff;
   --info: #409cff;
   --info-soft: rgb(10 132 255 / 0.14);
@@ -177,6 +181,7 @@
   --color-danger-soft: var(--danger-soft);
   --color-danger-line: var(--danger-line);
   --color-danger-hover: var(--danger-hover);
+  --color-danger-fill: var(--danger-fill);
   --color-danger-foreground: var(--danger-foreground);
   --color-info: var(--info);
   --color-info-soft: var(--info-soft);
@@ -410,4 +415,19 @@ details[open] > :not(summary) {
     --muted-foreground: #333333;
     --line: #cccccc;
   }
+}
+
+/* Legal pages (/privacy, /cookies, /terms): readable lists and links without a typography plugin. */
+.legal-prose ul {
+  list-style: disc;
+  padding-left: 1.25rem;
+}
+.legal-prose li + li {
+  margin-top: 0.375rem;
+}
+.legal-prose p a,
+.legal-prose li a {
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }

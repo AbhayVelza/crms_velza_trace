@@ -7,12 +7,15 @@ import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE } from "@/lib/sessionCookie";
 import { signInRequired } from "@/lib/signInMode";
 
+const PUBLIC_PAGES = new Set(["/signup", "/privacy", "/cookies", "/terms"]);
+
 export function proxy(req: NextRequest) {
   const isLogin = req.nextUrl.pathname === "/login";
-  // The sign-up page is for shops that have no account yet: always open.
-  const isSignup = req.nextUrl.pathname === "/signup";
+  // The sign-up page is for shops that have no account yet, and the legal notices must be readable before
+  // anyone signs up: always open.
+  const isPublic = PUBLIC_PAGES.has(req.nextUrl.pathname);
   if (!signInRequired()) return isLogin ? NextResponse.redirect(new URL("/", req.url)) : NextResponse.next();
-  if (isLogin || isSignup || req.cookies.has(SESSION_COOKIE)) return NextResponse.next();
+  if (isLogin || isPublic || req.cookies.has(SESSION_COOKIE)) return NextResponse.next();
   const url = new URL("/login", req.url);
   const back = req.nextUrl.pathname + req.nextUrl.search;
   if (back !== "/") url.searchParams.set("next", back);

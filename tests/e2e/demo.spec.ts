@@ -595,6 +595,7 @@ test.describe.serial("Velza demo script (9.1)", () => {
       await page.getByLabel("Supplied by").selectOption(f.supplier);
       await page.getByLabel("Password", { exact: true }).fill(f.password);
       await page.getByLabel("Repeat password").fill(f.password);
+      await page.getByLabel(/I agree to the terms of use/).check();
       await page.getByRole("button", { name: "Create account" }).click();
     };
 

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
+import { LegalLinks } from "@/components/LegalLinks";
 import { codeFromParam } from "./codeParam";
 import { PublicLookup } from "./PublicLookup";
 
@@ -13,10 +14,11 @@ async function Lookup({ params }: { params: PageProps<"/t/[code]">["params"] }) 
 /** What a QR scan opens. Safe fields only: no partners, invoices or history. */
 export default function Page({ params }: PageProps<"/t/[code]">) {
   return (
-    <main className="flex flex-1 items-start justify-center bg-background px-4 py-10 sm:py-16">
+    <main className="flex flex-1 flex-col items-center justify-start gap-6 bg-background px-4 py-10 sm:py-16">
       <Suspense fallback={<p className="text-sm text-muted-foreground">Checking…</p>}>
         <Lookup params={params} />
       </Suspense>
+      <LegalLinks />
     </main>
   );
 }

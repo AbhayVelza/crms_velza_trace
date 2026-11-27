@@ -91,6 +91,76 @@ jobs:
       - name: Live stock summary matches a recount
         run: DATABASE_URL=postgres://postgres:postgres@localhost:5432/upgraded npm run db:stock -- check
 
+  v11-sql:
+    # Schema v11 on real PostgreSQL servers, set up as on RDS / Lightsail: a NON-superuser owner installs the schema
+    # (twice: re-runnable) and the roles (twice: every deploy re-runs them), then the SQL checks run as velza_app.
+    # npm test runs the same files on embedded PostgreSQL 18; this covers the versions we deploy (16 pilot, 17 go-live).
+    name: v11 SQL checks (PostgreSQL ${{ matrix.pg }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        pg: ["16", "17"]
+    services:
+      postgres:
+        image: postgres:${{ matrix.pg }}
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      # Throwaway database: fixed passwords.
+      OWNER_URL: postgres://velza_owner:CiOwner2026pass@localhost:5432/velza
+      APP_URL: postgres://velza_app:CiApp2026pass@localhost:5432/velza
+    steps:
+      - uses: actions/checkout@v4
+      - name: Owner role and database (what db/bootstrap_aws.sql does on AWS)
+        run: |
+          psql -v ON_ERROR_STOP=1 -c "CREATE ROLE velza_owner LOGIN CREATEROLE PASSWORD 'CiOwner2026pass'" -c "CREATE DATABASE velza OWNER velza_owner"
+      - name: Schema and roles, each twice, as the owner
+        run: |
+          for i in 1 2; do psql "$OWNER_URL" -X -q -v ON_ERROR_STOP=1 -1 -f db/schema.sql >/dev/null; done
+          for i in 1 2; do
+            psql "$OWNER_URL" -X -q -v ON_ERROR_STOP=1 -v app_password=CiApp2026pass -v readonly_password=CiRo2026pass -f deploy/roles_v11.sql
+          done
+      - name: Life of a tray, then the privilege suite, as velza_app
+        run: |
+          psql "$APP_URL" -X -v ON_ERROR_STOP=1 -f tests/sql/test_v11_life_of_a_tray.sql
+          psql "$APP_URL" -X -v ON_ERROR_STOP=1 -f tests/sql/test_v11_privileges.sql
+      - name: Upgrade path - v10 schema with data, upgraded in place by the v11 schema, then the privilege suite
+        run: |
+          psql -v ON_ERROR_STOP=1 -c "CREATE DATABASE velza_upgrade OWNER velza_owner"
+          U="postgres://velza_owner:CiOwner2026pass@localhost:5432/velza_upgrade"
+          psql "$U" -X -q -v ON_ERROR_STOP=1 -1 -f tests/sql/schema_v10.sql >/dev/null
+          psql "$U" -X -q -v ON_ERROR_STOP=1 -f tests/sql/make_fake_supabase_v10.sql >/dev/null
+          psql "$U" -X -q -v ON_ERROR_STOP=1 -1 -f db/schema.sql >/dev/null
+          psql "$U" -X -q -v ON_ERROR_STOP=1 -v app_password=CiApp2026pass -v readonly_password=CiRo2026pass -f deploy/roles_v11.sql
+          psql "$U" -X -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN
+              IF (SELECT version FROM schema_info) <> 11 THEN RAISE EXCEPTION 'not v11'; END IF;
+              IF (SELECT count(*) FROM codes WHERE status IS NULL) <> 1569 THEN RAISE EXCEPTION 'packs following their tray: %', (SELECT count(*) FROM codes WHERE status IS NULL); END IF;
+              IF EXISTS (SELECT * FROM stock_current EXCEPT SELECT * FROM stock_recount) OR EXISTS (SELECT * FROM stock_recount EXCEPT SELECT * FROM stock_current)
+                THEN RAISE EXCEPTION 'live stock differs from the recount'; END IF;
+              IF (SELECT history_rows_without_partition + opened_lot_packs_without_state FROM db_health) <> 0 THEN RAISE EXCEPTION 'db_health not clean'; END IF;
+              RAISE NOTICE 'upgrade checks passed';
+            END \$\$"
+          psql "postgres://velza_app:CiApp2026pass@localhost:5432/velza_upgrade" -X -v ON_ERROR_STOP=1 -f tests/sql/test_v11_privileges.sql
+      - name: Supabase to v11 migration rehearsal (migration/03 and 04 on staged v10 data)
+        run: |
+          psql -v ON_ERROR_STOP=1 -c "CREATE DATABASE velza_migration OWNER velza_owner"
+          M="postgres://velza_owner:CiOwner2026pass@localhost:5432/velza_migration"
+          psql "$M" -X -q -v ON_ERROR_STOP=1 -c "CREATE SCHEMA src"
+          # What 02_stage_into_target.sh leaves: Supabase's v10 tables and rows in schema src.
+          PGOPTIONS="-c search_path=src" psql "$M" -X -q -v ON_ERROR_STOP=1 -1 -f tests/sql/schema_v10.sql >/dev/null
+          PGOPTIONS="-c search_path=src" psql "$M" -X -q -v ON_ERROR_STOP=1 -f tests/sql/make_fake_supabase_v10.sql >/dev/null
+          psql "$M" -X -q -v ON_ERROR_STOP=1 -1 -f db/schema.sql >/dev/null
+          psql "$M" -X -v ON_ERROR_STOP=1 -f migration/03_transform.sql
+          psql "$M" -X -v ON_ERROR_STOP=1 -f migration/04_report.sql
+
   docker:
     # Builds the three production images and runs the whole stack with the same deploy script the servers use
     # (deploy/smoke-test.sh): HTTPS, sign-in, the restricted database role, the stock check and a backup dump.

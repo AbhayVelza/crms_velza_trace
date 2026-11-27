@@ -28,12 +28,13 @@ in the *Cloud Infrastructure & Cost Plan*.
 
 ### Database roles
 
-Every deploy runs `db/roles.sql` (idempotent) with passwords from Parameter Store:
+Every deploy runs `deploy/roles_v11.sql` (idempotent; `db/roles.sql` includes it for running by hand) with passwords
+from Parameter Store:
 
 | Role | Used by | Can |
 | --- | --- | --- |
 | owner (`velza_owner` on prod, `velza` on staging) | migrations only (`MIGRATE_DATABASE_URL`) | everything |
-| `velza_app` | the app and the jobs container (`DATABASE_URL`) | read and write rows; **no** schema changes; `code_history` only read and appended (no update, delete or truncate) |
+| `velza_app` | the app and the jobs container (`DATABASE_URL`) | read and write rows; **no** schema changes; `code_history` (every monthly partition too), `damage_reports` and `attachments` only read and appended (no update, delete or truncate); `code_history_once` read only (its trigger writes it); at most 100 connections; a lock wait over 10 s fails with 409 "busy, try again"; may call `code_history_ensure_partitions()` and `velza_daily_maintenance()` |
 | `velza_readonly` | the backup container, reports (`BACKUP_DATABASE_URL`) | read only |
 
 ### Settings (Parameter Store → one file per container)
@@ -141,6 +142,8 @@ Do these in order. Nothing in AWS is created until you run `terraform apply`.
   workflow is the one deployment method (the old PM2 scripts were removed on 21 Nov 2026). Older code runs on the
   newer schema: the app never moves the schema backwards, and migrations of an older release are skipped
   automatically (since schema v10, triggers keep `container_items` right for a release that doesn't know it).
+  **Exception: schema v11 is one-way.** A v10 release can't run on a v11 database (see "Schema v11" below), so
+  rolling back across v11 means restoring the snapshot taken before the migration, not redeploying an older `image_tag`.
 - **What a deploy does on the server** (`deploy/remote-deploy.sh`): pull images → (staging) start its database →
   migrate as the owner → apply roles and grants → start the new containers and wait until healthy → prune
   old images. `migrate.env` is deleted when the script exits, whatever the outcome.
@@ -152,12 +155,33 @@ Do these in order. Nothing in AWS is created until you run `terraform apply`.
   request (1,200 a minute by default); an uptime check every 30 s is far below that.
 - **Schema rule:** migrations run while the previous release is still serving, so every change must work with the
   previous release (add first, remove in a later release). CI's *schema upgrade = fresh install* job checks upgrades.
+  Schema v11 is the one exception to this rule (below): it needs a maintenance window.
 - **Schema v10** adds foreign keys (validated during the migration) and the `container_items` table. Before
   validating, the migration counts rows that point at missing rows (print orders or containers with an unknown partner,
   codes with an unknown print order, pool codes with an unknown device, container lot codes that are not codes). If
   there are any, it stops with a message naming each table and count and changes nothing; the deploy then fails at the
   migrate step and the running release keeps serving. Fix or remove those rows, then deploy again. `velza_app` gets
   the new table through the default privileges in `db/roles.sql`.
+- **Schema v11** (Option C, monthly history partitions, damage reports). **DO NOT MERGE ALONE: it ships only in the
+  same release as the Option C store/service change.** The upgrade clears the state of every pack whose case/tray is
+  still sealed (it follows its tray), and a v10 release reads a pack's own columns, so it would see NULL. It is a
+  **one-way** upgrade: the previous release can't run on v11 (history ids become UUIDs, sealed packs have NULL state).
+  Procedure:
+  1. **Snapshot first:** a Lightsail/RDS snapshot, or `pg_dump -Fc` of the database (Supabase/Neon: a backup or a
+     `pg_dump`).
+  2. **Stop the app or show a maintenance page** for the migration: the old release must not serve requests on the
+     new schema. **Vercel production and Render (autoDeploy)** have no migrate step: the new release upgrades the
+     database on its **first request**, so put the site in maintenance or run `npm run db:migrate` as the owner
+     yourself before traffic reaches the new release.
+  3. Migrate, run the roles, start the new release, check `npm run db:stock -- check` and `SELECT * FROM db_health`.
+  4. **Rollback = restore the snapshot** (and redeploy the previous release on it). Redeploying an older `image_tag`
+     alone does not work.
+  The migration rebuilds `codes` and `code_history` as partitioned tables and copies every row into them, in the one
+  migration transaction. On a pilot-size database that takes seconds to minutes and locks both tables meanwhile: deploy
+  it outside plant hours. It waits at most 10 s for its locks; if the tables are busy it stops, changes nothing, and
+  can simply be run again. After it,
+  `npm run db:migrate` does nothing on a current database (`npm run db:migrate -- --force` re-runs the schema, only in a
+  quiet moment). The roles step must be `deploy/roles_v11.sql` (it also covers every history month).
 
 ## 4. Scheduled jobs and backups
 

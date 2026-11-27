@@ -7,7 +7,7 @@ import { scannedCodeSchema } from "@/lib/scan/scannedCode";
 import { getStore, type StoreTx } from "@/lib/store";
 import { badRequest, findItem, loadActor, notFound, nowIso, printDevice, requireAction, requirePartner, setLotState, unknownCodeMessage } from "./common";
 import { autoRefill, reservedCodes } from "./pool";
-import { reprintServedId } from "./printOrders";
+import { legacyReprintServedId, reprintServedId } from "./printOrders";
 
 // deviceId: the PC chosen as "This PC" in the device bar (required when the plant has several PCs).
 export const reprintSchema = z.object({ code: scannedCodeSchema, reason: z.string().max(500), deviceId: z.string().optional() });
@@ -73,7 +73,12 @@ export async function listReprints(userId: string | null) {
   return rows
     .filter((r) => own.has(r.code.slice(0, 15)))
     .sort((a, b) => b.at.localeCompare(a.at))
-    .map((r) => ({ ...r, userName: users.find((u) => u.id === r.userId)?.name ?? r.userId, servedAt: servedAt.get(reprintServedId(r.id)) ?? null }));
+    .map((r) => ({
+      ...r,
+      userName: users.find((u) => u.id === r.userId)?.name ?? r.userId,
+      // The id before schema v11 too (JSON data files written by an older release).
+      servedAt: servedAt.get(reprintServedId(r.id)) ?? servedAt.get(legacyReprintServedId(r.id)) ?? null,
+    }));
 }
 
 export async function voidLot(userId: string | null, body: unknown) {

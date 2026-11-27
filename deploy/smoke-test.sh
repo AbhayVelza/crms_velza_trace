@@ -18,7 +18,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-cp "$ROOT/deploy/compose.yml" "$ROOT/deploy/Caddyfile" "$ROOT/deploy/remote-deploy.sh" "$ROOT/db/roles.sql" "$DIR/"
+cp "$ROOT/deploy/compose.yml" "$ROOT/deploy/Caddyfile" "$ROOT/deploy/remote-deploy.sh" "$ROOT/deploy/roles_v11.sql" "$DIR/"
 # The same split as the deploy workflow writes (docs/DEPLOYMENT.md, "Settings").
 cat > "$DIR/.env" <<'EOF'
 DOMAIN=localhost

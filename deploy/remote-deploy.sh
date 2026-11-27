@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs ON THE SERVER: .github/workflows/deploy-env.yml copies it to /srv/velza with compose.yml, Caddyfile, roles.sql
+# Runs ON THE SERVER: .github/workflows/deploy-env.yml copies it to /srv/velza with compose.yml, Caddyfile, roles_v11.sql
 # and the environment files (.env, app.env, jobs.env, backup.env, migrate.env; see compose.yml), then runs
 # `bash /srv/velza/remote-deploy.sh` with a short-lived GitHub token (to pull the images) as the only line on stdin, so
 # the token never appears in a command line or a file.
@@ -74,7 +74,7 @@ PGURL="$(val migrate.env MIGRATE_DATABASE_URL)" \
 APP_DB_PASSWORD="$(val migrate.env APP_DB_PASSWORD)" \
 READONLY_DB_PASSWORD="$(val migrate.env READONLY_DB_PASSWORD)" \
   docker compose run --rm --no-deps -T -e PGURL -e APP_DB_PASSWORD -e READONLY_DB_PASSWORD \
-  -v "$DEPLOY_DIR/roles.sql:/tmp/roles.sql:ro" --entrypoint sh backup -c \
+  -v "$DEPLOY_DIR/roles_v11.sql:/tmp/roles.sql:ro" --entrypoint sh backup -c \
   'psql "$PGURL" -q -v ON_ERROR_STOP=1 -v app_password="$APP_DB_PASSWORD" -v readonly_password="$READONLY_DB_PASSWORD" -f /tmp/roles.sql'
 
 log "5/6 starting the new release"

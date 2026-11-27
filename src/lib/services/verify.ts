@@ -192,7 +192,7 @@ export async function publicCheck(rawCode: string, opts: { clientKey?: string | 
     }
     if (!found.ok || status === "VOID") return unregistered(code);
     const { item } = found;
-    const [batch, flavour] = await Promise.all([tx.batches.findOne({ code: item.lot.batchCode }), tx.flavours.findOne({ code: item.lot.flavour })]);
+    const [batch, flavour] = await Promise.all([tx.batches.findOne({ code: item.lot.batchCode, flavour: item.lot.flavour }), tx.flavours.findOne({ code: item.lot.flavour })]);
     return {
       code,
       product: PRODUCT,

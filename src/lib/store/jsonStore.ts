@@ -359,9 +359,9 @@ function makeTx(db: DbSnapshot): StoreTx {
     async appendScan(s: NewScan) {
       return tx.scans.append({ ...s, id: crypto.randomUUID(), at: s.at ?? new Date().toISOString() });
     },
-    async nextLotNumber(batchCode, count) {
+    async nextLotNumber(batchCode, count, flavour) {
       if (!Number.isInteger(count) || count < 1) throw new RangeError(`count must be ≥ 1 (got ${count})`);
-      const batch = db.batches.find((b) => b.code === batchCode);
+      const batch = db.batches.find((b) => b.code === batchCode && (flavour === undefined || b.flavour === flavour));
       if (!batch) throw new NotFoundError(`Batch ${batchCode}`);
       const first = batch.nextLot;
       if (first + count - 1 > LOT_NUMBER_MAX) {

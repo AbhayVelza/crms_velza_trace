@@ -442,6 +442,8 @@ function ContinueBatchWizard() {
   const list = useApi<{ maxLotsPerOrder: number; batches: ContinuableBatch[] }>("/api/print-orders/continue", { refreshOnChange: true });
   const [step, setStep] = useState(0);
   const [batchCode, setBatchCode] = useState<string | null>(null);
+  // A batch code printed with several flavours (DH3493) lists one row per flavour: the choice is code + flavour.
+  const [flavour, setFlavour] = useState<string | null>(null);
   const [cases, setCases] = useState(0);
   const [trays, setTrays] = useState(0);
   const [preview, setPreview] = useState<ContinuePreview | null>(null);
@@ -450,10 +452,11 @@ function ContinueBatchWizard() {
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<ContinueResult | null>(null);
 
-  const selected = list.data?.batches.find((b) => b.batchCode === batchCode) ?? null;
+  const selected = list.data?.batches.find((b) => b.batchCode === batchCode && b.flavour === flavour) ?? null;
   // A different request needs a different key; the same request keeps its key across retries.
-  const choose = (code: string) => {
+  const choose = (code: string, flav: string) => {
     setBatchCode(code);
+    setFlavour(flav);
     setKey(null);
   };
   const changeCount = (set: (n: number) => void) => (n: number) => {
@@ -466,7 +469,7 @@ function ContinueBatchWizard() {
     setBusy(true);
     setError(null);
     try {
-      setPreview(await api<ContinuePreview>("/api/print-orders/continue", { body: { batchCode, cases, trays, preview: true, deviceId: thisPcId() } }));
+      setPreview(await api<ContinuePreview>("/api/print-orders/continue", { body: { batchCode, flavour: flavour ?? undefined, cases, trays, preview: true, deviceId: thisPcId() } }));
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -493,7 +496,7 @@ function ContinueBatchWizard() {
     setBusy(true);
     setError(null);
     try {
-      const r = await api<ContinueResult>("/api/print-orders/continue", { body: { batchCode, cases, trays, idempotencyKey, deviceId: thisPcId() } });
+      const r = await api<ContinueResult>("/api/print-orders/continue", { body: { batchCode, flavour: flavour ?? undefined, cases, trays, idempotencyKey, deviceId: thisPcId() } });
       setCreated(r);
       notifyDataChanged();
       setStep(3);
@@ -510,6 +513,7 @@ function ContinueBatchWizard() {
   function restart() {
     setStep(0);
     setBatchCode(null);
+    setFlavour(null);
     setCases(0);
     setTrays(0);
     setPreview(null);
@@ -539,12 +543,13 @@ function ContinueBatchWizard() {
                   <tr
                     key={`${b.batchCode}-${b.flavour}-${i}`}
                     data-testid={`continue-batch-${b.batchCode}`}
+                    data-flavour={b.flavour}
                     // The whole row selects the batch, not only the small radio (keyboard users still use the radio).
-                    onClick={() => b.continuable && batchCode !== b.batchCode && choose(b.batchCode)}
-                    className={cx(b.continuable ? "cursor-pointer hover:bg-surface-2" : "opacity-60", batchCode === b.batchCode && "bg-muted")}
+                    onClick={() => b.continuable && !(batchCode === b.batchCode && flavour === b.flavour) && choose(b.batchCode, b.flavour)}
+                    className={cx(b.continuable ? "cursor-pointer hover:bg-surface-2" : "opacity-60", batchCode === b.batchCode && flavour === b.flavour && "bg-muted")}
                   >
                     <Td>
-                      <input type="radio" name="continue-batch" aria-label={`Batch ${b.batchCode}`} className="h-4 w-4 cursor-pointer" checked={batchCode === b.batchCode} disabled={!b.continuable} onChange={() => choose(b.batchCode)} />
+                      <input type="radio" name="continue-batch" aria-label={`Batch ${b.batchCode} ${b.flavourName}`} className="h-4 w-4 cursor-pointer" checked={batchCode === b.batchCode && flavour === b.flavour} disabled={!b.continuable} onChange={() => choose(b.batchCode, b.flavour)} />
                     </Td>
                     <Td>
                       <Code>{b.batchCode}</Code>

@@ -125,7 +125,7 @@ export async function productDetails(userId: string | null, rawCode: string): Pr
     return notHere("UNKNOWN_CODE", `Unknown code ${code}: it has not been at your location`, `${code}: not at, to or through ${me.id}`);
   }
 
-  const batch = await store.batches.findOne({ code: item.lot.batchCode, flavour: item.lot.flavour });
+  const batch = await store.batches.findOne({ code: item.lot.batchCode });
   const flavour = (await store.flavours.findOne({ code: item.lot.flavour }))?.name ?? item.lot.flavour;
   const partners = await store.partners.list();
   const partnerOf = (id: string) => partners.find((p) => p.id === id);
@@ -211,7 +211,7 @@ async function fullDetails(store: ReturnType<typeof getStore>, actor: Actor, cod
   const all = (await store.movements.list({ itemCode: codes })).sort((a, b) => a.at.localeCompare(b.at));
   const moves = all.filter((m) => m.type === "DISPATCHED" || m.type === "RECEIVED" || m.type === "RETURN_PICKUP");
   const [batch, flavourRow, partners, users] = await Promise.all([
-    store.batches.findOne({ code: item.lot.batchCode, flavour: item.lot.flavour }),
+    store.batches.findOne({ code: item.lot.batchCode }),
     store.flavours.findOne({ code: item.lot.flavour }),
     store.partners.list(),
     store.users.list(),

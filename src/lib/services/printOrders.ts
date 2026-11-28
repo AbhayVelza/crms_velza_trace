@@ -35,9 +35,8 @@ export function newBatchFingerprint(manufacturerId: string, deviceId: string, ba
   });
 }
 
-export function continuationFingerprint(manufacturerId: string, deviceId: string, batchCode: string, cases: number, trays: number, flavour?: string): string {
-  // The flavour is part of the request only when sent (a batch code with several flavours, such as DH3493).
-  return fingerprint({ kind: "CONTINUATION", manufacturerId, deviceId, batchCode, cases, trays, ...(flavour ? { flavour } : {}) });
+export function continuationFingerprint(manufacturerId: string, deviceId: string, batchCode: string, cases: number, trays: number): string {
+  return fingerprint({ kind: "CONTINUATION", manufacturerId, deviceId, batchCode, cases, trays });
 }
 
 const keyConflict = () => new ServiceError(409, "IDEMPOTENCY_KEY_CONFLICT", "This request key was already used for a different request — start the order again");
@@ -194,7 +193,7 @@ async function createNewBatchOrder(
       batchCodes.push(batch.code);
 
       // A batch of 0 cases and 0 trays takes its code and no lot numbers; its lots come later by continuing it.
-      const first = b.cases + b.trays > 0 ? await tx.nextLotNumber(batch.code, b.cases + b.trays, batch.flavour) : batch.nextLot;
+      const first = b.cases + b.trays > 0 ? await tx.nextLotNumber(batch.code, b.cases + b.trays) : batch.nextLot;
       const { lots } = allocateLots({ ...batch, nextLot: first }, b.cases, b.trays);
       for (const l of lots) {
         lotRows.push({
@@ -374,19 +373,9 @@ const lotHexOf = (lotCode: string) => lotCode.slice(10, 15);
 
 async function continueContext(tx: StoreTx, userId: string | null, input: z.infer<typeof continueSchema>) {
   const { actor, manufacturer, device } = await operatorContext(tx, userId, input.deviceId);
+  const batch = await tx.batches.findOne({ code: input.batchCode });
   // Another manufacturer's batch looks the same as no batch.
-  const rows = (await tx.batches.list({ code: input.batchCode })).filter((b) => b.manufacturerId === manufacturer.id);
-  if (!rows.length) throw notFound(`Batch ${input.batchCode}`);
-  // A batch code printed with several flavours (DH3493, first consignment) keeps one batch row per flavour, each with
-  // its own lot counter and dates: continuing it names the flavour. A flavour it doesn't have yet is not added here.
-  if (rows.length > 1) {
-    const flavours = rows.map((b) => b.flavour).sort().join(", ");
-    if (input.flavour === undefined) throw new ServiceError(400, "FLAVOUR_REQUIRED", `Batch ${input.batchCode} has several flavours (${flavours}); choose the flavour to continue`);
-    const batch = rows.find((b) => b.flavour === input.flavour);
-    if (!batch) throw new ServiceError(400, "FLAVOUR_CHANGE_NOT_ALLOWED", `Batch ${input.batchCode} has ${flavours}, not ${input.flavour}; create a new batch for another flavour`);
-    return { actor, manufacturer, device, batch };
-  }
-  const batch = rows[0];
+  if (!batch || batch.manufacturerId !== manufacturer.id) throw notFound(`Batch ${input.batchCode}`);
   // One batch, one flavour: continued lots always keep the batch's flavour. For another flavour, create a new batch.
   if (input.flavour !== undefined && input.flavour !== batch.flavour) {
     throw new ServiceError(400, "FLAVOUR_CHANGE_NOT_ALLOWED", `Batch ${batch.code} is ${batch.flavour}; a batch carries one flavour only — create a new batch for another flavour`);
@@ -399,14 +388,14 @@ async function continueContext(tx: StoreTx, userId: string | null, input: z.infe
  * and device; otherwise 409, which says nothing about the stored order.
  */
 async function replay(tx: StoreTx, existing: PrintOrder, manufacturerId: string, deviceId: string, input: z.infer<typeof continueSchema>) {
-  const batch = await tx.batches.findOne(input.flavour ? { code: input.batchCode, flavour: input.flavour } : { code: input.batchCode });
+  const batch = await tx.batches.findOne({ code: input.batchCode });
   let same: boolean;
   if (existing.kind) {
     // Only a continuation order with exactly this request: never a new-batch order, whatever its quantities.
     same =
       existing.manufacturerId === manufacturerId &&
       existing.kind === "CONTINUATION" &&
-      existing.requestFingerprint === continuationFingerprint(manufacturerId, deviceId, input.batchCode, input.cases, input.trays, input.flavour);
+      existing.requestFingerprint === continuationFingerprint(manufacturerId, deviceId, input.batchCode, input.cases, input.trays);
   } else {
     // Orders made before 4 Nov 2026 have no kind: a continuation is never the order that created its batch.
     const total = input.cases + input.trays;
@@ -494,7 +483,7 @@ export async function continueBatch(userId: string | null, body: unknown) {
       const total = input.cases + input.trays;
       let first: number;
       try {
-        first = await tx.nextLotNumber(batch.code, total, batch.flavour);
+        first = await tx.nextLotNumber(batch.code, total);
       } catch (e) {
         if (e instanceof RangeError) throw new ServiceError(409, "INSUFFICIENT_CAPACITY", `Not enough lots left in batch ${batch.code}: ${e.message}`);
         throw e;
@@ -561,7 +550,7 @@ export async function continueBatch(userId: string | null, body: unknown) {
         printedAt: null,
         synced: true,
         kind: "CONTINUATION",
-        requestFingerprint: continuationFingerprint(manufacturer.id, device.id, batch.code, input.cases, input.trays, input.flavour),
+        requestFingerprint: continuationFingerprint(manufacturer.id, device.id, batch.code, input.cases, input.trays),
       };
       await tx.printOrders.create(order);
       const firstLotHex = lots[0].lotHex;
@@ -668,15 +657,14 @@ export async function codesForOrder(userId: string | null, printOrderId: string)
   requireAction(actor, "printOrder");
   const order = await requireOwnOrder(store, actor, printOrderId);
   const [lots, batches, packs] = await Promise.all([store.lots.list({ printOrderId }), store.batches.list({ code: order.batchCodes }), store.packs.list({ lotCode: order.lotCodes })]);
-  // Keyed by code + flavour: a batch code printed with several flavours (DH3493) has one row, and dates, per flavour.
-  const batchOf = new Map(batches.map((b) => [`${b.code}|${b.flavour}`, b]));
+  const batchOf = new Map(batches.map((b) => [b.code, b]));
   const byLot = new Map<string, Pack[]>(lots.map((l) => [l.lotCode, []]));
   for (const p of packs) byLot.get(p.lotCode)?.push(p);
   const rows: CodeRow[] = [];
   for (const code of order.lotCodes) {
     const l = lots.find((x) => x.lotCode === code);
     if (!l) continue;
-    const b = batchOf.get(`${l.batchCode}|${l.flavour}`)!;
+    const b = batchOf.get(l.batchCode)!;
     const common = {
       countryCode: l.lotCode.slice(0, 2),
       batchCode: l.batchCode,

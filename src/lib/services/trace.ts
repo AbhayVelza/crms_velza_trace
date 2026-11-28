@@ -106,7 +106,7 @@ export async function lookup(userId: string | null, rawCode: string) {
     return { found: false as const, code, result: found.code, message: found.message };
   }
   const { item } = found;
-  const batch = await store.batches.findOne({ code: item.lot.batchCode, flavour: item.lot.flavour });
+  const batch = await store.batches.findOne({ code: item.lot.batchCode });
   const codes = item.kind === "LOT" ? [item.lot.lotCode] : [item.lot.lotCode, item.pack!.packCode];
   // An opened lot's own history includes what happened to its packs since (single-pack damage, pack moves).
   const packs = await store.packs.list({ lotCode: item.lot.lotCode });
@@ -630,10 +630,9 @@ export async function recall(userId: string | null, body: unknown) {
     const actor = await loadActor(tx, userId);
     requireAction(actor, "recall");
     if (!reason.trim()) throw badRequest("REASON_REQUIRED", "A recall reason is required");
-    // A batch code printed with several flavours (DH3493) has one row per flavour: a recall covers all of them.
-    const rows = await tx.batches.list({ code: batchCode });
-    if (!rows.length || rows.some((b) => !b.synced)) throw notFound(`Batch ${batchCode}`);
-    if (rows.every((b) => b.status === "RECALLED")) throw badRequest("ALREADY_RECALLED", `Batch ${batchCode} is already recalled`);
+    const batch = await tx.batches.findOne({ code: batchCode });
+    if (!batch || !batch.synced) throw notFound(`Batch ${batchCode}`);
+    if (batch.status === "RECALLED") throw badRequest("ALREADY_RECALLED", `Batch ${batchCode} is already recalled`);
     const at = nowIso();
     const lots = await tx.lots.list({ batchCode });
     // Every pack of the batch in one read (not one query per lot).
@@ -649,7 +648,7 @@ export async function recall(userId: string | null, body: unknown) {
         if (pp) await tx.packs.update(pack.id, { ...pp, updatedAt: at });
       }
     }
-    for (const b of rows) await tx.batches.update(b.id, { status: "RECALLED", recalledAt: at, recallReason: reason.trim() });
+    await tx.batches.update(batch.id, { status: "RECALLED", recalledAt: at, recallReason: reason.trim() });
     await tx.appendMovement({ type: "RECALLED", itemKind: "BATCH", itemCode: batchCode, fromId: null, toId: null, fromStatus: null, toStatus: "RECALLED", userId: actor.user.id, deviceId: null, invoice: null, note: reason.trim() });
   });
   return recallReport(userId, batchCode);

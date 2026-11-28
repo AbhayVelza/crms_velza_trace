@@ -1,4 +1,4 @@
-// Barcode generation with bwip-js (shared by the print view, the PDF and tests).
+// Barcode SVG generation with bwip-js (shared by the print view and tests).
 
 import bwipjs from "bwip-js/browser";
 
@@ -14,10 +14,3 @@ function stretch(svg: string): string {
 export function code128Svg(text: string): string {
   return stretch(bwipjs.toSVG({ ...CODE128_OPTIONS, text }));
 }
-
-/** Code 128 as bar/space widths in modules, starting with a bar (for drawing the bars in a PDF). */
-export function code128Widths(text: string): number[] {
-  const [sym] = bwipjs.raw({ ...CODE128_OPTIONS, text }) as { sbs: number[] }[];
-  return sym.sbs;
-}
-

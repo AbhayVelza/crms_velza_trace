@@ -189,7 +189,7 @@ async function itemInfo(tx: StoreTx, codes: string[]) {
       item: lot && code.length > 15 ? `Pack ${code.slice(16)} of ${PACKS_PER_LOT[lot.lotType]}` : kind,
       flavour: flavours.find((f) => f.code === lot?.flavour)?.name ?? lot?.flavour ?? "—",
       batch: lot?.batchCode ?? "—",
-      expiry: batches.find((b) => b.code === lot?.batchCode && b.flavour === lot?.flavour)?.expiryDate ?? null,
+      expiry: batches.find((b) => b.code === lot?.batchCode)?.expiryDate ?? null,
     };
   };
 }

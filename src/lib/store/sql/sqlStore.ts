@@ -583,19 +583,14 @@ function makeTx(q: Query): StoreTx {
     async appendScan(s: NewScan) {
       return tx.scans.append({ ...s, id: crypto.randomUUID(), at: s.at ?? new Date().toISOString() });
     },
-    async nextLotNumber(batchCode, count, flavour) {
+    async nextLotNumber(batchCode, count) {
       if (!Number.isInteger(count) || count < 1) throw new RangeError(`count must be ≥ 1 (got ${count})`);
-      // With a flavour, only that flavour's row: a batch code with several flavours has one counter per flavour.
       const rows = await q<{ first: number }>(
-        `UPDATE batches SET next_lot = next_lot + $2
-          WHERE batch_code = $1 AND ($4::text IS NULL OR flavour = $4) AND next_lot + $2 - 1 <= $3
-          RETURNING next_lot - $2 AS first`,
-        [batchCode, count, LOT_NUMBER_MAX, flavour ?? null],
+        `UPDATE batches SET next_lot = next_lot + $2 WHERE batch_code = $1 AND next_lot + $2 - 1 <= $3 RETURNING next_lot - $2 AS first`,
+        [batchCode, count, LOT_NUMBER_MAX],
       );
       if (rows.length) return Number(rows[0].first);
-      if (!(await q(`SELECT 1 FROM batches WHERE batch_code = $1 AND ($2::text IS NULL OR flavour = $2)`, [batchCode, flavour ?? null])).length) {
-        throw new NotFoundError(`Batch ${batchCode}`);
-      }
+      if (!(await q(`SELECT 1 FROM batches WHERE batch_code = $1`, [batchCode])).length) throw new NotFoundError(`Batch ${batchCode}`);
       throw new RangeError(`Batch ${batchCode} has no room for ${count} more lots (max 1869F)`);
     },
     async nextSequence(name) {
